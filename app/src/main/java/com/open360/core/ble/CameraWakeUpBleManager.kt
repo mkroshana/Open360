@@ -5,6 +5,8 @@ import android.annotation.SuppressLint
 import android.bluetooth.BluetoothAdapter
 import android.bluetooth.BluetoothGatt
 import android.bluetooth.BluetoothGattCallback
+import android.bluetooth.BluetoothGattCharacteristic
+import android.bluetooth.BluetoothGattDescriptor
 import android.bluetooth.BluetoothManager
 import android.bluetooth.BluetoothProfile
 import android.bluetooth.le.AdvertiseCallback
@@ -20,6 +22,7 @@ import android.os.Build
 import android.os.ParcelUuid
 import android.util.Log
 import androidx.core.content.ContextCompat
+import com.open360.core.protocol.PacketFramer
 import java.util.UUID
 
 class CameraWakeUpBleManager(private val context: Context) {
@@ -27,9 +30,16 @@ class CameraWakeUpBleManager(private val context: Context) {
     companion object {
         private const val TAG = "CameraWakeUpBle"
 
-        // Insta360 BLE Service & Characteristic UUIDs
-        val SERVICE_UUID: UUID = UUID.fromString("0000be80-0000-1000-8000-00805f9b34fb")
-        val WRITE_CHAR_UUID: UUID = UUID.fromString("0000be81-0000-1000-8000-00805f9b34fb")
+        // Insta360 GO 3 / GO 3S / X3 / X4 BLE Service & Characteristic UUIDs
+        val SERVICE_CE80: UUID = UUID.fromString("0000ce80-0000-1000-8000-00805f9b34fb")
+        val WRITE_CE81: UUID = UUID.fromString("0000ce81-0000-1000-8000-00805f9b34fb")
+        val NOTIFY_CE82: UUID = UUID.fromString("0000ce82-0000-1000-8000-00805f9b34fb")
+
+        // Legacy Insta360 BLE Service & Characteristic UUIDs (fallback)
+        val SERVICE_BE80: UUID = UUID.fromString("0000be80-0000-1000-8000-00805f9b34fb")
+        val WRITE_BE81: UUID = UUID.fromString("0000be81-0000-1000-8000-00805f9b34fb")
+
+        val CCCD_UUID: UUID = UUID.fromString("00002902-0000-1000-8000-00805f9b34fb")
     }
 
     private val bluetoothManager = context.getSystemService(Context.BLUETOOTH_SERVICE) as? BluetoothManager
@@ -174,9 +184,10 @@ class CameraWakeUpBleManager(private val context: Context) {
         if (isScanning) return
         isScanning = true
 
-        val filter = ScanFilter.Builder()
-            .setServiceUuid(ParcelUuid(SERVICE_UUID))
-            .build()
+        val filters = listOf(
+            ScanFilter.Builder().setServiceUuid(ParcelUuid(SERVICE_CE80)).build(),
+            ScanFilter.Builder().setServiceUuid(ParcelUuid(SERVICE_BE80)).build()
+        )
 
         val settings = ScanSettings.Builder()
             .setScanMode(ScanSettings.SCAN_MODE_LOW_LATENCY)
@@ -202,20 +213,76 @@ class CameraWakeUpBleManager(private val context: Context) {
                     }
 
                     override fun onServicesDiscovered(gatt: BluetoothGatt?, status: Int) {
-                        val service = gatt?.getService(SERVICE_UUID)
-                        val characteristic = service?.getCharacteristic(WRITE_CHAR_UUID)
+                        if (status != BluetoothGatt.GATT_SUCCESS || gatt == null) {
+                            Log.e(TAG, "GATT service discovery failed with status $status")
+                            return
+                        }
 
-                        if (characteristic != null) {
+                        Log.i(TAG, "=== Discovered ${gatt.services.size} GATT Services ===")
+                        gatt.services.forEach { s ->
+                            Log.i(TAG, "Service: ${s.uuid}")
+                            s.characteristics.forEach { c ->
+                                Log.i(TAG, "  Char: ${c.uuid} (props: 0x${Integer.toHexString(c.properties)})")
+                            }
+                        }
+
+                        // Try CE80 (GO 3/3S modern) first, then BE80 (legacy)
+                        val ce80Service = gatt.getService(SERVICE_CE80)
+                        val be80Service = gatt.getService(SERVICE_BE80)
+
+                        val writeChar = ce80Service?.getCharacteristic(WRITE_CE81)
+                            ?: be80Service?.getCharacteristic(WRITE_BE81)
+
+                        val notifyChar = ce80Service?.getCharacteristic(NOTIFY_CE82)
+
+                        if (notifyChar != null) {
+                            gatt.setCharacteristicNotification(notifyChar, true)
+                            val descriptor = notifyChar.getDescriptor(CCCD_UUID)
+                            if (descriptor != null) {
+                                descriptor.value = BluetoothGattDescriptor.ENABLE_NOTIFICATION_VALUE
+                                gatt.writeDescriptor(descriptor)
+                                Log.i(TAG, "Enabled BLE notifications on: ${notifyChar.uuid}")
+                            }
+                        }
+
+                        if (writeChar != null) {
                             // Wake-up screen / power command: fc ef fe 86 00 03 01 00 00
                             val wakeCmd = byteArrayOf(
                                 0xfc.toByte(), 0xef.toByte(), 0xfe.toByte(),
                                 0x86.toByte(), 0x00, 0x03, 0x01, 0x00, 0x00
                             )
-                            characteristic.value = wakeCmd
-                            gatt.writeCharacteristic(characteristic)
-                            Log.i(TAG, "Sent GATT wake-up command to camera")
+                            writeChar.value = wakeCmd
+                            writeChar.writeType = BluetoothGattCharacteristic.WRITE_TYPE_DEFAULT
+                            gatt.writeCharacteristic(writeChar)
+                            Log.i(TAG, "Sent GATT wake-up command to camera (${writeChar.uuid})")
                             onCameraWoken?.invoke()
+                        } else {
+                            Log.w(TAG, "No writable characteristic found in CE80 or BE80")
                         }
+                    }
+
+                    override fun onCharacteristicWrite(
+                        gatt: BluetoothGatt,
+                        characteristic: BluetoothGattCharacteristic,
+                        status: Int
+                    ) {
+                        Log.i(TAG, "GATT write finished on ${characteristic.uuid}, status: $status")
+                    }
+
+                    @Deprecated("Deprecated in Java")
+                    override fun onCharacteristicChanged(
+                        gatt: BluetoothGatt,
+                        characteristic: BluetoothGattCharacteristic
+                    ) {
+                        Log.i(TAG, "GATT notification on ${characteristic.uuid}: ${characteristic.value?.size} bytes")
+                    }
+
+                    override fun onCharacteristicChanged(
+                        gatt: BluetoothGatt,
+                        characteristic: BluetoothGattCharacteristic,
+                        value: ByteArray
+                    ) {
+                        Log.i(TAG, "GATT notification on ${characteristic.uuid}: ${value.size} bytes")
                     }
                 })
             }
@@ -227,7 +294,7 @@ class CameraWakeUpBleManager(private val context: Context) {
         }
 
         try {
-            scanner.startScan(listOf(filter), settings, scanCallback)
+            scanner.startScan(filters, settings, scanCallback)
         } catch (e: SecurityException) {
             isScanning = false
             Log.e(TAG, "SecurityException during BLE scan", e)

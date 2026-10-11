@@ -65,6 +65,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import com.open360.core.model.CameraState
 import com.open360.core.model.CaptureMode
@@ -74,6 +75,7 @@ import com.open360.core.model.CaptureMode
 fun CameraScreen(
     viewModel: CameraViewModel,
     onWakeUpClick: () -> Unit = {},
+    onOpenWifiSettingsClick: () -> Unit = {},
     modifier: Modifier = Modifier
 ) {
     val state by viewModel.uiState.collectAsState()
@@ -149,6 +151,7 @@ fun CameraScreen(
                 state = state,
                 onReconnect = { viewModel.connect() },
                 onWakeUp = onWakeUpClick,
+                onOpenWifiSettings = onOpenWifiSettingsClick,
                 modifier = Modifier
                     .weight(1f)
                     .fillMaxWidth()
@@ -189,6 +192,7 @@ fun ViewfinderStage(
     state: CameraState,
     onReconnect: () -> Unit,
     onWakeUp: () -> Unit,
+    onOpenWifiSettings: () -> Unit = {},
     modifier: Modifier = Modifier
 ) {
     Card(
@@ -254,7 +258,7 @@ fun ViewfinderStage(
                 Column(
                     horizontalAlignment = Alignment.CenterHorizontally,
                     verticalArrangement = Arrangement.Center,
-                    modifier = Modifier.padding(20.dp)
+                    modifier = Modifier.padding(16.dp)
                 ) {
                     Icon(
                         imageVector = Icons.Default.WifiOff,
@@ -272,17 +276,33 @@ fun ViewfinderStage(
                     Text(
                         text = "Turn on camera Wi-Fi or tap Wake Up",
                         color = Color.White.copy(alpha = 0.7f),
-                        style = MaterialTheme.typography.bodySmall
+                        style = MaterialTheme.typography.bodySmall,
+                        textAlign = TextAlign.Center
                     )
-                    Spacer(modifier = Modifier.height(16.dp))
 
-                    Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                    if (state.connectionError != null) {
+                        Spacer(modifier = Modifier.height(6.dp))
+                        Text(
+                            text = state.connectionError!!,
+                            color = MaterialTheme.colorScheme.error,
+                            style = MaterialTheme.typography.labelSmall,
+                            textAlign = TextAlign.Center,
+                            maxLines = 2
+                        )
+                    }
+
+                    Spacer(modifier = Modifier.height(14.dp))
+
+                    Row(
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
                         Button(
                             onClick = onWakeUp,
                             shape = RoundedCornerShape(12.dp)
                         ) {
                             Icon(Icons.Default.Bluetooth, contentDescription = "Wake Up", modifier = Modifier.size(16.dp))
-                            Spacer(modifier = Modifier.width(6.dp))
+                            Spacer(modifier = Modifier.width(4.dp))
                             Text("Wake Up")
                         }
 
@@ -291,8 +311,17 @@ fun ViewfinderStage(
                             shape = RoundedCornerShape(12.dp)
                         ) {
                             Icon(Icons.Default.Refresh, contentDescription = "Connect", modifier = Modifier.size(16.dp))
-                            Spacer(modifier = Modifier.width(6.dp))
+                            Spacer(modifier = Modifier.width(4.dp))
                             Text("Connect")
+                        }
+
+                        OutlinedButton(
+                            onClick = onOpenWifiSettings,
+                            shape = RoundedCornerShape(12.dp)
+                        ) {
+                            Icon(Icons.Default.Wifi, contentDescription = "Wi-Fi Settings", modifier = Modifier.size(16.dp))
+                            Spacer(modifier = Modifier.width(4.dp))
+                            Text("Wi-Fi")
                         }
                     }
                 }

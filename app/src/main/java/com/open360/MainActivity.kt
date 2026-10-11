@@ -1,9 +1,11 @@
 package com.open360
 
 import android.Manifest
+import android.content.Intent
 import android.content.pm.PackageManager
 import android.os.Build
 import android.os.Bundle
+import android.provider.Settings
 import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
@@ -56,7 +58,10 @@ class MainActivity : ComponentActivity() {
             Open360Theme {
                 CameraScreen(
                     viewModel = cameraViewModel,
-                    onWakeUpClick = { onWakeUpRequested() }
+                    onWakeUpClick = { onWakeUpRequested() },
+                    onOpenWifiSettingsClick = {
+                        startActivity(Intent(Settings.ACTION_WIFI_SETTINGS))
+                    }
                 )
             }
         }
