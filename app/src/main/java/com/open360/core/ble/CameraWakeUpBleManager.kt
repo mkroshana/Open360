@@ -1,0 +1,186 @@
+package com.open360.core.ble
+
+import android.annotation.SuppressLint
+import android.bluetooth.BluetoothAdapter
+import android.bluetooth.BluetoothGatt
+import android.bluetooth.BluetoothGattCallback
+import android.bluetooth.BluetoothGattCharacteristic
+import android.bluetooth.BluetoothManager
+import android.bluetooth.BluetoothProfile
+import android.bluetooth.le.AdvertiseCallback
+import android.bluetooth.le.AdvertiseData
+import android.bluetooth.le.AdvertiseSettings
+import android.bluetooth.le.ScanCallback
+import android.bluetooth.le.ScanFilter
+import android.bluetooth.le.ScanResult
+import android.bluetooth.le.ScanSettings
+import android.content.Context
+import android.os.ParcelUuid
+import android.util.Log
+import java.util.UUID
+
+class CameraWakeUpBleManager(private val context: Context) {
+
+    companion object {
+        private const val TAG = "CameraWakeUpBle"
+
+        // Insta360 BLE Service & Characteristic UUIDs
+        val SERVICE_UUID: UUID = UUID.fromString("0000be80-0000-1000-8000-00805f9b34fb")
+        val WRITE_CHAR_UUID: UUID = UUID.fromString("0000be81-0000-1000-8000-00805f9b34fb")
+    }
+
+    private val bluetoothManager = context.getSystemService(Context.BLUETOOTH_SERVICE) as? BluetoothManager
+    private val bluetoothAdapter: BluetoothAdapter? get() = bluetoothManager?.adapter
+
+    private var activeGatt: BluetoothGatt? = null
+    private var isScanning = false
+    private var isAdvertising = false
+
+    /**
+     * Builds the Insta360 'ORBIT' wake-up manufacturer packet.
+     * @param serialSuffix 6-character camera serial suffix (e.g. "8JY3HF")
+     */
+    fun buildWakeUpPayload(serialSuffix: String = "8JY3HF"): ByteArray {
+        val payload = ByteArray(26)
+        payload[0] = 0x02
+        payload[1] = 0x15
+        payload[2] = 0x09
+        payload[3] = 'O'.code.toByte()
+        payload[4] = 'R'.code.toByte()
+        payload[5] = 'B'.code.toByte()
+        payload[6] = 'I'.code.toByte()
+        payload[7] = 'T'.code.toByte()
+        payload[8] = 0x09
+        payload[9] = 0xff.toByte()
+        payload[10] = 0x0f
+        payload[11] = 0x00
+
+        // Serial suffix (6 characters in ASCII)
+        val suffixBytes = serialSuffix.take(6).toByteArray(Charsets.US_ASCII)
+        for (i in suffixBytes.indices) {
+            payload[12 + i] = suffixBytes[i]
+        }
+
+        payload[18] = 0x00
+        payload[19] = 0x00
+        payload[20] = 0x00
+        payload[21] = 0x00
+        payload[22] = 0xe4.toByte()
+        payload[23] = 0x01
+        return payload
+    }
+
+    /**
+     * Broadcasts the BLE wake-up packet to power on camera and turn on Wi-Fi.
+     */
+    @SuppressLint("MissingPermission")
+    fun startWakeUpBroadcast(serialSuffix: String = "8JY3HF", onComplete: (() -> Unit)? = null) {
+        val advertiser = bluetoothAdapter?.bluetoothLeAdvertiser ?: run {
+            Log.w(TAG, "BluetoothLeAdvertiser not available")
+            return
+        }
+
+        val settings = AdvertiseSettings.Builder()
+            .setAdvertiseMode(AdvertiseSettings.ADVERTISE_MODE_LOW_LATENCY)
+            .setTxPowerLevel(AdvertiseSettings.ADVERTISE_TX_POWER_HIGH)
+            .setConnectable(false)
+            .setTimeout(8000)
+            .build()
+
+        val data = AdvertiseData.Builder()
+            .addManufacturerData(0x004c, buildWakeUpPayload(serialSuffix))
+            .build()
+
+        val callback = object : AdvertiseCallback() {
+            override fun onStartSuccess(settingsInEffect: AdvertiseSettings?) {
+                isAdvertising = true
+                Log.i(TAG, "BLE wake-up broadcast started successfully")
+                onComplete?.invoke()
+            }
+
+            override fun onStartFailure(errorCode: Int) {
+                isAdvertising = false
+                Log.e(TAG, "BLE wake-up broadcast failed with error $errorCode")
+            }
+        }
+
+        try {
+            advertiser.startAdvertising(settings, data, callback)
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to start advertising", e)
+        }
+    }
+
+    /**
+     * Scans for the camera via BLE GATT and writes the wake-up / screen-on sequence.
+     */
+    @SuppressLint("MissingPermission")
+    fun scanAndWakeCamera(onCameraWoken: (() -> Unit)? = null) {
+        val scanner = bluetoothAdapter?.bluetoothLeScanner ?: run {
+            Log.w(TAG, "BluetoothLeScanner not available")
+            return
+        }
+
+        if (isScanning) return
+        isScanning = true
+
+        val filter = ScanFilter.Builder()
+            .setServiceUuid(ParcelUuid(SERVICE_UUID))
+            .build()
+
+        val settings = ScanSettings.Builder()
+            .setScanMode(ScanSettings.SCAN_MODE_LOW_LATENCY)
+            .build()
+
+        val scanCallback = object : ScanCallback() {
+            override fun onScanResult(callbackType: Int, result: ScanResult?) {
+                val device = result?.device ?: return
+                Log.i(TAG, "Found Insta360 camera BLE: ${device.name ?: device.address}")
+
+                try {
+                    scanner.stopScan(this)
+                    isScanning = false
+                } catch (_: Exception) {}
+
+                // Connect GATT
+                activeGatt = device.connectGatt(context, false, object : BluetoothGattCallback() {
+                    override fun onConnectionStateChange(gatt: BluetoothGatt?, status: Int, newState: Int) {
+                        if (newState == BluetoothProfile.STATE_CONNECTED) {
+                            Log.i(TAG, "Connected to camera GATT, discovering services...")
+                            gatt?.discoverServices()
+                        }
+                    }
+
+                    override fun onServicesDiscovered(gatt: BluetoothGatt?, status: Int) {
+                        val service = gatt?.getService(SERVICE_UUID)
+                        val characteristic = service?.getCharacteristic(WRITE_CHAR_UUID)
+
+                        if (characteristic != null) {
+                            // Wake-up screen / power command: fc ef fe 86 00 03 01 00 00
+                            val wakeCmd = byteArrayOf(
+                                0xfc.toByte(), 0xef.toByte(), 0xfe.toByte(),
+                                0x86.toByte(), 0x00, 0x03, 0x01, 0x00, 0x00
+                            )
+                            characteristic.value = wakeCmd
+                            gatt.writeCharacteristic(characteristic)
+                            Log.i(TAG, "Sent GATT wake-up command to camera")
+                            onCameraWoken?.invoke()
+                        }
+                    }
+                })
+            }
+
+            override fun onScanFailed(errorCode: Int) {
+                isScanning = false
+                Log.e(TAG, "BLE scan failed with error $errorCode")
+            }
+        }
+
+        try {
+            scanner.startScan(listOf(filter), settings, scanCallback)
+        } catch (e: Exception) {
+            isScanning = false
+            Log.e(TAG, "Failed to start BLE scan", e)
+        }
+    }
+}

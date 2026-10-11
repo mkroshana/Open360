@@ -1,6 +1,5 @@
 package com.open360.ui.camera
 
-import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.RepeatMode
 import androidx.compose.animation.core.animateFloat
 import androidx.compose.animation.core.infiniteRepeatable
@@ -28,8 +27,8 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.BatteryChargingFull
 import androidx.compose.material.icons.filled.BatteryStd
+import androidx.compose.material.icons.filled.Bluetooth
 import androidx.compose.material.icons.filled.CameraAlt
-import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Stop
@@ -38,6 +37,7 @@ import androidx.compose.material.icons.filled.Wifi
 import androidx.compose.material.icons.filled.WifiOff
 import androidx.compose.material3.AssistChip
 import androidx.compose.material3.AssistChipDefaults
+import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
@@ -48,6 +48,7 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
@@ -72,6 +73,7 @@ import com.open360.core.model.CaptureMode
 @Composable
 fun CameraScreen(
     viewModel: CameraViewModel,
+    onWakeUpClick: () -> Unit = {},
     modifier: Modifier = Modifier
 ) {
     val state by viewModel.uiState.collectAsState()
@@ -146,6 +148,7 @@ fun CameraScreen(
             ViewfinderStage(
                 state = state,
                 onReconnect = { viewModel.connect() },
+                onWakeUp = onWakeUpClick,
                 modifier = Modifier
                     .weight(1f)
                     .fillMaxWidth()
@@ -185,6 +188,7 @@ fun CameraScreen(
 fun ViewfinderStage(
     state: CameraState,
     onReconnect: () -> Unit,
+    onWakeUp: () -> Unit,
     modifier: Modifier = Modifier
 ) {
     Card(
@@ -250,15 +254,15 @@ fun ViewfinderStage(
                 Column(
                     horizontalAlignment = Alignment.CenterHorizontally,
                     verticalArrangement = Arrangement.Center,
-                    modifier = Modifier.padding(24.dp)
+                    modifier = Modifier.padding(20.dp)
                 ) {
                     Icon(
                         imageVector = Icons.Default.WifiOff,
                         contentDescription = "Not Connected",
                         tint = Color.White.copy(alpha = 0.6f),
-                        modifier = Modifier.size(36.dp)
+                        modifier = Modifier.size(32.dp)
                     )
-                    Spacer(modifier = Modifier.height(12.dp))
+                    Spacer(modifier = Modifier.height(8.dp))
                     Text(
                         text = "Camera Not Connected",
                         color = Color.White,
@@ -266,21 +270,31 @@ fun ViewfinderStage(
                     )
                     Spacer(modifier = Modifier.height(4.dp))
                     Text(
-                        text = "Connect to camera Wi-Fi (192.168.42.1)",
+                        text = "Turn on camera Wi-Fi or tap Wake Up",
                         color = Color.White.copy(alpha = 0.7f),
                         style = MaterialTheme.typography.bodySmall
                     )
                     Spacer(modifier = Modifier.height(16.dp))
-                    AssistChip(
-                        onClick = onReconnect,
-                        label = { Text("Reconnect", color = Color.White) },
-                        leadingIcon = {
-                            Icon(Icons.Default.Refresh, contentDescription = "Retry", tint = Color.White, modifier = Modifier.size(16.dp))
-                        },
-                        colors = AssistChipDefaults.assistChipColors(
-                            containerColor = MaterialTheme.colorScheme.primaryContainer
-                        )
-                    )
+
+                    Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                        Button(
+                            onClick = onWakeUp,
+                            shape = RoundedCornerShape(12.dp)
+                        ) {
+                            Icon(Icons.Default.Bluetooth, contentDescription = "Wake Up", modifier = Modifier.size(16.dp))
+                            Spacer(modifier = Modifier.width(6.dp))
+                            Text("Wake Up")
+                        }
+
+                        OutlinedButton(
+                            onClick = onReconnect,
+                            shape = RoundedCornerShape(12.dp)
+                        ) {
+                            Icon(Icons.Default.Refresh, contentDescription = "Connect", modifier = Modifier.size(16.dp))
+                            Spacer(modifier = Modifier.width(6.dp))
+                            Text("Connect")
+                        }
+                    }
                 }
             }
         }
