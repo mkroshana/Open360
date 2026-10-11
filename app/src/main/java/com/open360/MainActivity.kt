@@ -4,6 +4,7 @@ import android.Manifest
 import android.content.pm.PackageManager
 import android.os.Build
 import android.os.Bundle
+import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
@@ -28,6 +29,12 @@ class MainActivity : ComponentActivity() {
         val allGranted = permissions.values.all { it }
         if (allGranted) {
             wakeUpAndConnect()
+        } else {
+            Toast.makeText(
+                this,
+                "Bluetooth and Location permissions required to wake up camera",
+                Toast.LENGTH_LONG
+            ).show()
         }
     }
 
@@ -49,19 +56,21 @@ class MainActivity : ComponentActivity() {
             Open360Theme {
                 CameraScreen(
                     viewModel = cameraViewModel,
-                    onWakeUpClick = { wakeUpAndConnect() }
+                    onWakeUpClick = { onWakeUpRequested() }
                 )
             }
         }
     }
 
-    private fun checkAndRequestPermissions() {
+    private fun getRequiredPermissions(): List<String> {
         val permissions = mutableListOf(
-            Manifest.permission.ACCESS_FINE_LOCATION
+            Manifest.permission.ACCESS_FINE_LOCATION,
+            Manifest.permission.ACCESS_COARSE_LOCATION
         )
 
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
             permissions.add(Manifest.permission.BLUETOOTH_SCAN)
+            permissions.add(Manifest.permission.BLUETOOTH_ADVERTISE)
             permissions.add(Manifest.permission.BLUETOOTH_CONNECT)
         }
 
@@ -69,16 +78,30 @@ class MainActivity : ComponentActivity() {
             permissions.add(Manifest.permission.NEARBY_WIFI_DEVICES)
         }
 
-        val missing = permissions.filter {
+        return permissions
+    }
+
+    private fun checkAndRequestPermissions(): Boolean {
+        val missing = getRequiredPermissions().filter {
             ContextCompat.checkSelfPermission(this, it) != PackageManager.PERMISSION_GRANTED
         }
 
-        if (missing.isNotEmpty()) {
+        return if (missing.isNotEmpty()) {
             permissionLauncher.launch(missing.toTypedArray())
+            false
+        } else {
+            true
+        }
+    }
+
+    private fun onWakeUpRequested() {
+        if (checkAndRequestPermissions()) {
+            wakeUpAndConnect()
         }
     }
 
     private fun wakeUpAndConnect() {
+        Toast.makeText(this, "Broadcasting wake-up beacon to GO 3S...", Toast.LENGTH_SHORT).show()
         // Broadcast BLE wake-up packet to wake the camera up
         bleManager.startWakeUpBroadcast(serialSuffix = "8JY3HF")
         bleManager.scanAndWakeCamera()

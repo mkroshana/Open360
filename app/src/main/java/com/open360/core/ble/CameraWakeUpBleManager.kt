@@ -1,10 +1,10 @@
 package com.open360.core.ble
 
+import android.Manifest
 import android.annotation.SuppressLint
 import android.bluetooth.BluetoothAdapter
 import android.bluetooth.BluetoothGatt
 import android.bluetooth.BluetoothGattCallback
-import android.bluetooth.BluetoothGattCharacteristic
 import android.bluetooth.BluetoothManager
 import android.bluetooth.BluetoothProfile
 import android.bluetooth.le.AdvertiseCallback
@@ -15,8 +15,11 @@ import android.bluetooth.le.ScanFilter
 import android.bluetooth.le.ScanResult
 import android.bluetooth.le.ScanSettings
 import android.content.Context
+import android.content.pm.PackageManager
+import android.os.Build
 import android.os.ParcelUuid
 import android.util.Log
+import androidx.core.content.ContextCompat
 import java.util.UUID
 
 class CameraWakeUpBleManager(private val context: Context) {
@@ -36,12 +39,34 @@ class CameraWakeUpBleManager(private val context: Context) {
     private var isScanning = false
     private var isAdvertising = false
 
+    private fun hasPermission(permission: String): Boolean {
+        return ContextCompat.checkSelfPermission(context, permission) == PackageManager.PERMISSION_GRANTED
+    }
+
+    private fun canAdvertise(): Boolean {
+        return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+            hasPermission(Manifest.permission.BLUETOOTH_ADVERTISE)
+        } else {
+            hasPermission(Manifest.permission.BLUETOOTH_ADMIN)
+        }
+    }
+
+    private fun canScan(): Boolean {
+        return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+            hasPermission(Manifest.permission.BLUETOOTH_SCAN) && hasPermission(Manifest.permission.BLUETOOTH_CONNECT)
+        } else {
+            hasPermission(Manifest.permission.ACCESS_FINE_LOCATION)
+        }
+    }
+
     /**
-     * Builds the Insta360 'ORBIT' wake-up manufacturer packet.
+     * Builds the Insta360 'ORBIT' wake-up manufacturer packet (24 bytes).
+     * Android adds the 2-byte Manufacturer ID (0x004c) automatically.
+     * Total on-air payload = 26 bytes.
      * @param serialSuffix 6-character camera serial suffix (e.g. "8JY3HF")
      */
     fun buildWakeUpPayload(serialSuffix: String = "8JY3HF"): ByteArray {
-        val payload = ByteArray(26)
+        val payload = ByteArray(24)
         payload[0] = 0x02
         payload[1] = 0x15
         payload[2] = 0x09
@@ -75,8 +100,20 @@ class CameraWakeUpBleManager(private val context: Context) {
      */
     @SuppressLint("MissingPermission")
     fun startWakeUpBroadcast(serialSuffix: String = "8JY3HF", onComplete: (() -> Unit)? = null) {
-        val advertiser = bluetoothAdapter?.bluetoothLeAdvertiser ?: run {
-            Log.w(TAG, "BluetoothLeAdvertiser not available")
+        if (!canAdvertise()) {
+            Log.w(TAG, "Cannot advertise: missing BLUETOOTH_ADVERTISE permission")
+            return
+        }
+
+        val adapter = bluetoothAdapter
+        if (adapter == null || !adapter.isEnabled) {
+            Log.w(TAG, "Bluetooth adapter is disabled or unavailable")
+            return
+        }
+
+        val advertiser = adapter.bluetoothLeAdvertiser
+        if (advertiser == null) {
+            Log.w(TAG, "BluetoothLeAdvertiser not supported on this device")
             return
         }
 
@@ -106,6 +143,8 @@ class CameraWakeUpBleManager(private val context: Context) {
 
         try {
             advertiser.startAdvertising(settings, data, callback)
+        } catch (e: SecurityException) {
+            Log.e(TAG, "SecurityException starting advertising: check permissions", e)
         } catch (e: Exception) {
             Log.e(TAG, "Failed to start advertising", e)
         }
@@ -116,7 +155,18 @@ class CameraWakeUpBleManager(private val context: Context) {
      */
     @SuppressLint("MissingPermission")
     fun scanAndWakeCamera(onCameraWoken: (() -> Unit)? = null) {
-        val scanner = bluetoothAdapter?.bluetoothLeScanner ?: run {
+        if (!canScan()) {
+            Log.w(TAG, "Cannot scan: missing BLUETOOTH_SCAN/CONNECT permissions")
+            return
+        }
+
+        val adapter = bluetoothAdapter
+        if (adapter == null || !adapter.isEnabled) {
+            Log.w(TAG, "Bluetooth adapter is disabled or unavailable")
+            return
+        }
+
+        val scanner = adapter.bluetoothLeScanner ?: run {
             Log.w(TAG, "BluetoothLeScanner not available")
             return
         }
@@ -178,6 +228,9 @@ class CameraWakeUpBleManager(private val context: Context) {
 
         try {
             scanner.startScan(listOf(filter), settings, scanCallback)
+        } catch (e: SecurityException) {
+            isScanning = false
+            Log.e(TAG, "SecurityException during BLE scan", e)
         } catch (e: Exception) {
             isScanning = false
             Log.e(TAG, "Failed to start BLE scan", e)
