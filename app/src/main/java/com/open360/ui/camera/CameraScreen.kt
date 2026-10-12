@@ -190,6 +190,7 @@ fun CameraScreen(
                 isSpeedMph = uiState.isSpeedMph,
                 isRecording = uiState.isRecording,
                 isCameraConnected = uiState.isConnected,
+                clipHasNoGps = ble.joinedRecordingSeconds != null,
                 lastGpsSentTimeMs = lastGpsSentTime,
                 track = uiState.trackState,
                 onToggleSpeedUnit = { viewModel.toggleSpeedUnit() }
@@ -536,6 +537,7 @@ fun GpsTelemetryCard(
     isSpeedMph: Boolean,
     isRecording: Boolean,
     isCameraConnected: Boolean = false,
+    clipHasNoGps: Boolean = false,
     lastGpsSentTimeMs: Long,
     track: GpxTrackState = GpxTrackState(),
     onToggleSpeedUnit: () -> Unit
@@ -648,11 +650,12 @@ fun GpsTelemetryCard(
             Spacer(modifier = Modifier.height(12.dp))
 
             // Live stream injection badge
-            val streamActive = isCameraConnected && gps.hasFix
+            val streamActive = isCameraConnected && gps.hasFix && !clipHasNoGps
             val badgeBg = if (streamActive) Color(0xFF2E7D32).copy(alpha = 0.12f) else MaterialTheme.colorScheme.surfaceVariant
             val badgeColor = if (streamActive) Color(0xFF2E7D32) else MaterialTheme.colorScheme.onSurfaceVariant
 
             val streamText = when {
+                clipHasNoGps -> "No GPS for This Clip: It Started Before the App Connected"
                 streamActive && isRecording -> "Sending GPS to Camera (10 Hz)"
                 streamActive -> "GPS Ready, Sent While Recording"
                 isCameraConnected && !gps.hasFix -> "Waiting for GPS Fix"

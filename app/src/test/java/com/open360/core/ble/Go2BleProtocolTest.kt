@@ -209,6 +209,24 @@ class Go2BleProtocolTest {
     }
 
     @Test
+    fun testCaptureStatusReply() {
+        // Built from the published definitions; not captured from a camera.
+        // PRO Video (17) that has been recording for 75 s
+        val recording = Go2BleProtocol.parseCaptureStatusReply(hex("0a040811104b"))
+        assertEquals(17, recording?.captureState)
+        assertEquals(75, recording?.captureSeconds)
+        assertTrue(Go2BleProtocol.isRecordingCaptureState(recording!!.captureState))
+
+        // Idle: the status is there but every field is at its default
+        val idle = Go2BleProtocol.parseCaptureStatusReply(hex("0a00"))
+        assertEquals(0, idle?.captureState)
+        assertEquals(0, idle?.captureSeconds)
+
+        // A reply with no status in it, such as the empty OK that answers a GPS upload
+        assertNull(Go2BleProtocol.parseCaptureStatusReply(ByteArray(0)))
+    }
+
+    @Test
     fun testShutdownAndTemperatureWarnings() {
         // Built from the published definitions; not captured from a camera
         assertEquals(Go2BleProtocol.ShutdownReason.BATTERY_EMPTY, Go2BleProtocol.parseShutdown(hex("0800")))

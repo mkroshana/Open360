@@ -78,6 +78,9 @@ data class BleCameraState(
     val lastVideoFile: String? = null,
     // Its length in whole seconds, from the same reply
     val lastVideoSeconds: Int? = null,
+    // Set when the camera was already recording as the app connected: how long it had been
+    // recording. Where that clip's first frame fell is not known, so it gets no GPS.
+    val joinedRecordingSeconds: Int? = null,
     val batteryPercent: Int? = null,
     val isCharging: Boolean = false,
     val details: CameraDetails = CameraDetails(),
@@ -164,6 +167,10 @@ class GpsRemoteBleManager(private val context: Context) {
     private var captureChangeTimeoutJob: Job? = null
     @Volatile
     private var stopCaptureSeq = -1
+    @Volatile
+    private var batteryQuerySeq = -1
+    @Volatile
+    private var captureStatusQuerySeq = -1
     @Volatile
     private var startCommandAtMs: Long? = null
     private val gpsQueue = ConcurrentLinkedQueue<ByteArray>()
@@ -507,6 +514,7 @@ class GpsRemoteBleManager(private val context: Context) {
             if (status == BluetoothGatt.GATT_SUCCESS) {
                 // Subscription complete: channel is open for writes
                 queryBattery()
+                queryCaptureStatus()
             }
         }
 
@@ -635,8 +643,14 @@ class GpsRemoteBleManager(private val context: Context) {
 
                 0xC8 -> { // 200 OK Response
                     Log.v(TAG, "Camera returned 200 OK for seq ${inner.sequence}")
-                    if (inner.payload.size == 4) {
+                    // Replies carry the sequence number of the request they answer
+                    if (inner.sequence == batteryQuerySeq) {
+                        batteryQuerySeq = -1
                         parseBatteryUpdate(inner.payload)
+                    }
+                    if (inner.sequence == captureStatusQuerySeq) {
+                        captureStatusQuerySeq = -1
+                        Go2BleProtocol.parseCaptureStatusReply(inner.payload)?.let { onCaptureStatusReply(it) }
                     }
                     if (inner.sequence == stopCaptureSeq) {
                         stopCaptureSeq = -1
@@ -658,6 +672,27 @@ class GpsRemoteBleManager(private val context: Context) {
 
     private fun updateDetails(change: (CameraDetails) -> CameraDetails) {
         _state.update { it.copy(details = change(it.details)) }
+    }
+
+    /**
+     * The camera's answer to the capture status request sent on connecting. If it is already
+     * recording, the app shows that, but sends the clip no GPS: the camera's software places GPS
+     * by counting from the first frame, and the app did not see this clip start.
+     */
+    private fun onCaptureStatusReply(reply: Go2BleProtocol.CaptureStatusReply) {
+        Log.i(TAG, "Capture status on connecting: state=${reply.captureState}, recorded ${reply.captureSeconds} s")
+        if (!Go2BleProtocol.isRecordingCaptureState(reply.captureState)) return
+        // A start notice may have arrived in the meantime; then the start was seen after all
+        if (_state.value.recordingFirstFrameAtMs != null) return
+
+        _state.update {
+            it.copy(
+                isRecording = true,
+                isCaptureStarting = false,
+                joinedRecordingSeconds = reply.captureSeconds,
+                details = it.details.copy(recordingState = reply.captureState)
+            )
+        }
     }
 
     private fun parseBatteryUpdate(payload: ByteArray) {
@@ -713,7 +748,8 @@ class GpsRemoteBleManager(private val context: Context) {
             if (!isRecording) {
                 markRecordingStop()
             } else {
-                if (_state.value.recordingFirstFrameAtMs == null) {
+                val current = _state.value
+                if (current.recordingFirstFrameAtMs == null && current.joinedRecordingSeconds == null) {
                     // Recording without the start notice having been seen
                     markRecordingStart(-FIRST_FRAME_BEFORE_CAPTURE_STATUS_MS)
                 }
@@ -741,7 +777,11 @@ class GpsRemoteBleManager(private val context: Context) {
     private fun markRecordingStop() {
         if (_state.value.recordingFirstFrameAtMs != null) Log.i(TAG, "Recording stop")
         _state.update {
-            it.copy(recordingFirstFrameAtMs = null, details = it.details.copy(recordingState = null))
+            it.copy(
+                recordingFirstFrameAtMs = null,
+                joinedRecordingSeconds = null,
+                details = it.details.copy(recordingState = null)
+            )
         }
         gpsQueue.clear()
     }
@@ -857,9 +897,22 @@ class GpsRemoteBleManager(private val context: Context) {
      * Queries camera battery level and charging state.
      */
     fun queryBattery() {
-        val inner = Go2BleProtocol.encodeInnerMessage(Go2BleProtocol.CMD_CALIBRATE_GYRO, nextSeq())
+        val seq = nextSeq()
+        batteryQuerySeq = seq
+        val inner = Go2BleProtocol.encodeInnerMessage(Go2BleProtocol.CMD_CALIBRATE_GYRO, seq)
         val packet = Go2BleProtocol.encodeMessagePacket(inner)
         queuePacket(packet)
+    }
+
+    /**
+     * Asks the camera whether it is recording. Sent on connecting, to notice a recording that
+     * was started before the app was there to see it.
+     */
+    private fun queryCaptureStatus() {
+        val seq = nextSeq()
+        captureStatusQuerySeq = seq
+        val inner = Go2BleProtocol.encodeInnerMessage(Go2BleProtocol.CMD_GET_CURRENT_CAPTURE_STATUS, seq)
+        queuePacket(Go2BleProtocol.encodeMessagePacket(inner))
     }
 
     /**

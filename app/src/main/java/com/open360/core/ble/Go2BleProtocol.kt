@@ -31,6 +31,7 @@ object Go2BleProtocol {
     const val CMD_TAKE_PICTURE = 0x03
     const val CMD_START_CAPTURE = 0x04
     const val CMD_STOP_CAPTURE = 0x05
+    const val CMD_GET_CURRENT_CAPTURE_STATUS = 0x0F
     const val CMD_CALIBRATE_GYRO = 0x19 // GO 3/3S: battery query
     const val CMD_UPLOAD_GPS = 0x35     // 53 decimal: inject GPS coordinates
     const val CMD_SET_KEY_TIME_POINT = 0x3C
@@ -242,6 +243,25 @@ object Go2BleProtocol {
             4L -> CardState.WRITE_PROTECTED
             else -> CardState.ERROR
         }
+
+    /** What the camera is doing: its CameraCaptureState and how long it has been recording. */
+    data class CaptureStatusReply(val captureState: Int, val captureSeconds: Int)
+
+    /**
+     * Decodes the reply to a capture status request (GetCurrentCaptureStatusResp). Field 1 is a
+     * CameraCaptureStatus holding the CameraCaptureState (field 1) and the time recorded so
+     * far in seconds (field 2); fields left out carry their defaults, so an idle camera may
+     * send an empty status. Returns null when the reply has no status at all. Taken from the
+     * published definitions.
+     */
+    fun parseCaptureStatusReply(payload: ByteArray): CaptureStatusReply? {
+        val status = readProtoFields(payload)[1] as? ByteArray ?: return null
+        val fields = readProtoFields(status)
+        return CaptureStatusReply(
+            captureState = (fields[1] as? Long ?: 0L).toInt(),
+            captureSeconds = (fields[2] as? Long ?: 0L).coerceIn(0L, Int.MAX_VALUE.toLong()).toInt()
+        )
+    }
 
     /** Why the camera says it is shutting down, ErrorCode in NotificationShutdown. */
     enum class ShutdownReason { BATTERY_EMPTY, OVERHEATED }

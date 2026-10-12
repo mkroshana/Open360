@@ -312,7 +312,9 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
 
     private fun startRecordingTimer() {
         recordingTimerJob?.cancel()
-        _uiState.update { it.copy(recordingDurationSeconds = CAPTURE_STATUS_LAG_SECONDS) }
+        // A recording found already running on connecting carries on from the camera's own count
+        val startAt = bleManager.state.value.joinedRecordingSeconds?.toLong() ?: CAPTURE_STATUS_LAG_SECONDS
+        _uiState.update { it.copy(recordingDurationSeconds = startAt) }
         recordingTimerJob = viewModelScope.launch {
             while (isActive) {
                 delay(1000)
