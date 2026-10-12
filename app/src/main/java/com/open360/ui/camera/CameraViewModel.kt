@@ -306,10 +306,6 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
         bleManager.powerOff()
     }
 
-    fun queryBattery() {
-        bleManager.queryBattery()
-    }
-
     private fun startRecordingTimer() {
         recordingTimerJob?.cancel()
         // A recording found already running on connecting carries on from the camera's own count

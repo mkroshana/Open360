@@ -40,7 +40,6 @@ import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.LocationOn
 import androidx.compose.material.icons.filled.Power
 import androidx.compose.material.icons.filled.PowerSettingsNew
-import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Speed
 import androidx.compose.material.icons.filled.Stop
 import androidx.compose.material.icons.filled.Sync
@@ -129,11 +128,6 @@ fun CameraScreen(
                     }
                 },
                 actions = {
-                    if (uiState.isConnected) {
-                        IconButton(onClick = { viewModel.queryBattery() }) {
-                            Icon(Icons.Default.Refresh, contentDescription = "Refresh Battery")
-                        }
-                    }
                     IconButton(
                         onClick = {
                             if (uiState.isConnected) {

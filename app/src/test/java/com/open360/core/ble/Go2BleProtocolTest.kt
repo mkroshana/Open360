@@ -164,7 +164,7 @@ class Go2BleProtocolTest {
             .chunked(2).map { it.toInt(16).toByte() }.toByteArray()
         assertEquals("/DCIM/Camera01/VID_20261012_163049_00_066.mp4", Go2BleProtocol.parseCapturedFilePath(reply))
 
-        // The battery query reply has no file in it
+        // A reply that is not about a file has none in it
         assertNull(Go2BleProtocol.parseCapturedFilePath(byteArrayOf(0x08, 0x64, 0x10, 0x01)))
 
         // The same reply gives the clip's length in whole seconds

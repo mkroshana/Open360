@@ -168,8 +168,6 @@ class GpsRemoteBleManager(private val context: Context) {
     @Volatile
     private var stopCaptureSeq = -1
     @Volatile
-    private var batteryQuerySeq = -1
-    @Volatile
     private var captureStatusQuerySeq = -1
     @Volatile
     private var startCommandAtMs: Long? = null
@@ -512,8 +510,8 @@ class GpsRemoteBleManager(private val context: Context) {
         override fun onDescriptorWrite(gatt: BluetoothGatt, descriptor: BluetoothGattDescriptor, status: Int) {
             Log.i(TAG, "Descriptor write finished on ${descriptor.uuid}, status=$status")
             if (status == BluetoothGatt.GATT_SUCCESS) {
-                // Subscription complete: channel is open for writes
-                queryBattery()
+                // Subscription complete: channel is open for writes. The battery level is not
+                // asked for: the camera sends it in its own battery updates.
                 queryCaptureStatus()
             }
         }
@@ -558,10 +556,6 @@ class GpsRemoteBleManager(private val context: Context) {
             Log.println(level, TAG, "Received camera message: code=0x${Integer.toHexString(inner.commandCode)}, seq=${inner.sequence}, size=${inner.payload.size}, payload=$hexPayload")
 
             when (inner.commandCode) {
-                Go2BleProtocol.CMD_CALIBRATE_GYRO -> {
-                    parseBatteryUpdate(inner.payload)
-                }
-
                 Go2BleProtocol.NOTIF_BATTERY_UPDATE -> {
                     Go2BleProtocol.parseBatteryUpdateNotification(inner.payload)?.let { battery ->
                         _state.update {
@@ -644,10 +638,6 @@ class GpsRemoteBleManager(private val context: Context) {
                 0xC8 -> { // 200 OK Response
                     Log.v(TAG, "Camera returned 200 OK for seq ${inner.sequence}")
                     // Replies carry the sequence number of the request they answer
-                    if (inner.sequence == batteryQuerySeq) {
-                        batteryQuerySeq = -1
-                        parseBatteryUpdate(inner.payload)
-                    }
                     if (inner.sequence == captureStatusQuerySeq) {
                         captureStatusQuerySeq = -1
                         Go2BleProtocol.parseCaptureStatusReply(inner.payload)?.let { onCaptureStatusReply(it) }
@@ -692,46 +682,6 @@ class GpsRemoteBleManager(private val context: Context) {
                 joinedRecordingSeconds = reply.captureSeconds,
                 details = it.details.copy(recordingState = reply.captureState)
             )
-        }
-    }
-
-    private fun parseBatteryUpdate(payload: ByteArray) {
-        if (payload.isEmpty()) return
-        try {
-            var batteryLevel: Int? = null
-            var isCharging = false
-
-            var idx = 0
-            while (idx < payload.size - 1) {
-                val tag = payload[idx].toInt() and 0xFF
-                when (tag) {
-                    0x08 -> { // Field 1: battery percentage (0-100) on GO 3S
-                        val level = payload[idx + 1].toInt() and 0xFF
-                        if (level in 0..100) {
-                            batteryLevel = level
-                        }
-                        idx += 2
-                    }
-                    0x10 -> { // Field 2: charging state (1 = charging, 0 = discharging) on GO 3S
-                        isCharging = (payload[idx + 1].toInt() and 0xFF) == 1
-                        idx += 2
-                    }
-                    0x18 -> { // Field 3: charging state on legacy models
-                        isCharging = (payload[idx + 1].toInt() and 0xFF) == 1
-                        idx += 2
-                    }
-                    else -> {
-                        idx++
-                    }
-                }
-            }
-
-            if (batteryLevel != null) {
-                _state.update { it.copy(batteryPercent = batteryLevel, isCharging = isCharging) }
-                Log.i(TAG, "Parsed battery update: $batteryLevel%, charging=$isCharging")
-            }
-        } catch (e: Exception) {
-            Log.w(TAG, "Error parsing battery update", e)
         }
     }
 
@@ -891,17 +841,6 @@ class GpsRemoteBleManager(private val context: Context) {
             delay(CAPTURE_CHANGE_TIMEOUT_MS)
             _state.update { it.copy(isRecording = false, isCaptureStopping = false) }
         }
-    }
-
-    /**
-     * Queries camera battery level and charging state.
-     */
-    fun queryBattery() {
-        val seq = nextSeq()
-        batteryQuerySeq = seq
-        val inner = Go2BleProtocol.encodeInnerMessage(Go2BleProtocol.CMD_CALIBRATE_GYRO, seq)
-        val packet = Go2BleProtocol.encodeMessagePacket(inner)
-        queuePacket(packet)
     }
 
     /**

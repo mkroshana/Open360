@@ -32,7 +32,9 @@ object Go2BleProtocol {
     const val CMD_START_CAPTURE = 0x04
     const val CMD_STOP_CAPTURE = 0x05
     const val CMD_GET_CURRENT_CAPTURE_STATUS = 0x0F
-    const val CMD_CALIBRATE_GYRO = 0x19 // GO 3/3S: battery query
+    // 0x19 is CALIBRATE_GYRO in the published definitions and must not be sent. Earlier
+    // versions sent it on every connect as a "battery query": the reply was always 100, even
+    // with the battery at 96%, and the camera refused it while recording.
     const val CMD_UPLOAD_GPS = 0x35     // 53 decimal: inject GPS coordinates
     const val CMD_SET_KEY_TIME_POINT = 0x3C
 
