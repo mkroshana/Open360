@@ -135,6 +135,19 @@ class Go2BleProtocolTest {
     }
 
     @Test
+    fun testBatteryUpdateNotificationReadsNestedLevel() {
+        // Captured from a GO 3S: battery_status { power_type, battery_level = 100 }
+        val onBattery = byteArrayOf(0x0A, 0x04, 0x08, 0x00, 0x10, 0x64)
+        val onAdapter = byteArrayOf(0x0A, 0x04, 0x08, 0x01, 0x10, 0x64)
+
+        assertEquals(Go2BleProtocol.BatteryStatus(100, onExternalPower = false), Go2BleProtocol.parseBatteryUpdateNotification(onBattery))
+        assertEquals(Go2BleProtocol.BatteryStatus(100, onExternalPower = true), Go2BleProtocol.parseBatteryUpdateNotification(onAdapter))
+
+        // A payload without the nested status is not a battery reading
+        assertNull(Go2BleProtocol.parseBatteryUpdateNotification(byteArrayOf(0x08, 0x64, 0x10, 0x00)))
+    }
+
+    @Test
     fun testKeepAlivePacketCarriesWifiKeepAliveBytes() {
         val decoded = Go2BleProtocol.decodePacket(Go2BleProtocol.buildKeepAlivePacket())
         assertNotNull(decoded)

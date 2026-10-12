@@ -128,6 +128,63 @@ object Go2BleProtocol {
      */
     fun isRecordingCaptureState(state: Int): Boolean = state != 0 && state !in PHOTO_CAPTURE_STATES
 
+    data class BatteryStatus(val levelPercent: Int, val onExternalPower: Boolean)
+
+    /**
+     * Decodes the battery update notification (0x2003). Field 1 is a nested BatteryStatus:
+     * power_type (1: 0 battery, 1 adapter), battery_level (2), battery_scale (3).
+     */
+    fun parseBatteryUpdateNotification(payload: ByteArray): BatteryStatus? {
+        val status = readProtoFields(payload)[1] as? ByteArray ?: return null
+        val fields = readProtoFields(status)
+        val level = fields[2] as? Long ?: return null
+        val scale = (fields[3] as? Long)?.takeIf { it > 0 } ?: 100L
+        val powerType = fields[1] as? Long ?: 0L
+        return BatteryStatus(
+            levelPercent = (level * 100 / scale).toInt().coerceIn(0, 100),
+            onExternalPower = powerType == 1L
+        )
+    }
+
+    /**
+     * Reads the top-level fields of a protobuf message: varints as Long, length-delimited
+     * fields as ByteArray. Fixed-width fields are skipped.
+     */
+    private fun readProtoFields(data: ByteArray): Map<Int, Any> {
+        val fields = HashMap<Int, Any>()
+        var pos = 0
+
+        fun readVarint(): Long {
+            var result = 0L
+            var shift = 0
+            while (pos < data.size && shift < 64) {
+                val b = data[pos++].toInt() and 0xFF
+                result = result or ((b and 0x7F).toLong() shl shift)
+                if (b and 0x80 == 0) break
+                shift += 7
+            }
+            return result
+        }
+
+        while (pos < data.size) {
+            val key = readVarint().toInt()
+            val number = key ushr 3
+            when (key and 0x07) {
+                0 -> fields[number] = readVarint()
+                1 -> pos += 8
+                2 -> {
+                    val length = readVarint().toInt()
+                    if (length < 0 || pos + length > data.size) return fields
+                    fields[number] = data.copyOfRange(pos, pos + length)
+                    pos += length
+                }
+                5 -> pos += 4
+                else -> return fields
+            }
+        }
+        return fields
+    }
+
     const val GPS_RECORD_SIZE = 53
 
     /**

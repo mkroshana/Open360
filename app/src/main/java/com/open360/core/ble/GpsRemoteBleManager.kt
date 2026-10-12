@@ -474,10 +474,17 @@ class GpsRemoteBleManager(private val context: Context) {
             Log.d(TAG, "Received camera message: code=0x${Integer.toHexString(inner.commandCode)}, seq=${inner.sequence}, size=${inner.payload.size}, payload=$hexPayload")
 
             when (inner.commandCode) {
-                Go2BleProtocol.CMD_CALIBRATE_GYRO,
-                Go2BleProtocol.NOTIF_BATTERY_UPDATE,
-                Go2BleProtocol.NOTIF_BATTERY_STATE_GO3 -> {
+                Go2BleProtocol.CMD_CALIBRATE_GYRO -> {
                     parseBatteryUpdate(inner.payload)
+                }
+
+                Go2BleProtocol.NOTIF_BATTERY_UPDATE -> {
+                    Go2BleProtocol.parseBatteryUpdateNotification(inner.payload)?.let { battery ->
+                        _state.update {
+                            it.copy(batteryPercent = battery.levelPercent, isCharging = battery.onExternalPower)
+                        }
+                        Log.i(TAG, "Battery update: ${battery.levelPercent}%, external power=${battery.onExternalPower}")
+                    }
                 }
 
                 Go2BleProtocol.NOTIF_CURRENT_CAPTURE_STATUS -> {
