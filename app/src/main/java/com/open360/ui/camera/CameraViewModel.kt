@@ -115,7 +115,6 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
 
     fun wakeUpCamera(serialSuffix: String? = null) {
         val suffix = serialSuffix ?: "8JY3HF"
-        gattServer.burstWakeUpBeacon(suffix)
         bleManager.startWakeUpBroadcast(suffix)
         viewModelScope.launch {
             delay(1500)

@@ -35,6 +35,7 @@ import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import java.util.UUID
+import java.util.concurrent.ConcurrentLinkedQueue
 
 data class InstaGpsRemoteServerState(
     val isServerRunning: Boolean = false,
@@ -61,7 +62,7 @@ data class InstaGpsRemoteServerState(
  *     - CE83: Remote static info read (returns 0x01, 0x02).
  * - Secondary Service 0xD0FF:
  *     - Hardware and version info characteristics (FFD1..FFE0).
- * - Connectable LE Advertising with device name "Insta360 GPS Remote".
+ * - Connectable LE Advertising of the ORBIT beacon, with device name "Insta360 GPS Remote" in the scan response.
  * - 10 Hz NMEA GPS streaming loop maintaining BLE keep-alive with status 'V' when waiting for fix.
  */
 class InstaGpsRemoteGattServer(private val context: Context) {
@@ -106,7 +107,9 @@ class InstaGpsRemoteGattServer(private val context: Context) {
     private var latestTelemetry = GpsTelemetry()
     private var gpsStreamJob: Job? = null
     private var originalDeviceName: String? = null
+    private var beaconSerialSuffix = "8JY3HF"
     private var advertiser: BluetoothLeAdvertiser? = null
+    private val pendingServices = ConcurrentLinkedQueue<BluetoothGattService>()
 
     private fun hasPermission(permission: String): Boolean {
         return ContextCompat.checkSelfPermission(context, permission) == PackageManager.PERMISSION_GRANTED
@@ -146,17 +149,13 @@ class InstaGpsRemoteGattServer(private val context: Context) {
         override fun onConnectionStateChange(device: BluetoothDevice, status: Int, newState: Int) {
             Log.i(TAG, "Connection state changed: device=${device.address}, status=$status, newState=$newState")
             if (newState == BluetoothProfile.STATE_CONNECTED) {
-                connectedDevice = device
-                buttonSequenceNumber = 0
-                _state.update {
-                    it.copy(
-                        isCameraConnected = true,
-                        cameraAddress = device.address,
-                        cameraName = device.name ?: "Insta360 Camera",
-                        lastError = null
-                    )
+                // Fires for every LE link on the phone, not only the camera, so a device is
+                // treated as the camera only once it uses the CE80 service (see bindCamera).
+                // Android drops an LE link ~4 s after it loses its last local holder, so hold
+                // this one while waiting to see whether it is the camera.
+                if (connectedDevice == null) {
+                    gattServer?.connect(device, false)
                 }
-                startGpsStreamLoop()
             } else if (newState == BluetoothProfile.STATE_DISCONNECTED) {
                 if (connectedDevice?.address == device.address) {
                     connectedDevice = null
@@ -173,8 +172,17 @@ class InstaGpsRemoteGattServer(private val context: Context) {
                     if (_state.value.isServerRunning) {
                         startAdvertising()
                     }
+                } else if (connectedDevice == null && _state.value.isServerRunning) {
+                    // A central that connected through our advertisement without using CE80
+                    // still ended it, so start it again.
+                    startAdvertising()
                 }
             }
+        }
+
+        override fun onServiceAdded(status: Int, service: BluetoothGattService) {
+            Log.i(TAG, "Service added: ${service.uuid}, status=$status")
+            addNextService()
         }
 
         @SuppressLint("MissingPermission")
@@ -219,6 +227,7 @@ class InstaGpsRemoteGattServer(private val context: Context) {
             }
 
             if (characteristic.uuid == CHAR_WRITE_CE81 && value != null) {
+                bindCamera(device)
                 handleCameraIncomingPacket(value)
             }
         }
@@ -253,6 +262,7 @@ class InstaGpsRemoteGattServer(private val context: Context) {
             value: ByteArray?
         ) {
             if (descriptor.uuid == CCCD_UUID && value != null) {
+                bindCamera(device)
                 notificationsEnabled = value.contentEquals(BluetoothGattDescriptor.ENABLE_NOTIFICATION_VALUE) ||
                         value.contentEquals(BluetoothGattDescriptor.ENABLE_INDICATION_VALUE)
                 Log.i(TAG, "CCCD notification subscription: $notificationsEnabled for ${device.address}")
@@ -265,6 +275,28 @@ class InstaGpsRemoteGattServer(private val context: Context) {
         override fun onMtuChanged(device: BluetoothDevice, mtu: Int) {
             Log.i(TAG, "MTU changed to $mtu for device ${device.address}")
         }
+    }
+
+    /**
+     * Marks [device] as the connected camera the first time it writes to CE81 or the CE82 CCCD.
+     */
+    @SuppressLint("MissingPermission")
+    private fun bindCamera(device: BluetoothDevice) {
+        if (connectedDevice?.address == device.address) return
+        Log.i(TAG, "Camera bound on CE80: ${device.address}")
+        connectedDevice = device
+        notificationsEnabled = false
+        buttonSequenceNumber = 0
+        gattServer?.connect(device, false)
+        _state.update {
+            it.copy(
+                isCameraConnected = true,
+                cameraAddress = device.address,
+                cameraName = device.name ?: "Insta360 Camera",
+                lastError = null
+            )
+        }
+        startGpsStreamLoop()
     }
 
     private fun handleCameraIncomingPacket(data: ByteArray) {
@@ -321,13 +353,27 @@ class InstaGpsRemoteGattServer(private val context: Context) {
         }
         gattServer = server
 
-        setupGattServices(server)
-        startAdvertising()
+        // Advertising starts from addNextService once every service is registered.
         _state.update { it.copy(isServerRunning = true, lastError = null) }
+        setupGattServices()
         return true
     }
 
-    private fun setupGattServices(server: BluetoothGattServer) {
+    /**
+     * Adds queued services one at a time. BluetoothGattServer tracks a single pending service, so
+     * a second addService before onServiceAdded leaves it unable to route any read or write.
+     */
+    @SuppressLint("MissingPermission")
+    private fun addNextService() {
+        val next = pendingServices.poll()
+        if (next != null) {
+            gattServer?.addService(next)
+        } else {
+            startAdvertising()
+        }
+    }
+
+    private fun setupGattServices() {
         // Primary Service: 0xCE80
         val serviceCe80 = BluetoothGattService(SERVICE_CE80, BluetoothGattService.SERVICE_TYPE_PRIMARY)
 
@@ -358,10 +404,9 @@ class InstaGpsRemoteGattServer(private val context: Context) {
         )
         serviceCe80.addCharacteristic(charCe83)
 
-        server.addService(serviceCe80)
-
-        // Secondary Service: 0xD0FF
-        val serviceD0ff = BluetoothGattService(SERVICE_D0FF, BluetoothGattService.SERVICE_TYPE_SECONDARY)
+        // Second service 0xD0FF. Registered as primary: an un-included secondary service
+        // cannot be found by service discovery.
+        val serviceD0ff = BluetoothGattService(SERVICE_D0FF, BluetoothGattService.SERVICE_TYPE_PRIMARY)
         serviceD0ff.addCharacteristic(BluetoothGattCharacteristic(CHAR_FFD1, BluetoothGattCharacteristic.PROPERTY_WRITE or BluetoothGattCharacteristic.PROPERTY_WRITE_NO_RESPONSE, BluetoothGattCharacteristic.PERMISSION_WRITE))
         serviceD0ff.addCharacteristic(BluetoothGattCharacteristic(CHAR_FFD2, BluetoothGattCharacteristic.PROPERTY_READ, BluetoothGattCharacteristic.PERMISSION_READ))
         serviceD0ff.addCharacteristic(BluetoothGattCharacteristic(CHAR_FFD3, BluetoothGattCharacteristic.PROPERTY_READ, BluetoothGattCharacteristic.PERMISSION_READ))
@@ -372,7 +417,10 @@ class InstaGpsRemoteGattServer(private val context: Context) {
         serviceD0ff.addCharacteristic(BluetoothGattCharacteristic(CHAR_FFF2, BluetoothGattCharacteristic.PROPERTY_WRITE, BluetoothGattCharacteristic.PERMISSION_WRITE))
         serviceD0ff.addCharacteristic(BluetoothGattCharacteristic(CHAR_FFE0, BluetoothGattCharacteristic.PROPERTY_READ, BluetoothGattCharacteristic.PERMISSION_READ))
 
-        server.addService(serviceD0ff)
+        pendingServices.clear()
+        pendingServices.add(serviceCe80)
+        pendingServices.add(serviceD0ff)
+        addNextService()
     }
 
     @SuppressLint("MissingPermission")
@@ -399,12 +447,16 @@ class InstaGpsRemoteGattServer(private val context: Context) {
             .setTimeout(0)
             .build()
 
+        // Same layout as the real remote: the ORBIT beacon carrying the camera serial is the
+        // connectable advertisement and the name sits in the scan response. With flags it fills
+        // the 31-byte advertisement exactly, so the service UUID goes in the scan response too.
         val data = AdvertiseData.Builder()
-            .addServiceUuid(ParcelUuid(SERVICE_CE80))
+            .addManufacturerData(0x004C, buildOrbitPayload(beaconSerialSuffix))
             .setIncludeDeviceName(false)
             .build()
 
         val scanResponse = AdvertiseData.Builder()
+            .addServiceUuid(ParcelUuid(SERVICE_CE80))
             .setIncludeDeviceName(true)
             .build()
 
@@ -427,70 +479,37 @@ class InstaGpsRemoteGattServer(private val context: Context) {
     }
 
     /**
-     * Broadcasts the Apple iBeacon-style ORBIT wake-up beacon for a sleeping camera.
+     * Restarts advertising with the ORBIT beacon for [serialSuffix]. A sleeping camera powers on
+     * when it sees its own serial in this beacon.
      */
-    @SuppressLint("MissingPermission")
-    fun burstWakeUpBeacon(serialSuffix: String = "8JY3HF", durationMs: Long = 3000L) {
-        if (!canAdvertise()) return
-        val adv = bluetoothAdapter?.bluetoothLeAdvertiser ?: return
+    fun startWakeBeacon(serialSuffix: String = "8JY3HF") {
+        beaconSerialSuffix = serialSuffix
+        startAdvertising()
+    }
 
-        scope.launch {
-            try {
-                stopAdvertising()
-
-                val wakePayload = ByteArray(24).apply {
-                    this[0] = 0x02
-                    this[1] = 0x15
-                    this[2] = 0x09
-                    this[3] = 'O'.code.toByte()
-                    this[4] = 'R'.code.toByte()
-                    this[5] = 'B'.code.toByte()
-                    this[6] = 'I'.code.toByte()
-                    this[7] = 'T'.code.toByte()
-                    this[8] = 0x09
-                    this[9] = 0xFF.toByte()
-                    this[10] = 0x0F
-                    this[11] = 0x00
-                    val suffixBytes = serialSuffix.take(6).toByteArray(Charsets.US_ASCII)
-                    for (i in suffixBytes.indices) {
-                        this[12 + i] = suffixBytes[i]
-                    }
-                    this[18] = 0x00
-                    this[19] = 0x00
-                    this[20] = 0x00
-                    this[21] = 0x00
-                    this[22] = 0xE4.toByte()
-                    this[23] = 0x01
-                }
-
-                val settings = AdvertiseSettings.Builder()
-                    .setAdvertiseMode(AdvertiseSettings.ADVERTISE_MODE_LOW_LATENCY)
-                    .setTxPowerLevel(AdvertiseSettings.ADVERTISE_TX_POWER_HIGH)
-                    .setConnectable(true)
-                    .setTimeout(0)
-                    .build()
-
-                val wakeData = AdvertiseData.Builder()
-                    .addManufacturerData(0x004C, wakePayload)
-                    .setIncludeDeviceName(false)
-                    .build()
-
-                val wakeCallback = object : AdvertiseCallback() {
-                    override fun onStartSuccess(settingsInEffect: AdvertiseSettings?) {
-                        Log.i(TAG, "Wake beacon broadcast started for serial suffix $serialSuffix")
-                    }
-                }
-
-                adv.startAdvertising(settings, wakeData, null, wakeCallback)
-                delay(durationMs)
-                adv.stopAdvertising(wakeCallback)
-
-                // Return to normal connectable GPS remote advertising
-                startAdvertising()
-            } catch (e: Exception) {
-                Log.e(TAG, "Error during wake beacon broadcast: ${e.message}")
-                startAdvertising()
+    /**
+     * Builds the 24-byte ORBIT manufacturer payload (iBeacon envelope) for a camera serial suffix.
+     */
+    private fun buildOrbitPayload(serialSuffix: String): ByteArray {
+        return ByteArray(24).apply {
+            this[0] = 0x02
+            this[1] = 0x15
+            this[2] = 0x09
+            this[3] = 'O'.code.toByte()
+            this[4] = 'R'.code.toByte()
+            this[5] = 'B'.code.toByte()
+            this[6] = 'I'.code.toByte()
+            this[7] = 'T'.code.toByte()
+            this[8] = 0x09
+            this[9] = 0xFF.toByte()
+            this[10] = 0x0F
+            this[11] = 0x00
+            val suffixBytes = serialSuffix.take(6).toByteArray(Charsets.US_ASCII)
+            for (i in suffixBytes.indices) {
+                this[12 + i] = suffixBytes[i]
             }
+            this[22] = 0xE4.toByte()
+            this[23] = 0x01
         }
     }
 
@@ -613,6 +632,7 @@ class InstaGpsRemoteGattServer(private val context: Context) {
             Log.w(TAG, "Error closing GATT server: ${e.message}")
         }
         gattServer = null
+        pendingServices.clear()
         notifyCharacteristicCe82 = null
         connectedDevice = null
         notificationsEnabled = false
