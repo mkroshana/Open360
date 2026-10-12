@@ -6,6 +6,8 @@ import androidx.lifecycle.viewModelScope
 import com.open360.core.ble.BleCameraState
 import com.open360.core.ble.BleConnectionStatus
 import com.open360.core.ble.GpsRemoteBleManager
+import com.open360.core.ble.InstaGpsRemoteGattServer
+import com.open360.core.ble.InstaGpsRemoteServerState
 import com.open360.core.gps.GpsTelemetry
 import com.open360.core.gps.GpsTrackerEngine
 import com.open360.core.gps.GpsTrackerService
@@ -21,16 +23,21 @@ import kotlinx.coroutines.launch
 
 data class RemoteUiState(
     val bleState: BleCameraState = BleCameraState(),
+    val serverState: InstaGpsRemoteServerState = InstaGpsRemoteServerState(),
     val gpsState: GpsTelemetry = GpsTelemetry(),
     val currentMode: CaptureMode = CaptureMode.VIDEO,
     val isSpeedMph: Boolean = false,
     val recordingDurationSeconds: Long = 0L,
-    val keepGpsActiveInBackground: Boolean = true
+    val keepGpsActiveInBackground: Boolean = true,
+    val isConnected: Boolean = false,
+    val isRecording: Boolean = false,
+    val cameraDisplayInfo: String? = null
 )
 
 class CameraViewModel(application: Application) : AndroidViewModel(application) {
 
     val bleManager = GpsRemoteBleManager(application)
+    val gattServer = InstaGpsRemoteGattServer(application)
     val gpsEngine = GpsTrackerEngine(application)
 
     private val _uiState = MutableStateFlow(RemoteUiState())
@@ -40,43 +47,92 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
     private var gpsStreamJob: Job? = null
 
     init {
-        // Collect BLE state updates
+        // Start the GPS Remote GATT Server immediately so the camera can discover it under Bluetooth Remote
+        gattServer.startServer()
+
+        // Collect GATT server state updates (Architecture A: GPS Remote)
+        viewModelScope.launch {
+            gattServer.state.collect { srv ->
+                _uiState.update { current ->
+                    val connected = srv.isCameraConnected || current.bleState.connectionStatus == BleConnectionStatus.CONNECTED
+                    val recording = srv.isRecording || current.bleState.isRecording
+                    val duration = if (srv.isRecording && srv.recordingDurationSeconds > 0) {
+                        srv.recordingDurationSeconds
+                    } else {
+                        current.recordingDurationSeconds
+                    }
+                    current.copy(
+                        serverState = srv,
+                        isConnected = connected,
+                        isRecording = recording,
+                        recordingDurationSeconds = duration,
+                        cameraDisplayInfo = srv.cameraDisplayString
+                    )
+                }
+
+                if (srv.isRecording && recordingTimerJob == null) {
+                    startRecordingTimer()
+                } else if (!srv.isRecording && recordingTimerJob != null && !_uiState.value.bleState.isRecording) {
+                    stopRecordingTimer()
+                }
+            }
+        }
+
+        // Collect BLE state updates (Architecture B fallback)
         viewModelScope.launch {
             bleManager.state.collect { ble ->
-                _uiState.update { it.copy(bleState = ble) }
+                _uiState.update { current ->
+                    val connected = current.serverState.isCameraConnected || ble.connectionStatus == BleConnectionStatus.CONNECTED
+                    val recording = current.serverState.isRecording || ble.isRecording
+                    current.copy(
+                        bleState = ble,
+                        isConnected = connected,
+                        isRecording = recording
+                    )
+                }
 
-                // Automatically manage timer and GPS stream on recording state change
                 if (ble.isRecording && recordingTimerJob == null) {
                     startRecordingTimer()
                     startGpsTelemetryInjection()
-                } else if (!ble.isRecording && recordingTimerJob != null) {
+                } else if (!ble.isRecording && recordingTimerJob != null && !_uiState.value.serverState.isRecording) {
                     stopRecordingTimer()
                     stopGpsTelemetryInjection()
                 }
             }
         }
 
-        // Collect GPS updates
+        // Collect GPS updates and feed directly into the 10 Hz GATT server stream
         viewModelScope.launch {
             gpsEngine.telemetry.collect { gps ->
                 _uiState.update { it.copy(gpsState = gps) }
+                gattServer.updateGpsTelemetry(gps)
             }
         }
 
-        // Start GPS tracking immediately so speed and location are available on screen
+        // Start GPS tracking immediately so speed and location are available
         gpsEngine.startTracking()
     }
 
     fun wakeUpCamera(serialSuffix: String? = null) {
-        bleManager.startWakeUpBroadcast(serialSuffix)
-        // Also initiate scan after broadcasting wake beacon
+        val suffix = serialSuffix ?: "8JY3HF"
+        gattServer.burstWakeUpBeacon(suffix)
+        bleManager.startWakeUpBroadcast(suffix)
         viewModelScope.launch {
             delay(1500)
-            bleManager.startScanAndConnect(serialSuffix)
+            bleManager.startScanAndConnect(suffix)
         }
     }
 
+    fun startGpsRemoteServer() {
+        gattServer.startServer()
+    }
+
+    fun stopGpsRemoteServer() {
+        gattServer.stopServer()
+    }
+
     fun connectBle() {
+        gattServer.startAdvertising()
         bleManager.startScanAndConnect()
     }
 
@@ -85,6 +141,7 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
     }
 
     fun disconnectBle() {
+        gattServer.stopAdvertising()
         bleManager.disconnect()
         stopRecordingTimer()
         stopGpsTelemetryInjection()
@@ -107,24 +164,28 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
     }
 
     fun onShutterClicked() {
+        // Send remote button command over CE82 (Architecture A)
+        gattServer.sendShutter()
+
+        // Also trigger via Architecture B if connected
         val current = _uiState.value
-        when (current.currentMode) {
-            CaptureMode.PHOTO -> {
-                bleManager.takePhoto()
-            }
-            CaptureMode.VIDEO -> {
-                if (current.bleState.isRecording) {
-                    bleManager.stopRecording()
-                } else {
-                    bleManager.startRecording()
+        if (current.bleState.connectionStatus == BleConnectionStatus.CONNECTED) {
+            when (current.currentMode) {
+                CaptureMode.PHOTO -> bleManager.takePhoto()
+                CaptureMode.VIDEO -> {
+                    if (current.bleState.isRecording) {
+                        bleManager.stopRecording()
+                    } else {
+                        bleManager.startRecording()
+                    }
                 }
             }
         }
     }
 
     fun cycleMode() {
+        gattServer.sendMode()
         bleManager.cycleMode()
-        // Toggle UI mode to reflect cycle
         _uiState.update {
             val next = if (it.currentMode == CaptureMode.VIDEO) CaptureMode.PHOTO else CaptureMode.VIDEO
             it.copy(currentMode = next)
@@ -132,10 +193,12 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
     }
 
     fun wakeScreen() {
+        gattServer.sendScreenToggle()
         bleManager.wakeScreen()
     }
 
     fun powerOff() {
+        gattServer.sendPowerOff()
         bleManager.powerOff()
     }
 
@@ -149,7 +212,13 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
         recordingTimerJob = viewModelScope.launch {
             while (isActive) {
                 delay(1000)
-                _uiState.update { it.copy(recordingDurationSeconds = it.recordingDurationSeconds + 1) }
+                _uiState.update {
+                    if (it.serverState.isRecording && it.serverState.recordingDurationSeconds > 0) {
+                        it.copy(recordingDurationSeconds = it.serverState.recordingDurationSeconds)
+                    } else {
+                        it.copy(recordingDurationSeconds = it.recordingDurationSeconds + 1)
+                    }
+                }
             }
         }
 
@@ -176,7 +245,7 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
                 if (gps.hasFix) {
                     bleManager.injectGps(gps.latitude, gps.longitude, gps.altitudeMeters)
                 }
-                delay(1000) // 1 Hz injection
+                delay(1000)
             }
         }
     }
@@ -189,6 +258,7 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
     override fun onCleared() {
         super.onCleared()
         gpsEngine.stopTracking()
+        gattServer.stopServer()
         bleManager.disconnect()
         recordingTimerJob?.cancel()
         gpsStreamJob?.cancel()

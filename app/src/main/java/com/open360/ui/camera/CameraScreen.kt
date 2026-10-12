@@ -36,6 +36,7 @@ import androidx.compose.material.icons.filled.FiberManualRecord
 import androidx.compose.material.icons.filled.GpsFixed
 import androidx.compose.material.icons.filled.GpsNotFixed
 import androidx.compose.material.icons.filled.Height
+import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.LocationOn
 import androidx.compose.material.icons.filled.Power
 import androidx.compose.material.icons.filled.PowerSettingsNew
@@ -85,8 +86,28 @@ fun CameraScreen(
 ) {
     val uiState by viewModel.uiState.collectAsState()
     val ble = uiState.bleState
+    val server = uiState.serverState
     val gps = uiState.gpsState
     val haptic = LocalHapticFeedback.current
+
+    val deviceTitle = when {
+        server.isCameraConnected -> {
+            server.cameraSerial?.let { "Insta360 ($it)" } ?: "Insta360 GO 3S"
+        }
+        ble.connectionStatus == BleConnectionStatus.CONNECTED -> {
+            ble.deviceName ?: "Insta360 GO 3S"
+        }
+        server.isAdvertising -> {
+            "Insta360 GPS Remote"
+        }
+        else -> "Not Connected"
+    }
+
+    val deviceSubtitle = when {
+        uiState.isConnected -> "Connected"
+        server.isAdvertising -> "Broadcasting"
+        else -> "Disconnected"
+    }
 
     Scaffold(
         topBar = {
@@ -99,36 +120,31 @@ fun CameraScreen(
                             fontWeight = FontWeight.Bold
                         )
                         Text(
-                            text = if (ble.connectionStatus == BleConnectionStatus.CONNECTED) {
-                                ble.deviceName ?: "Insta360 GO 3S"
-                            } else {
-                                "Not Connected"
-                            },
+                            text = "$deviceTitle — $deviceSubtitle",
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
                     }
                 },
                 actions = {
-                    if (ble.connectionStatus == BleConnectionStatus.CONNECTED) {
+                    if (uiState.isConnected) {
                         IconButton(onClick = { viewModel.queryBattery() }) {
                             Icon(Icons.Default.Refresh, contentDescription = "Refresh Battery")
                         }
                     }
                     IconButton(
                         onClick = {
-                            if (ble.connectionStatus == BleConnectionStatus.CONNECTED) {
+                            if (uiState.isConnected) {
                                 viewModel.disconnectBle()
                             } else {
                                 viewModel.connectBle()
                             }
                         }
                     ) {
-                        val icon = when (ble.connectionStatus) {
-                            BleConnectionStatus.CONNECTED -> Icons.Default.BluetoothConnected
-                            BleConnectionStatus.SCANNING,
-                            BleConnectionStatus.CONNECTING -> Icons.Default.Sync
-                            BleConnectionStatus.DISCONNECTED -> Icons.Default.Bluetooth
+                        val icon = when {
+                            uiState.isConnected -> Icons.Default.BluetoothConnected
+                            server.isAdvertising || ble.connectionStatus == BleConnectionStatus.SCANNING -> Icons.Default.Sync
+                            else -> Icons.Default.Bluetooth
                         }
                         Icon(icon, contentDescription = "Bluetooth Status")
                     }
@@ -149,7 +165,7 @@ fun CameraScreen(
         ) {
             // Camera Status Card
             CameraStatusCard(
-                bleState = ble,
+                uiState = uiState,
                 onWakeUp = {
                     haptic.performHapticFeedback(HapticFeedbackType.LongPress)
                     viewModel.wakeUpCamera()
@@ -157,7 +173,7 @@ fun CameraScreen(
                 onWakeScreen = { viewModel.wakeScreen() },
                 onPowerOff = { viewModel.powerOff() },
                 onConnectToggle = {
-                    if (ble.connectionStatus == BleConnectionStatus.CONNECTED) {
+                    if (uiState.isConnected) {
                         viewModel.disconnectBle()
                     } else {
                         viewModel.connectBle()
@@ -166,20 +182,22 @@ fun CameraScreen(
             )
 
             // Live GPS Telemetry Card
+            val lastGpsSentTime = if (server.lastGpsSentTimeMs > 0) server.lastGpsSentTimeMs else ble.lastGpsSentTimeMs
             GpsTelemetryCard(
                 gps = gps,
                 isSpeedMph = uiState.isSpeedMph,
-                isRecording = ble.isRecording,
-                lastGpsSentTimeMs = ble.lastGpsSentTimeMs,
+                isRecording = uiState.isRecording,
+                isCameraConnected = uiState.isConnected,
+                lastGpsSentTimeMs = lastGpsSentTime,
                 onToggleSpeedUnit = { viewModel.toggleSpeedUnit() }
             )
 
             // Primary Camera Shutter & Mode Controller
             CameraControlCard(
                 currentMode = uiState.currentMode,
-                isRecording = ble.isRecording,
+                isRecording = uiState.isRecording,
                 durationSeconds = uiState.recordingDurationSeconds,
-                isConnected = ble.connectionStatus == BleConnectionStatus.CONNECTED,
+                isConnected = uiState.isConnected,
                 onModeSelected = { viewModel.setMode(it) },
                 onCycleMode = { viewModel.cycleMode() },
                 onShutterClick = {
@@ -201,12 +219,15 @@ fun CameraScreen(
 
 @Composable
 fun CameraStatusCard(
-    bleState: com.open360.core.ble.BleCameraState,
+    uiState: RemoteUiState,
     onWakeUp: () -> Unit,
     onWakeScreen: () -> Unit,
     onPowerOff: () -> Unit,
     onConnectToggle: () -> Unit
 ) {
+    val ble = uiState.bleState
+    val server = uiState.serverState
+
     ElevatedCard(
         modifier = Modifier.fillMaxWidth(),
         shape = RoundedCornerShape(16.dp)
@@ -223,23 +244,44 @@ fun CameraStatusCard(
                     fontWeight = FontWeight.SemiBold
                 )
 
-                // Battery status readout
-                if (bleState.batteryPercent != null) {
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(4.dp)
-                    ) {
-                        Icon(
-                            imageVector = if (bleState.isCharging) Icons.Default.BatteryChargingFull else Icons.Default.BatteryFull,
-                            contentDescription = "Battery Level",
-                            modifier = Modifier.size(20.dp),
-                            tint = if (bleState.batteryPercent > 20) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.error
-                        )
-                        Text(
-                            text = "${bleState.batteryPercent}%",
-                            style = MaterialTheme.typography.bodyMedium,
-                            fontWeight = FontWeight.Medium
-                        )
+                // Readouts: Mode string or Battery Level
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    if (server.cameraDisplayString != null) {
+                        Box(
+                            modifier = Modifier
+                                .clip(RoundedCornerShape(6.dp))
+                                .background(MaterialTheme.colorScheme.secondaryContainer)
+                                .padding(horizontal = 6.dp, vertical = 2.dp)
+                        ) {
+                            Text(
+                                text = server.cameraDisplayString,
+                                style = MaterialTheme.typography.labelSmall,
+                                fontWeight = FontWeight.Bold,
+                                color = MaterialTheme.colorScheme.onSecondaryContainer
+                            )
+                        }
+                    }
+
+                    if (ble.batteryPercent != null) {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(4.dp)
+                        ) {
+                            Icon(
+                                imageVector = if (ble.isCharging) Icons.Default.BatteryChargingFull else Icons.Default.BatteryFull,
+                                contentDescription = "Battery Level",
+                                modifier = Modifier.size(20.dp),
+                                tint = if (ble.batteryPercent > 20) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.error
+                            )
+                            Text(
+                                text = "${ble.batteryPercent}%",
+                                style = MaterialTheme.typography.bodyMedium,
+                                fontWeight = FontWeight.Medium
+                            )
+                        }
                     }
                 }
             }
@@ -247,25 +289,25 @@ fun CameraStatusCard(
             Spacer(modifier = Modifier.height(12.dp))
 
             // Connection state badge
-            val statusColor = when (bleState.connectionStatus) {
-                BleConnectionStatus.CONNECTED -> Color(0xFF2E7D32)
-                BleConnectionStatus.CONNECTING,
-                BleConnectionStatus.SCANNING -> Color(0xFFE65100)
-                BleConnectionStatus.DISCONNECTED -> MaterialTheme.colorScheme.outline
+            val statusColor = when {
+                server.isCameraConnected -> Color(0xFF2E7D32)
+                ble.connectionStatus == BleConnectionStatus.CONNECTED -> Color(0xFF2E7D32)
+                server.isAdvertising || ble.connectionStatus == BleConnectionStatus.SCANNING -> Color(0xFFE65100)
+                else -> MaterialTheme.colorScheme.outline
             }
 
-            val statusText = when (bleState.connectionStatus) {
-                BleConnectionStatus.CONNECTED -> "Connected"
-                BleConnectionStatus.CONNECTING -> "Connecting..."
-                BleConnectionStatus.SCANNING -> "Scanning for Camera..."
-                BleConnectionStatus.DISCONNECTED -> "Disconnected"
+            val statusText = when {
+                server.isCameraConnected -> "GPS Remote Connected (10 Hz NMEA)"
+                ble.connectionStatus == BleConnectionStatus.CONNECTED -> "Connected"
+                server.isAdvertising -> "Broadcasting as Insta360 GPS Remote"
+                ble.connectionStatus == BleConnectionStatus.SCANNING -> "Scanning for Camera..."
+                else -> "Disconnected"
             }
 
-            val statusIcon = when (bleState.connectionStatus) {
-                BleConnectionStatus.CONNECTED -> Icons.Default.CheckCircle
-                BleConnectionStatus.CONNECTING,
-                BleConnectionStatus.SCANNING -> Icons.Default.Sync
-                BleConnectionStatus.DISCONNECTED -> Icons.Default.BluetoothDisabled
+            val statusIcon = when {
+                uiState.isConnected -> Icons.Default.CheckCircle
+                server.isAdvertising || ble.connectionStatus == BleConnectionStatus.SCANNING -> Icons.Default.Sync
+                else -> Icons.Default.BluetoothDisabled
             }
 
             Row(
@@ -291,9 +333,35 @@ fun CameraStatusCard(
                 )
             }
 
-            AnimatedVisibility(visible = bleState.lastError != null) {
+            // Connection instructions when camera is not connected
+            if (!uiState.isConnected) {
+                Spacer(modifier = Modifier.height(8.dp))
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(8.dp))
+                        .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.6f))
+                        .padding(horizontal = 10.dp, vertical = 8.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(6.dp)
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.Info,
+                        contentDescription = "Instructions",
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.size(16.dp)
+                    )
+                    Text(
+                        text = "On camera: Settings > Bluetooth Remote > select 'Insta360 GPS Remote'",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+            }
+
+            AnimatedVisibility(visible = server.lastError != null || ble.lastError != null) {
                 Text(
-                    text = bleState.lastError ?: "",
+                    text = server.lastError ?: ble.lastError ?: "",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.error,
                     modifier = Modifier.padding(top = 8.dp)
@@ -330,11 +398,11 @@ fun CameraStatusCard(
                         modifier = Modifier.size(18.dp)
                     )
                     Spacer(modifier = Modifier.width(6.dp))
-                    Text(text = if (bleState.connectionStatus == BleConnectionStatus.CONNECTED) "Disconnect" else "Scan")
+                    Text(text = if (uiState.isConnected) "Disconnect" else "Broadcast")
                 }
             }
 
-            if (bleState.connectionStatus == BleConnectionStatus.CONNECTED) {
+            if (uiState.isConnected) {
                 Spacer(modifier = Modifier.height(8.dp))
                 Row(
                     modifier = Modifier.fillMaxWidth(),
@@ -376,6 +444,7 @@ fun GpsTelemetryCard(
     gps: com.open360.core.gps.GpsTelemetry,
     isSpeedMph: Boolean,
     isRecording: Boolean,
+    isCameraConnected: Boolean = false,
     lastGpsSentTimeMs: Long,
     onToggleSpeedUnit: () -> Unit
 ) {
@@ -487,16 +556,15 @@ fun GpsTelemetryCard(
             Spacer(modifier = Modifier.height(12.dp))
 
             // Live stream injection badge
-            val streamActive = isRecording && gps.hasFix
+            val streamActive = isCameraConnected && gps.hasFix
             val badgeBg = if (streamActive) Color(0xFF2E7D32).copy(alpha = 0.12f) else MaterialTheme.colorScheme.surfaceVariant
             val badgeColor = if (streamActive) Color(0xFF2E7D32) else MaterialTheme.colorScheme.onSurfaceVariant
 
-            val streamText = if (streamActive) {
-                "Injecting Telemetry to Video (1 Hz)"
-            } else if (!gps.hasFix) {
-                "Waiting for GPS Fix"
-            } else {
-                "Telemetry Stream Ready"
+            val streamText = when {
+                streamActive && isRecording -> "Multiplexing Telemetry to Video (10 Hz NMEA)"
+                streamActive -> "GPS Remote Streaming (10 Hz NMEA)"
+                isCameraConnected && !gps.hasFix -> "Waiting for GPS Fix (Liveness Active)"
+                else -> "Telemetry Stream Ready"
             }
 
             Row(
