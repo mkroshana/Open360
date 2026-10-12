@@ -25,6 +25,7 @@ import android.os.ParcelUuid
 import android.os.SystemClock
 import android.util.Log
 import androidx.core.content.ContextCompat
+import com.open360.core.gps.GpsSendPacer
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -86,6 +87,11 @@ class GpsRemoteBleManager(private val context: Context) {
         // 10 s of samples. Beyond this the link is not keeping up and the oldest are dropped.
         private const val MAX_QUEUED_GPS_RECORDS = 100
 
+        // Samples are made ten a second. Sending is held to a little more than that, so a
+        // backlog clears without the burst that makes the camera drop records.
+        private const val GPS_SEND_RECORDS_PER_SECOND = 12.0
+        private const val GPS_SEND_MAX_BURST = 4
+
         // Time from the camera's start notice to the first video frame on a GO 3S, worked out as
         // the stop minus the video length, so it takes the video to end at the stop. It depends
         // on who started the recording. The notice comes about 0.2 s after the app's start
@@ -139,6 +145,10 @@ class GpsRemoteBleManager(private val context: Context) {
     @Volatile
     private var startCommandAtMs: Long? = null
     private val gpsQueue = ConcurrentLinkedQueue<ByteArray>()
+
+    // Both are used only by the write queue worker
+    private val gpsPacer = GpsSendPacer(GPS_SEND_RECORDS_PER_SECOND, GPS_SEND_MAX_BURST)
+    private var gpsFlushRetry: Job? = null
 
     // Placed on the write queue to tell the worker that gpsQueue has records to send
     private val gpsReady = ByteArray(0)
@@ -769,9 +779,9 @@ class GpsRemoteBleManager(private val context: Context) {
     /**
      * Queues one GPS sample for the camera.
      *
-     * Every sample is sent, in order, as soon as the link is free, because the stored records
-     * appear to be placed on the video by their position in the stream. When the link falls
-     * behind, waiting samples go out together, up to what fits in one write.
+     * Every sample is sent, in order, because the stored records are placed on the video by
+     * their position in the stream. Samples that are waiting go out at a steady pace, not all
+     * together: the camera drops records that arrive in a burst.
      */
     fun addGpsFix(
         timestampMs: Long,
@@ -795,22 +805,38 @@ class GpsRemoteBleManager(private val context: Context) {
     }
 
     private suspend fun flushGps() {
-        val max = Go2BleProtocol.gpsRecordsPerPacket(attMtu)
+        val waiting = gpsQueue.size
+        if (waiting == 0) return
+
+        val max = gpsPacer.take(
+            SystemClock.elapsedRealtime(),
+            minOf(waiting, Go2BleProtocol.gpsRecordsPerPacket(attMtu))
+        )
         val batch = ArrayList<ByteArray>(max)
         while (batch.size < max) {
             batch.add(gpsQueue.poll() ?: break)
         }
-        if (batch.isEmpty()) return
 
-        val seq = nextSeq()
-        val inner = Go2BleProtocol.encodeInnerMessage(
-            Go2BleProtocol.CMD_UPLOAD_GPS,
-            seq,
-            Go2BleProtocol.buildUploadGpsPayload(batch)
-        )
-        Log.v(TAG, "UploadGps seq=$seq records=${batch.size}")
-        performGattWrite(Go2BleProtocol.encodeMessagePacket(inner))
-        _state.update { it.copy(lastGpsSentTimeMs = System.currentTimeMillis()) }
+        if (batch.isNotEmpty()) {
+            val seq = nextSeq()
+            val inner = Go2BleProtocol.encodeInnerMessage(
+                Go2BleProtocol.CMD_UPLOAD_GPS,
+                seq,
+                Go2BleProtocol.buildUploadGpsPayload(batch)
+            )
+            Log.v(TAG, "UploadGps seq=$seq records=${batch.size}")
+            performGattWrite(Go2BleProtocol.encodeMessagePacket(inner))
+            _state.update { it.copy(lastGpsSentTimeMs = System.currentTimeMillis()) }
+        }
+
+        // Come back for the samples still waiting once the pace allows the next one
+        if (gpsQueue.isNotEmpty() && gpsFlushRetry?.isActive != true) {
+            val waitMs = gpsPacer.waitMs(SystemClock.elapsedRealtime())
+            gpsFlushRetry = scope.launch {
+                delay(waitMs)
+                writeChannel.trySend(gpsReady)
+            }
+        }
     }
 
     /**
