@@ -1,8 +1,12 @@
 package com.open360.ui.camera
 
+import com.open360.core.ble.Go2BleProtocol.BatteryStatus
 import com.open360.core.ble.Go2BleProtocol.CardState
+import com.open360.core.ble.Go2BleProtocol.ChargeBoxStatus
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class CameraStatusTextTest {
@@ -26,5 +30,24 @@ class CameraStatusTextTest {
         assertEquals("Needs Formatting", CameraStatusText.storageProblem(CardState.INVALID_FORMAT))
         assertEquals("Write-Protected", CameraStatusText.storageProblem(CardState.WRITE_PROTECTED))
         assertEquals("Error", CameraStatusText.storageProblem(CardState.ERROR))
+    }
+
+    @Test
+    fun testPodLine() {
+        val onBattery = ChargeBoxStatus(connected = true, battery = BatteryStatus(69, onExternalPower = false))
+        val pluggedIn = ChargeBoxStatus(connected = true, battery = BatteryStatus(65, onExternalPower = true))
+        val low = ChargeBoxStatus(connected = true, battery = BatteryStatus(15, onExternalPower = false))
+        val lowButCharging = ChargeBoxStatus(connected = true, battery = BatteryStatus(15, onExternalPower = true))
+        val gone = ChargeBoxStatus(connected = false, battery = null)
+
+        assertEquals("69%", CameraStatusText.pod(onBattery))
+        assertEquals("65%, Plugged In", CameraStatusText.pod(pluggedIn))
+        assertEquals("Not Connected", CameraStatusText.pod(gone))
+        assertEquals("Connected", CameraStatusText.pod(ChargeBoxStatus(connected = true, battery = null)))
+
+        assertFalse(CameraStatusText.podIsLow(onBattery))
+        assertTrue(CameraStatusText.podIsLow(low))
+        assertFalse(CameraStatusText.podIsLow(lowButCharging))
+        assertFalse(CameraStatusText.podIsLow(gone))
     }
 }

@@ -39,6 +39,7 @@ object Go2BleProtocol {
     const val NOTIF_BATTERY_UPDATE = 0x2003
     const val NOTIF_STORAGE_UPDATE = 0x2006
     const val NOTIF_CURRENT_CAPTURE_STATUS = 0x2010
+    const val NOTIF_CHARGE_BOX_STATUS = 0x201E
     const val NOTIF_CAPTURE_TIME_LEFT = 0x2021
     const val NOTIF_PERIODIC_STATUS = 0x2026
 
@@ -160,6 +161,10 @@ object Go2BleProtocol {
      */
     fun parseBatteryUpdateNotification(payload: ByteArray): BatteryStatus? {
         val status = readProtoFields(payload)[1] as? ByteArray ?: return null
+        return readBatteryStatus(status)
+    }
+
+    private fun readBatteryStatus(status: ByteArray): BatteryStatus? {
         val fields = readProtoFields(status)
         val level = fields[2] as? Long ?: return null
         val scale = (fields[3] as? Long)?.takeIf { it > 0 } ?: 100L
@@ -168,6 +173,22 @@ object Go2BleProtocol {
             levelPercent = (level * 100 / scale).toInt().coerceIn(0, 100),
             onExternalPower = powerType == 1L
         )
+    }
+
+    /** The Action Pod as the camera reports it. [battery] is null when the pod is not connected. */
+    data class ChargeBoxStatus(val connected: Boolean, val battery: BatteryStatus?)
+
+    /**
+     * Decodes the charge box connect status notification (0x201e, ChargeboxConnectedStatus),
+     * the camera's report on its Action Pod: connected or not (field 1) and the pod's own
+     * BatteryStatus (field 2). When the pod is not connected its battery is sent as zero.
+     */
+    fun parseChargeBoxStatus(payload: ByteArray): ChargeBoxStatus? {
+        val fields = readProtoFields(payload)
+        if (fields.isEmpty()) return null
+        val connected = fields[1] as? Long == 1L
+        val battery = (fields[2] as? ByteArray)?.let { readBatteryStatus(it) }
+        return ChargeBoxStatus(connected, if (connected) battery else null)
     }
 
     /**

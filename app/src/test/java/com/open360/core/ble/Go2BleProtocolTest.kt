@@ -191,6 +191,28 @@ class Go2BleProtocolTest {
     }
 
     @Test
+    fun testChargeBoxStatusReadsThePodBattery() {
+        // Captured from a GO 3S in its Action Pod: pod at 69% on its own battery
+        val onBattery = Go2BleProtocol.parseChargeBoxStatus(hex("0801120408001045180120022802"))
+        assertNotNull(onBattery)
+        assertTrue(onBattery!!.connected)
+        assertEquals(69, onBattery.battery?.levelPercent)
+        assertEquals(false, onBattery.battery?.onExternalPower)
+
+        // The pod at 65% just after being plugged into a computer
+        val pluggedIn = Go2BleProtocol.parseChargeBoxStatus(hex("0801120408011041180120022802"))
+        assertEquals(65, pluggedIn?.battery?.levelPercent)
+        assertEquals(true, pluggedIn?.battery?.onExternalPower)
+
+        // The pod gone: its battery is sent as zero and is not a reading
+        val gone = Go2BleProtocol.parseChargeBoxStatus(hex("0800120408001000180020022801"))
+        assertEquals(false, gone?.connected)
+        assertNull(gone?.battery)
+
+        assertNull(Go2BleProtocol.parseChargeBoxStatus(ByteArray(0)))
+    }
+
+    @Test
     fun testKeepAlivePacketCarriesWifiKeepAliveBytes() {
         val decoded = Go2BleProtocol.decodePacket(Go2BleProtocol.buildKeepAlivePacket())
         assertNotNull(decoded)

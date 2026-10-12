@@ -1,6 +1,7 @@
 package com.open360.ui.camera
 
 import com.open360.core.ble.Go2BleProtocol.CardState
+import com.open360.core.ble.Go2BleProtocol.ChargeBoxStatus
 
 /**
  * Wording for what the camera reports about itself. Kept apart from the screen so it can be
@@ -27,4 +28,19 @@ object CameraStatusText {
         CardState.WRITE_PROTECTED -> "Write-Protected"
         CardState.ERROR -> "Error"
     }
+
+    /** The Action Pod's line: its battery, "72%, Plugged In", or "Not Connected". */
+    fun pod(status: ChargeBoxStatus): String {
+        if (!status.connected) return "Not Connected"
+        val battery = status.battery ?: return "Connected"
+        return if (battery.onExternalPower) "${battery.levelPercent}%, Plugged In" else "${battery.levelPercent}%"
+    }
+
+    /** Whether the pod is running low with nothing charging it. */
+    fun podIsLow(status: ChargeBoxStatus): Boolean {
+        val battery = status.battery ?: return false
+        return status.connected && !battery.onExternalPower && battery.levelPercent <= LOW_BATTERY_PERCENT
+    }
+
+    const val LOW_BATTERY_PERCENT = 20
 }

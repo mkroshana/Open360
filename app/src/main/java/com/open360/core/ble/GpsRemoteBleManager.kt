@@ -57,7 +57,8 @@ enum class BleConnectionStatus {
 data class CameraDetails(
     // Recording time left on the storage at the current mode's bitrate
     val captureSecondsLeft: Int? = null,
-    val cardState: Go2BleProtocol.CardState? = null
+    val cardState: Go2BleProtocol.CardState? = null,
+    val pod: Go2BleProtocol.ChargeBoxStatus? = null
 )
 
 data class BleCameraState(
@@ -567,6 +568,12 @@ class GpsRemoteBleManager(private val context: Context) {
                 Go2BleProtocol.NOTIF_STORAGE_UPDATE -> {
                     val cardState = Go2BleProtocol.parseStorageUpdate(inner.payload)
                     updateDetails { it.copy(cardState = cardState) }
+                }
+
+                Go2BleProtocol.NOTIF_CHARGE_BOX_STATUS -> {
+                    Go2BleProtocol.parseChargeBoxStatus(inner.payload)?.let { pod ->
+                        updateDetails { it.copy(pod = pod) }
+                    }
                 }
 
                 Go2BleProtocol.NOTIF_PERIODIC_STATUS -> {

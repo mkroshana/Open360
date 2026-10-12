@@ -464,6 +464,10 @@ private fun CameraDetailRows(details: CameraDetails) {
         rows.add(Triple("Recording Time Left", CameraStatusText.timeLeft(details.captureSecondsLeft), false))
     }
 
+    details.pod?.let { pod ->
+        rows.add(Triple("Action Pod", CameraStatusText.pod(pod), CameraStatusText.podIsLow(pod)))
+    }
+
     if (rows.isEmpty()) return
 
     Spacer(modifier = Modifier.height(10.dp))
