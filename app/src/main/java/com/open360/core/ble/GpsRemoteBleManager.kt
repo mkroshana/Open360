@@ -185,6 +185,7 @@ class GpsRemoteBleManager(private val context: Context) {
         private const val PREF_WAKE_AUTHORIZATION_ID = "wake_authorization_id"
 
         private const val PREF_WAKE_SETUP_OFFERED = "wake_setup_offered"
+        private const val PREF_WAKE_SETUP_CARD_DISMISSED = "wake_setup_card_dismissed"
 
         // How long the camera is given to answer an authorization check, and how long its
         // question about a new app is given to be answered on the camera
@@ -764,6 +765,16 @@ class GpsRemoteBleManager(private val context: Context) {
     fun markWakeUpSetupOffered() {
         context.getSharedPreferences("open360_ble_prefs", Context.MODE_PRIVATE)
             .edit().putBoolean(PREF_WAKE_SETUP_OFFERED, true).apply()
+    }
+
+    /** Whether the card that leads to the set-up for Wake Up has been dismissed. */
+    fun isWakeUpSetupCardDismissed(): Boolean =
+        context.getSharedPreferences("open360_ble_prefs", Context.MODE_PRIVATE)
+            .getBoolean(PREF_WAKE_SETUP_CARD_DISMISSED, false)
+
+    fun setWakeUpSetupCardDismissed(dismissed: Boolean) {
+        context.getSharedPreferences("open360_ble_prefs", Context.MODE_PRIVATE)
+            .edit().putBoolean(PREF_WAKE_SETUP_CARD_DISMISSED, dismissed).apply()
     }
 
     private fun cameraIsOn(): Boolean {

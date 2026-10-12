@@ -21,6 +21,16 @@ object WakeUpSetup {
         else -> WakeUpSetupStep.ALLOW_ON_CAMERA
     }
 
+    /**
+     * Whether the set-up has something left for the user to do: there is no ID yet, the camera
+     * is asking on its own screen, or it did not come to allow the app. An ID the camera has
+     * not been asked about, as when it is off, is taken to be fine.
+     */
+    fun needed(hasId: Boolean, registration: WakeUpRegistration): Boolean =
+        !hasId ||
+            registration == WakeUpRegistration.CONFIRM_ON_CAMERA ||
+            CameraStatusText.wakeUpRegistrationIsProblem(registration)
+
     /** Whether the camera is still to be asked: it is on and nothing has been asked of it. */
     fun shouldAsk(cameraOn: Boolean, registration: WakeUpRegistration): Boolean =
         cameraOn && registration == WakeUpRegistration.NONE

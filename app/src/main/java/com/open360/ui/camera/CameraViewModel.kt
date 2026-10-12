@@ -44,6 +44,10 @@ data class RemoteUiState(
     val wakeUpId: String? = null,
     // Whether the set-up that gets the camera to allow this app to wake it is on screen
     val wakeUpSetupOpen: Boolean = false,
+    // Whether the card that leads to that set-up has been dismissed
+    val wakeUpSetupCardDismissed: Boolean = false,
+    // Whether the wake-up ID itself is on screen, for copying or replacing it
+    val wakeUpIdOpen: Boolean = false,
     val isConnected: Boolean = false,
     val isRecording: Boolean = false,
     val cameraDisplayInfo: String? = null
@@ -150,6 +154,13 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
                     stopRecordingTimer()
                 }
 
+                // Once the camera has allowed the app, a dismissal of the set-up card is spent:
+                // the card is to show again if the camera should stop allowing it
+                if (ble.wakeUpRegistration == WakeUpRegistration.AUTHORIZED && _uiState.value.wakeUpSetupCardDismissed) {
+                    bleManager.setWakeUpSetupCardDismissed(false)
+                    _uiState.update { it.copy(wakeUpSetupCardDismissed = false) }
+                }
+
                 // GPS is sampled for as long as the camera is connected. The BLE manager passes the
                 // samples on only while a recording is running, whoever started it.
                 val linked = ble.connectionStatus == BleConnectionStatus.CONNECTED
@@ -206,7 +217,8 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
         _uiState.update {
             it.copy(
                 wakeUpId = wakeUpId,
-                wakeUpSetupOpen = wakeUpId == null && !bleManager.wasWakeUpSetupOffered()
+                wakeUpSetupOpen = wakeUpId == null && !bleManager.wasWakeUpSetupOffered(),
+                wakeUpSetupCardDismissed = bleManager.isWakeUpSetupCardDismissed()
             )
         }
 
@@ -287,6 +299,20 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
     fun closeWakeUpSetup() {
         bleManager.markWakeUpSetupOffered()
         _uiState.update { it.copy(wakeUpSetupOpen = false) }
+    }
+
+    /** Hides the card that leads to the set-up. Pressing Wake Up without an ID still opens it. */
+    fun dismissWakeUpSetupCard() {
+        bleManager.setWakeUpSetupCardDismissed(true)
+        _uiState.update { it.copy(wakeUpSetupCardDismissed = true) }
+    }
+
+    fun openWakeUpId() {
+        _uiState.update { it.copy(wakeUpIdOpen = true) }
+    }
+
+    fun closeWakeUpId() {
+        _uiState.update { it.copy(wakeUpIdOpen = false) }
     }
 
     /**

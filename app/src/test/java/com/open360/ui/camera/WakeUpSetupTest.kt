@@ -39,6 +39,31 @@ class WakeUpSetupTest {
     }
 
     @Test
+    fun theSetUpIsNeededUntilTheCameraHasAllowedTheApp() {
+        // With no ID there is everything left to do, whatever the camera last said
+        WakeUpRegistration.entries.forEach {
+            assertTrue(it.name, WakeUpSetup.needed(hasId = false, it))
+        }
+
+        // With an ID: while the camera asks on its own screen, and after it did not allow the app
+        listOf(
+            WakeUpRegistration.CONFIRM_ON_CAMERA,
+            WakeUpRegistration.REJECTED,
+            WakeUpRegistration.TIMED_OUT,
+            WakeUpRegistration.CAMERA_BUSY,
+            WakeUpRegistration.NO_ANSWER
+        ).forEach {
+            assertTrue(it.name, WakeUpSetup.needed(hasId = true, it))
+        }
+
+        // An accepted ID needs nothing, nor does one the camera has not been asked about, as
+        // when it is off, or is being asked about right now
+        listOf(WakeUpRegistration.AUTHORIZED, WakeUpRegistration.NONE, WakeUpRegistration.CHECKING).forEach {
+            assertFalse(it.name, WakeUpSetup.needed(hasId = true, it))
+        }
+    }
+
+    @Test
     fun aCameraThatDidNotAllowTheAppStopsAtThatStep() {
         listOf(
             WakeUpRegistration.REJECTED,

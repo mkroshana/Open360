@@ -72,7 +72,7 @@ fun WakeUpSetupDialog(
 
     AlertDialog(
         onDismissRequest = onClose,
-        title = { Text("Set Up Wake-Up") },
+        title = { Text("Set Up Wake Up") },
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(16.dp)) {
                 Text(
