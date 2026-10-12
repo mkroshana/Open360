@@ -246,6 +246,74 @@ object Go2BleProtocol {
     }
 
     /**
+     * Decoded camera status packets sent to the remote over CE81 (Architecture A).
+     */
+    sealed class CameraStatusPacket {
+        data class SerialHandshake(val serial: String) : CameraStatusPacket()
+        data class DisplayString(
+            val text: String,
+            val isRecording: Boolean,
+            val durationSeconds: Long?,
+            val isModeString: Boolean
+        ) : CameraStatusPacket()
+        data class StatusWord(val payload: ByteArray) : CameraStatusPacket()
+        data class Unknown(val type: Byte, val payload: ByteArray) : CameraStatusPacket()
+    }
+
+    /**
+     * Parses camera-to-remote frames received on CE81 (magic: FE EF FE).
+     */
+    fun parseCameraStatusPacket(data: ByteArray): CameraStatusPacket? {
+        if (data.size < 6) return null
+        if (data[0] != 0xFE.toByte() || data[1] != 0xEF.toByte() || data[2] != 0xFE.toByte()) {
+            return null
+        }
+        val type = data[3]
+        val len = data[5].toInt() and 0xFF
+        if (data.size < 6 + len) return null
+        val payload = data.copyOfRange(6, 6 + len)
+
+        return when (type) {
+            0x07.toByte() -> {
+                val serial = String(payload, Charsets.US_ASCII).trim()
+                CameraStatusPacket.SerialHandshake(serial)
+            }
+            0x10.toByte() -> {
+                if (payload.size > 4) {
+                    val text = String(payload, 4, payload.size - 4, Charsets.US_ASCII).trim()
+                    if (text.startsWith(".")) {
+                        val timeStr = text.removePrefix(".")
+                        val parts = timeStr.split(":")
+                        val seconds = if (parts.size == 3) {
+                            val h = parts[0].toLongOrNull() ?: 0L
+                            val m = parts[1].toLongOrNull() ?: 0L
+                            val s = parts[2].toLongOrNull() ?: 0L
+                            h * 3600 + m * 60 + s
+                        } else null
+                        CameraStatusPacket.DisplayString(
+                            text = timeStr,
+                            isRecording = true,
+                            durationSeconds = seconds,
+                            isModeString = false
+                        )
+                    } else {
+                        CameraStatusPacket.DisplayString(
+                            text = text,
+                            isRecording = false,
+                            durationSeconds = null,
+                            isModeString = text.contains("|")
+                        )
+                    }
+                } else {
+                    CameraStatusPacket.Unknown(type, payload)
+                }
+            }
+            0x02.toByte() -> CameraStatusPacket.StatusWord(payload)
+            else -> CameraStatusPacket.Unknown(type, payload)
+        }
+    }
+
+    /**
      * Decoded outer Go2BlePacket.
      */
     data class DecodedPacket(

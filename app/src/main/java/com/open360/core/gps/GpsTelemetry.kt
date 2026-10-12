@@ -13,4 +13,6 @@ data class GpsTelemetry(
     val hasFix: Boolean = false,
     val timestampEpochMs: Long = 0L,
     val isStreamingToCamera: Boolean = false
-)
+) {
+    val speedKnots: Double get() = (speedKmh / 1.852).toDouble()
+}

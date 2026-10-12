@@ -146,4 +146,53 @@ class Go2BleProtocolTest {
 
         assertEquals(expectedHex, actualHex)
     }
+
+    @Test
+    fun testParseCameraStatusPacketSerialHandshake() {
+        // FE EF FE 07 00 06 33 34 55 51 47 35 -> "34UQG5"
+        val raw = byteArrayOf(
+            0xFE.toByte(), 0xEF.toByte(), 0xFE.toByte(), 0x07, 0x00, 0x06,
+            '3'.code.toByte(), '4'.code.toByte(), 'U'.code.toByte(),
+            'Q'.code.toByte(), 'G'.code.toByte(), '5'.code.toByte()
+        )
+        val packet = Go2BleProtocol.parseCameraStatusPacket(raw)
+        assertTrue(packet is Go2BleProtocol.CameraStatusPacket.SerialHandshake)
+        assertEquals("34UQG5", (packet as Go2BleProtocol.CameraStatusPacket.SerialHandshake).serial)
+    }
+
+    @Test
+    fun testParseCameraStatusPacketRecordingTimer() {
+        // FE EF FE 10 80 0D 01 0E 46 01 2E 30 30 3A 30 30 3A 30 35 -> ".00:00:05"
+        val raw = byteArrayOf(
+            0xFE.toByte(), 0xEF.toByte(), 0xFE.toByte(), 0x10, 0x80.toByte(), 0x0D,
+            0x01, 0x0E, 0x46, 0x01,
+            '.'.code.toByte(), '0'.code.toByte(), '0'.code.toByte(), ':'.code.toByte(),
+            '0'.code.toByte(), '0'.code.toByte(), ':'.code.toByte(), '0'.code.toByte(), '5'.code.toByte()
+        )
+        val packet = Go2BleProtocol.parseCameraStatusPacket(raw)
+        assertTrue(packet is Go2BleProtocol.CameraStatusPacket.DisplayString)
+        val display = packet as Go2BleProtocol.CameraStatusPacket.DisplayString
+        assertTrue(display.isRecording)
+        assertEquals("00:00:05", display.text)
+        assertEquals(5L, display.durationSeconds)
+        assertEquals(false, display.isModeString)
+    }
+
+    @Test
+    fun testParseCameraStatusPacketIdleMode() {
+        // FE EF FE 10 81 0C 01 1C 5E 00 34 4B 7C 33 30 7C 55 57 -> "4K|30|UW"
+        val raw = byteArrayOf(
+            0xFE.toByte(), 0xEF.toByte(), 0xFE.toByte(), 0x10, 0x81.toByte(), 0x0C,
+            0x01, 0x1C, 0x5E, 0x00,
+            '4'.code.toByte(), 'K'.code.toByte(), '|'.code.toByte(), '3'.code.toByte(),
+            '0'.code.toByte(), '|'.code.toByte(), 'U'.code.toByte(), 'W'.code.toByte()
+        )
+        val packet = Go2BleProtocol.parseCameraStatusPacket(raw)
+        assertTrue(packet is Go2BleProtocol.CameraStatusPacket.DisplayString)
+        val display = packet as Go2BleProtocol.CameraStatusPacket.DisplayString
+        assertEquals(false, display.isRecording)
+        assertEquals("4K|30|UW", display.text)
+        assertEquals(null, display.durationSeconds)
+        assertEquals(true, display.isModeString)
+    }
 }
