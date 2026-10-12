@@ -5,6 +5,7 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.selection.toggleable
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
@@ -14,27 +15,31 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.ListItem
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import com.open360.core.ble.WakeUpRegistration
 import com.open360.ui.camera.CameraStatusText
 
 /**
- * The settings: what is set up once and then left alone. For now that is Wake Up, with its
- * set-up and the ID behind it.
+ * The settings: what is set once and then left alone. Wake Up, with its set-up and the ID behind
+ * it, and whether GPS keeps going with the display off.
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun SettingsScreen(
     hasWakeUpId: Boolean,
     wakeUpRegistration: WakeUpRegistration,
+    keepGpsActiveInBackground: Boolean,
     onSetUpWakeUp: () -> Unit,
     onWakeUpId: () -> Unit,
+    onToggleBackgroundGps: () -> Unit,
     onBack: () -> Unit
 ) {
     Scaffold(
@@ -64,12 +69,7 @@ fun SettingsScreen(
                 .padding(innerPadding)
                 .verticalScroll(rememberScrollState())
         ) {
-            Text(
-                text = "Wake Up",
-                style = MaterialTheme.typography.labelLarge,
-                color = MaterialTheme.colorScheme.primary,
-                modifier = Modifier.padding(start = 16.dp, top = 16.dp, end = 16.dp, bottom = 4.dp)
-            )
+            SectionHeader("Wake Up")
 
             // Where the set-up stands when that is known, and otherwise what it is for
             val setupStatus = CameraStatusText.wakeUpSetupStatus(hasWakeUpId, wakeUpRegistration)
@@ -84,8 +84,36 @@ fun SettingsScreen(
                 detail = "The ID your camera knows this app by",
                 onClick = onWakeUpId
             )
+
+            SectionHeader("GPS")
+            ListItem(
+                headlineContent = { Text("Background GPS Tracking") },
+                supportingContent = {
+                    Text(
+                        text = "Continues GPS injection when display is off",
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                },
+                // The whole row is the switch, so the switch itself takes no taps of its own
+                trailingContent = { Switch(checked = keepGpsActiveInBackground, onCheckedChange = null) },
+                modifier = Modifier.toggleable(
+                    value = keepGpsActiveInBackground,
+                    role = Role.Switch,
+                    onValueChange = { onToggleBackgroundGps() }
+                )
+            )
         }
     }
+}
+
+@Composable
+private fun SectionHeader(title: String) {
+    Text(
+        text = title,
+        style = MaterialTheme.typography.labelLarge,
+        color = MaterialTheme.colorScheme.primary,
+        modifier = Modifier.padding(start = 16.dp, top = 16.dp, end = 16.dp, bottom = 4.dp)
+    )
 }
 
 @Composable

@@ -35,8 +35,10 @@ fun Open360App(
         SettingsScreen(
             hasWakeUpId = uiState.wakeUpId != null,
             wakeUpRegistration = ble.wakeUpRegistration,
+            keepGpsActiveInBackground = uiState.keepGpsActiveInBackground,
             onSetUpWakeUp = { viewModel.openWakeUpSetup() },
             onWakeUpId = { viewModel.openWakeUpId() },
+            onToggleBackgroundGps = { viewModel.toggleKeepGpsInBackground() },
             onBack = { settingsOpen = false }
         )
     } else {

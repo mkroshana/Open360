@@ -54,9 +54,7 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
-import androidx.compose.material3.OutlinedCard
 import androidx.compose.material3.Scaffold
-import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
@@ -221,12 +219,6 @@ fun CameraScreen(
                     haptic.performHapticFeedback(HapticFeedbackType.LongPress)
                     viewModel.onShutterClicked()
                 }
-            )
-
-            // Background GPS Tracking Card
-            BackgroundTrackingCard(
-                enabled = uiState.keepGpsActiveInBackground,
-                onToggle = { viewModel.toggleKeepGpsInBackground() }
             )
 
             Spacer(modifier = Modifier.height(16.dp))
@@ -959,43 +951,6 @@ fun CameraControlCard(
                     modifier = Modifier.padding(top = 4.dp)
                 )
             }
-        }
-    }
-}
-
-@Composable
-fun BackgroundTrackingCard(
-    enabled: Boolean,
-    onToggle: () -> Unit
-) {
-    OutlinedCard(
-        modifier = Modifier.fillMaxWidth(),
-        shape = RoundedCornerShape(16.dp)
-    ) {
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(16.dp),
-            horizontalArrangement = Arrangement.SpaceBetween,
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            Column(modifier = Modifier.weight(1f)) {
-                Text(
-                    text = "Background GPS Tracking",
-                    style = MaterialTheme.typography.titleSmall,
-                    fontWeight = FontWeight.SemiBold
-                )
-                Spacer(modifier = Modifier.height(2.dp))
-                Text(
-                    text = "Continues GPS injection when display is off",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-            }
-            Switch(
-                checked = enabled,
-                onCheckedChange = { onToggle() }
-            )
         }
     }
 }
