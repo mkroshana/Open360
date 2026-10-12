@@ -94,4 +94,56 @@ class Go2BleProtocolTest {
         val decoded = Go2BleProtocol.decodePacket(packet)
         assertNull(decoded)
     }
+
+    @Test
+    fun testRemoteButtonCommandShutter() {
+        val shutterCmd = Go2BleProtocol.buildRemoteButtonCommand(
+            button = Go2BleProtocol.REMOTE_BTN_SHUTTER,
+            state = Go2BleProtocol.REMOTE_STATE_CLICK,
+            sequenceNumber = 4
+        )
+        assertEquals(9, shutterCmd.size)
+        assertEquals(0xFC.toByte(), shutterCmd[0])
+        assertEquals(0xEF.toByte(), shutterCmd[1])
+        assertEquals(0xFE.toByte(), shutterCmd[2])
+        assertEquals(0x86.toByte(), shutterCmd[3])
+        assertEquals(0x04.toByte(), shutterCmd[4])
+        assertEquals(0x03.toByte(), shutterCmd[5])
+        assertEquals(0x01.toByte(), shutterCmd[6])
+        assertEquals(0x02.toByte(), shutterCmd[7])
+        assertEquals(0x00.toByte(), shutterCmd[8])
+    }
+
+    @Test
+    fun testGpsNmeaFrameMatchesSpecificationCapture() {
+        // Test against the synthetic capture vector from reverse engineering:
+        // Lat: 40°00.0000' N (40.0)
+        // Lon: 74°00.0000' W (-74.0)
+        // UTC: 12:00:00.000 on 2026-01-01
+        // Speed: 0.00 knots, Course: 0.00 deg
+        val cal = java.util.Calendar.getInstance(java.util.TimeZone.getTimeZone("UTC")).apply {
+            set(java.util.Calendar.YEAR, 2026)
+            set(java.util.Calendar.MONTH, java.util.Calendar.JANUARY)
+            set(java.util.Calendar.DAY_OF_MONTH, 1)
+            set(java.util.Calendar.HOUR_OF_DAY, 12)
+            set(java.util.Calendar.MINUTE, 0)
+            set(java.util.Calendar.SECOND, 0)
+            set(java.util.Calendar.MILLISECOND, 0)
+        }
+
+        val frame = Go2BleProtocol.buildGpsNmeaFrame(
+            latitude = 40.0,
+            longitude = -74.0,
+            altitudeMeters = 0.0,
+            speedKnots = 0.0,
+            bearingDegrees = 0.0,
+            timestampMs = cal.timeInMillis,
+            hasFix = true
+        )
+
+        val expectedHex = "FCEFFE8300522C32362E372C072C24474E524D432C3132303030302E3030302C412C343030302E303030302C4E2C2D373430302E303030302C452C302E30302C302E30302C3031303132362C302E302C572C412C562A3645"
+        val actualHex = frame.joinToString("") { "%02X".format(it) }
+
+        assertEquals(expectedHex, actualHex)
+    }
 }

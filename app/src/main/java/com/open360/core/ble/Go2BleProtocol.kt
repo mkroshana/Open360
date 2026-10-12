@@ -2,6 +2,10 @@ package com.open360.core.ble
 
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
+import java.util.Calendar
+import java.util.Locale
+import java.util.TimeZone
+import kotlin.math.abs
 
 /**
  * Protocol encoders and decoders for Insta360 BLE communication.
@@ -121,6 +125,124 @@ object Go2BleProtocol {
         buf.putDouble(longitude)
         buf.putDouble(altitude)
         return buf.array()
+    }
+
+    const val REMOTE_BTN_POWER = 0x00
+    const val REMOTE_BTN_MODE = 0x01
+    const val REMOTE_BTN_SHUTTER = 0x02
+
+    const val REMOTE_STATE_CLICK = 0x00
+    const val REMOTE_STATE_HELD = 0x03
+
+    /**
+     * Builds a 9-byte button command for Architecture A (GPS Remote emulation over CE82).
+     */
+    fun buildRemoteButtonCommand(button: Int, state: Int, sequenceNumber: Int = 0): ByteArray {
+        return byteArrayOf(
+            0xFC.toByte(),
+            0xEF.toByte(),
+            0xFE.toByte(),
+            0x86.toByte(),
+            (sequenceNumber and 0xFF).toByte(),
+            0x03,
+            0x01,
+            (button and 0xFF).toByte(),
+            (state and 0xFF).toByte()
+        )
+    }
+
+    /**
+     * Formats GPS telemetry into an NMEA RMC frame for Architecture A (GPS Remote emulation over CE82).
+     *
+     * Format:
+     * FC EF FE 83 00 <LEN> ,26.7,\x07,$GNRMC,...*CS
+     *
+     * Wire Quirks:
+     * - Longitude is signed and hemisphere letter is always 'E'.
+     * - Extra field 'V' between mode character and checksum.
+     * - Status 'V' (void) is emitted when fix is not acquired to maintain BLE keep-alive.
+     */
+    fun buildGpsNmeaFrame(
+        latitude: Double,
+        longitude: Double,
+        altitudeMeters: Double = 0.0,
+        speedKnots: Double = 0.0,
+        bearingDegrees: Double = 0.0,
+        timestampMs: Long = System.currentTimeMillis(),
+        hasFix: Boolean = true
+    ): ByteArray {
+        val cal = Calendar.getInstance(TimeZone.getTimeZone("UTC")).apply { timeInMillis = timestampMs }
+        val utc = String.format(
+            Locale.US,
+            "%02d%02d%02d.000",
+            cal.get(Calendar.HOUR_OF_DAY),
+            cal.get(Calendar.MINUTE),
+            cal.get(Calendar.SECOND)
+        )
+        val ddmmyy = String.format(
+            Locale.US,
+            "%02d%02d%02d",
+            cal.get(Calendar.DAY_OF_MONTH),
+            cal.get(Calendar.MONTH) + 1,
+            cal.get(Calendar.YEAR) % 100
+        )
+
+        val status = if (hasFix) "A" else "V"
+
+        // Latitude: ddmm.mmmm
+        val latAbs = abs(latitude)
+        val latDeg = latAbs.toInt()
+        val latMin = (latAbs - latDeg) * 60.0
+        val latFormatted = String.format(Locale.US, "%02d%07.4f", latDeg, latMin)
+        val latHemi = if (latitude >= 0.0) "N" else "S"
+
+        // Longitude: signed dddmm.mmmm with hemisphere always 'E'
+        val lonAbs = abs(longitude)
+        val lonDeg = lonAbs.toInt()
+        val lonMin = (lonAbs - lonDeg) * 60.0
+        val signedDegMin = (if (longitude < 0.0) -1.0 else 1.0) * (lonDeg * 100.0 + lonMin)
+        val lonFormatted = String.format(Locale.US, "%.4f", signedDegMin)
+        val lonHemi = "E"
+
+        val speedStr = String.format(Locale.US, "%.2f", speedKnots)
+        val courseStr = String.format(Locale.US, "%.2f", bearingDegrees)
+
+        // NMEA RMC body (excluding leading '$' and trailing '*CS')
+        val body = "GNRMC,$utc,$status,$latFormatted,$latHemi,$lonFormatted,$lonHemi,$speedStr,$courseStr,$ddmmyy,0.0,W,A,V"
+
+        var cs = 0
+        for (ch in body) {
+            cs = cs xor ch.code
+        }
+        val csHex = String.format(Locale.US, "%02X", cs)
+        val nmeaSentence = "$$body*$csHex"
+
+        // Prefix: empty field, "26.7", byte 0x07, empty field -> ",26.7,\x07,"
+        val prefix = byteArrayOf(
+            ','.code.toByte(),
+            '2'.code.toByte(),
+            '6'.code.toByte(),
+            '.'.code.toByte(),
+            '7'.code.toByte(),
+            ','.code.toByte(),
+            0x07,
+            ','.code.toByte()
+        )
+        val nmeaBytes = nmeaSentence.toByteArray(Charsets.US_ASCII)
+
+        val payload = ByteArray(prefix.size + nmeaBytes.size)
+        System.arraycopy(prefix, 0, payload, 0, prefix.size)
+        System.arraycopy(nmeaBytes, 0, payload, prefix.size, nmeaBytes.size)
+
+        val frame = ByteArray(6 + payload.size)
+        frame[0] = 0xFC.toByte()
+        frame[1] = 0xEF.toByte()
+        frame[2] = 0xFE.toByte()
+        frame[3] = 0x83.toByte() // GPS message type
+        frame[4] = 0x00         // flag / reserved
+        frame[5] = payload.size.toByte()
+        System.arraycopy(payload, 0, frame, 6, payload.size)
+        return frame
     }
 
     /**
