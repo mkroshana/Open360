@@ -22,6 +22,7 @@ import android.content.Context
 import android.content.pm.PackageManager
 import android.os.Build
 import android.os.ParcelUuid
+import android.os.SystemClock
 import android.util.Log
 import androidx.core.content.ContextCompat
 import kotlinx.coroutines.CompletableDeferred
@@ -80,6 +81,13 @@ class GpsRemoteBleManager(private val context: Context) {
         // 10 s of samples. Beyond this the link is not keeping up and the oldest are dropped.
         private const val MAX_QUEUED_GPS_RECORDS = 100
 
+        // Time from the start of a recording to its first video frame on a GO 3S. Across five
+        // clips the camera kept GPS for 1.75 to 1.81 s longer than the video ran. Measured from
+        // the app sending the start command it is about 1.85 s; from the camera's own start
+        // notice arriving it is about 1.70 s. Both are set 50 ms early to cover the write.
+        private const val FIRST_FRAME_AFTER_START_COMMAND_MS = 1800L
+        private const val FIRST_FRAME_AFTER_START_NOTICE_MS = 1650L
+
         val SERVICE_BE80: UUID = UUID.fromString("0000be80-0000-1000-8000-00805f9b34fb")
         val WRITE_BE81: UUID = UUID.fromString("0000be81-0000-1000-8000-00805f9b34fb")
         val NOTIFY_BE82: UUID = UUID.fromString("0000be82-0000-1000-8000-00805f9b34fb")
@@ -110,6 +118,13 @@ class GpsRemoteBleManager(private val context: Context) {
     private var keepAliveJob: Job? = null
     private var captureChangeTimeoutJob: Job? = null
     private val gpsQueue = ConcurrentLinkedQueue<ByteArray>()
+
+    // Elapsed-realtime moment from which GPS samples are passed on to the camera, or
+    // Long.MAX_VALUE while not recording. The camera keeps every sample it receives from the
+    // start command onward, about 1.8 s before the first video frame, and Insta360 Studio shows
+    // the first kept sample on the first frame. So nothing is sent until the first frame is due.
+    @Volatile
+    private var gpsGateOpensAtMs = Long.MAX_VALUE
 
     // Placed on the write queue to tell the worker that gpsQueue has records to send
     private val gpsReady = ByteArray(0)
@@ -372,7 +387,7 @@ class GpsRemoteBleManager(private val context: Context) {
                 Log.w(TAG, "GATT disconnected, status=$status")
                 writeCharacteristic = null
                 stopKeepAlive()
-                gpsQueue.clear()
+                closeGpsGate()
                 _state.update {
                     it.copy(
                         connectionStatus = BleConnectionStatus.DISCONNECTED,
@@ -505,6 +520,13 @@ class GpsRemoteBleManager(private val context: Context) {
                     parseCaptureStatus(inner.payload)
                 }
 
+                Go2BleProtocol.NOTIF_PERIODIC_STATUS -> {
+                    when (Go2BleProtocol.parseCaptureStep(inner.payload)) {
+                        Go2BleProtocol.CAPTURE_STEP_VIDEO_STARTING -> openGpsGateIn(FIRST_FRAME_AFTER_START_NOTICE_MS)
+                        Go2BleProtocol.CAPTURE_STEP_STOPPING, Go2BleProtocol.CAPTURE_STEP_DONE -> closeGpsGate()
+                    }
+                }
+
                 0xC8 -> { // 200 OK Response
                     Log.v(TAG, "Camera returned 200 OK for seq ${inner.sequence}")
                     if (inner.payload.size == 4) {
@@ -568,7 +590,25 @@ class GpsRemoteBleManager(private val context: Context) {
             captureChangeTimeoutJob?.cancel()
             _state.update { it.copy(isRecording = isRecording, isCaptureStarting = false, isCaptureStopping = false) }
             Log.i(TAG, "Parsed capture status: isRecording=$isRecording (state=$captureState)")
+
+            if (!isRecording) {
+                closeGpsGate()
+            } else if (gpsGateOpensAtMs == Long.MAX_VALUE) {
+                // Recording without the start notice having been seen: send from now on
+                openGpsGateIn(0)
+            }
         } catch (_: Exception) {}
+    }
+
+    private fun openGpsGateIn(delayMs: Long) {
+        gpsGateOpensAtMs = SystemClock.elapsedRealtime() + delayMs
+        Log.i(TAG, "GPS to camera starts in $delayMs ms")
+    }
+
+    private fun closeGpsGate() {
+        if (gpsGateOpensAtMs != Long.MAX_VALUE) Log.i(TAG, "GPS to camera stopped")
+        gpsGateOpensAtMs = Long.MAX_VALUE
+        gpsQueue.clear()
     }
 
     private fun queuePacket(packet: ByteArray) {
@@ -638,6 +678,8 @@ class GpsRemoteBleManager(private val context: Context) {
             queuePacket(Go2BleProtocol.REMOTE_CMD_SHUTTER)
         }
 
+        openGpsGateIn(FIRST_FRAME_AFTER_START_COMMAND_MS)
+
         // The camera takes a few seconds to start. isRecording is set when its capture status
         // notification arrives, so the timer lines up with the clip.
         _state.update { it.copy(isCaptureStarting = true) }
@@ -659,6 +701,8 @@ class GpsRemoteBleManager(private val context: Context) {
         if (writeCharacteristic?.uuid == WRITE_CE81) {
             queuePacket(Go2BleProtocol.REMOTE_CMD_SHUTTER)
         }
+
+        closeGpsGate()
 
         // As with start, the camera's capture status ends the recording state. If it never
         // arrives, the timeout clears it.
@@ -696,6 +740,7 @@ class GpsRemoteBleManager(private val context: Context) {
         hasFix: Boolean = true
     ) {
         if (writeCharacteristic == null) return
+        if (SystemClock.elapsedRealtime() < gpsGateOpensAtMs) return
         gpsQueue.add(
             Go2BleProtocol.buildGpsRecord(timestampMs, latitude, longitude, speedMps, bearingDegrees, altitudeMeters, hasFix)
         )
@@ -753,7 +798,7 @@ class GpsRemoteBleManager(private val context: Context) {
     fun disconnect() {
         stopScan()
         stopKeepAlive()
-        gpsQueue.clear()
+        closeGpsGate()
         activeGatt?.disconnect()
         activeGatt?.close()
         activeGatt = null

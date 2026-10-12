@@ -118,8 +118,8 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
                     stopRecordingTimer()
                 }
 
-                // GPS is uploaded for as long as the camera is connected, so a recording started
-                // on the camera itself gets it too.
+                // GPS is sampled for as long as the camera is connected. The BLE manager passes the
+                // samples on only while a recording is running, whoever started it.
                 val linked = ble.connectionStatus == BleConnectionStatus.CONNECTED
                 if (linked && gpsStreamJob == null) {
                     startGpsTelemetryInjection()

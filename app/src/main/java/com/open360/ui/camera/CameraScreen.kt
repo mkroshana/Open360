@@ -567,8 +567,8 @@ fun GpsTelemetryCard(
             val badgeColor = if (streamActive) Color(0xFF2E7D32) else MaterialTheme.colorScheme.onSurfaceVariant
 
             val streamText = when {
-                streamActive && isRecording -> "Sending GPS to Camera While Recording (10 Hz)"
-                streamActive -> "Sending GPS to Camera (10 Hz)"
+                streamActive && isRecording -> "Sending GPS to Camera (10 Hz)"
+                streamActive -> "GPS Ready, Sent While Recording"
                 isCameraConnected && !gps.hasFix -> "Waiting for GPS Fix"
                 else -> "Telemetry Stream Ready"
             }

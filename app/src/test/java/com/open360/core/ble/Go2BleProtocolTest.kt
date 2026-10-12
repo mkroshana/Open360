@@ -148,6 +148,16 @@ class Go2BleProtocolTest {
     }
 
     @Test
+    fun testCaptureStepFromCameraNotification() {
+        fun hex(s: String) = s.chunked(2).map { it.toInt(16).toByte() }.toByteArray()
+
+        // Captured from a GO 3S around one video: start accepted, then stopping
+        assertEquals(Go2BleProtocol.CAPTURE_STEP_VIDEO_STARTING, Go2BleProtocol.parseCaptureStep(hex("080218f0e70220012805")))
+        assertEquals(Go2BleProtocol.CAPTURE_STEP_STOPPING, Go2BleProtocol.parseCaptureStep(hex("080518b6e30320012802")))
+        assertNull(Go2BleProtocol.parseCaptureStep(ByteArray(0)))
+    }
+
+    @Test
     fun testKeepAlivePacketCarriesWifiKeepAliveBytes() {
         val decoded = Go2BleProtocol.decodePacket(Go2BleProtocol.buildKeepAlivePacket())
         assertNotNull(decoded)

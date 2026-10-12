@@ -128,6 +128,18 @@ object Go2BleProtocol {
      */
     fun isRecordingCaptureState(state: Int): Boolean = state != 0 && state !in PHOTO_CAPTURE_STATES
 
+    // Values of field 1 in notification 0x2026, the camera's capture progress. Seen on a GO 3S:
+    // 2 when a video start is accepted, 3 once it is capturing, 8 then 4 for a photo,
+    // 5 when stopping, 6 when done.
+    const val CAPTURE_STEP_VIDEO_STARTING = 2
+    const val CAPTURE_STEP_STOPPING = 5
+    const val CAPTURE_STEP_DONE = 6
+
+    /**
+     * Reads the capture step (field 1) from notification 0x2026.
+     */
+    fun parseCaptureStep(payload: ByteArray): Int? = (readProtoFields(payload)[1] as? Long)?.toInt()
+
     data class BatteryStatus(val levelPercent: Int, val onExternalPower: Boolean)
 
     /**
