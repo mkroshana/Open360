@@ -90,7 +90,7 @@ fun SettingsScreen(
                 headlineContent = { Text("Background GPS Tracking") },
                 supportingContent = {
                     Text(
-                        text = "Continues GPS injection when display is off",
+                        text = "Keeps sending GPS to the camera when the screen is off",
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
                 },
