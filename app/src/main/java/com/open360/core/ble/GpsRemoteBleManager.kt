@@ -86,14 +86,24 @@ class GpsRemoteBleManager(private val context: Context) {
         // 10 s of samples. Beyond this the link is not keeping up and the oldest are dropped.
         private const val MAX_QUEUED_GPS_RECORDS = 100
 
-        // Time from the start of a recording to its first video frame on a GO 3S. Across five
-        // clips the camera kept GPS for 1.75 to 1.81 s longer than the video ran. Measured from
-        // the app sending the start command that is about 1.85 s, and from the camera's own
-        // start notice arriving about 1.70 s. The capture status notification comes about
-        // 1.45 s after the first frame.
+        // Time from the camera's start notice to the first video frame on a GO 3S, worked out as
+        // the stop minus the video length, so it takes the video to end at the stop. It depends
+        // on who started the recording. The notice comes about 0.2 s after the app's start
+        // command, with the first frame 1.61 and 1.67 s later on two clips. When the camera's
+        // own button is used the notice comes well into the start-up, with the first frame 0.2
+        // to 0.4 s later on four clips.
+        private const val FIRST_FRAME_AFTER_APP_START_NOTICE_MS = 1640L
+        private const val FIRST_FRAME_AFTER_BUTTON_START_NOTICE_MS = 350L
+
+        // Used for an app start until the notice arrives
         private const val FIRST_FRAME_AFTER_START_COMMAND_MS = 1850L
-        private const val FIRST_FRAME_AFTER_START_NOTICE_MS = 1700L
-        private const val FIRST_FRAME_BEFORE_CAPTURE_STATUS_MS = 1450L
+
+        // A start notice this soon after the app's start command was caused by it
+        private const val START_COMMAND_NOTICE_WINDOW_MS = 3000L
+
+        // The capture status notification comes 1.6 to 2.3 s after the first frame. Used only
+        // when a recording is seen without its start notice.
+        private const val FIRST_FRAME_BEFORE_CAPTURE_STATUS_MS = 1800L
 
         val SERVICE_BE80: UUID = UUID.fromString("0000be80-0000-1000-8000-00805f9b34fb")
         val WRITE_BE81: UUID = UUID.fromString("0000be81-0000-1000-8000-00805f9b34fb")
@@ -126,6 +136,8 @@ class GpsRemoteBleManager(private val context: Context) {
     private var captureChangeTimeoutJob: Job? = null
     @Volatile
     private var stopCaptureSeq = -1
+    @Volatile
+    private var startCommandAtMs: Long? = null
     private val gpsQueue = ConcurrentLinkedQueue<ByteArray>()
 
     // Placed on the write queue to tell the worker that gpsQueue has records to send
@@ -524,7 +536,15 @@ class GpsRemoteBleManager(private val context: Context) {
 
                 Go2BleProtocol.NOTIF_PERIODIC_STATUS -> {
                     when (Go2BleProtocol.parseCaptureStep(inner.payload)) {
-                        Go2BleProtocol.CAPTURE_STEP_VIDEO_STARTING -> markRecordingStart(FIRST_FRAME_AFTER_START_NOTICE_MS)
+                        Go2BleProtocol.CAPTURE_STEP_VIDEO_STARTING -> {
+                            val startedByApp = startCommandAtMs?.let {
+                                SystemClock.elapsedRealtime() - it <= START_COMMAND_NOTICE_WINDOW_MS
+                            } == true
+                            markRecordingStart(
+                                if (startedByApp) FIRST_FRAME_AFTER_APP_START_NOTICE_MS
+                                else FIRST_FRAME_AFTER_BUTTON_START_NOTICE_MS
+                            )
+                        }
                         Go2BleProtocol.CAPTURE_STEP_STOPPING, Go2BleProtocol.CAPTURE_STEP_DONE -> markRecordingStop()
                     }
                 }
@@ -613,8 +633,8 @@ class GpsRemoteBleManager(private val context: Context) {
     /**
      * Records when the first video frame of the recording now starting is, or was, captured.
      *
-     * The camera keeps every GPS sample it receives from the start command to the stop command,
-     * but the video itself begins about 1.8 s after the start command, and Insta360 Studio shows
+     * The camera keeps every GPS sample it receives from the start to the stop, but the video
+     * itself begins later (about 1.8 s after an app start command), and Insta360 Studio shows
      * the first kept sample on the first frame. So the samples sent have to begin with the one
      * for this moment.
      */
@@ -697,6 +717,7 @@ class GpsRemoteBleManager(private val context: Context) {
             queuePacket(Go2BleProtocol.REMOTE_CMD_SHUTTER)
         }
 
+        startCommandAtMs = SystemClock.elapsedRealtime()
         markRecordingStart(FIRST_FRAME_AFTER_START_COMMAND_MS)
 
         // The camera takes a few seconds to start. isRecording is set when its capture status
