@@ -25,10 +25,10 @@ class CameraRepositoryTest {
     @Test
     fun testModeSwitchingUpdatesState() {
         val repository = CameraRepository(testScope)
-        repository.setCaptureMode(CaptureMode.FREE_FRAME)
-        assertEquals(CaptureMode.FREE_FRAME, repository.cameraState.value.currentMode)
-
         repository.setCaptureMode(CaptureMode.PHOTO)
         assertEquals(CaptureMode.PHOTO, repository.cameraState.value.currentMode)
+
+        repository.setCaptureMode(CaptureMode.VIDEO)
+        assertEquals(CaptureMode.VIDEO, repository.cameraState.value.currentMode)
     }
 }

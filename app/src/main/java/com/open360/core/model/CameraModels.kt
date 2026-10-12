@@ -15,10 +15,7 @@ data class BatteryInfo(
 
 enum class CaptureMode(val displayName: String, val oscName: String) {
     VIDEO("Video", "_video"),
-    PHOTO("Photo", "_photo"),
-    FREE_FRAME("FreeFrame 4K", "_freeframe"),
-    TIMELAPSE("Timelapse", "_timelapse"),
-    SLOW_MOTION("Slow Motion", "_slowmotion")
+    PHOTO("Photo", "_photo")
 }
 
 data class CameraState(

@@ -132,12 +132,26 @@ class GpsRemoteBleManager(private val context: Context) {
     /**
      * Broadcasts the Apple iBeacon wake-up beacon ("ORBIT" + serial suffix) to wake camera from sleep.
      */
+    fun getSavedSerialSuffix(): String {
+        val prefs = context.getSharedPreferences("open360_ble_prefs", Context.MODE_PRIVATE)
+        return prefs.getString("camera_serial_suffix", "8JY3HF") ?: "8JY3HF"
+    }
+
+    fun saveSerialSuffix(suffix: String) {
+        if (suffix.isNotBlank()) {
+            val prefs = context.getSharedPreferences("open360_ble_prefs", Context.MODE_PRIVATE)
+            prefs.edit().putString("camera_serial_suffix", suffix).apply()
+        }
+    }
+
     @SuppressLint("MissingPermission")
-    fun startWakeUpBroadcast(serialSuffix: String = "8JY3HF", onComplete: (() -> Unit)? = null) {
+    fun startWakeUpBroadcast(serialSuffix: String? = null, onComplete: (() -> Unit)? = null) {
         if (!canAdvertise()) {
             _state.update { it.copy(lastError = "Missing BLUETOOTH_ADVERTISE permission") }
             return
         }
+
+        val targetSuffix = serialSuffix?.takeIf { it.isNotBlank() } ?: getSavedSerialSuffix()
 
         val advertiser = bluetoothAdapter?.bluetoothLeAdvertiser ?: run {
             _state.update { it.copy(lastError = "Bluetooth advertiser not available") }
@@ -158,7 +172,7 @@ class GpsRemoteBleManager(private val context: Context) {
         payload[10] = 0x0f
         payload[11] = 0x00
 
-        val suffixBytes = serialSuffix.take(6).toByteArray(Charsets.US_ASCII)
+        val suffixBytes = targetSuffix.take(6).toByteArray(Charsets.US_ASCII)
         for (i in suffixBytes.indices) {
             payload[12 + i] = suffixBytes[i]
         }
@@ -261,10 +275,17 @@ class GpsRemoteBleManager(private val context: Context) {
 
     @SuppressLint("MissingPermission")
     private fun connectGatt(device: BluetoothDevice, discoveredName: String) {
+        val safeName = discoveredName.ifEmpty { device.name ?: "Insta360 Camera" }
+        val tokens = safeName.trim().split("\\s+".toRegex())
+        val candidateSuffix = tokens.lastOrNull()
+        if (candidateSuffix != null && candidateSuffix.length == 6 && candidateSuffix.all { it.isLetterOrDigit() }) {
+            saveSerialSuffix(candidateSuffix)
+        }
+
         _state.update {
             it.copy(
                 connectionStatus = BleConnectionStatus.CONNECTING,
-                deviceName = discoveredName.ifEmpty { device.name ?: "Insta360 Camera" },
+                deviceName = safeName,
                 deviceAddress = device.address
             )
         }
@@ -574,6 +595,13 @@ class GpsRemoteBleManager(private val context: Context) {
      */
     fun wakeScreen() {
         queuePacket(Go2BleProtocol.REMOTE_CMD_SCREEN_TOGGLE)
+    }
+
+    /**
+     * Cycles camera capture mode over BLE.
+     */
+    fun cycleMode() {
+        queuePacket(Go2BleProtocol.REMOTE_CMD_MODE)
     }
 
     /**

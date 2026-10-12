@@ -43,7 +43,6 @@ import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Speed
 import androidx.compose.material.icons.filled.Stop
 import androidx.compose.material.icons.filled.Sync
-import androidx.compose.material.icons.filled.Timelapse
 import androidx.compose.material.icons.filled.Tv
 import androidx.compose.material.icons.filled.Videocam
 import androidx.compose.material3.ElevatedCard
@@ -82,8 +81,7 @@ import java.util.Locale
 @Composable
 fun CameraScreen(
     viewModel: CameraViewModel,
-    onWakeUpClick: () -> Unit = {},
-    onOpenWifiSettingsClick: () -> Unit = {}
+    onWakeUpClick: () -> Unit = {}
 ) {
     val uiState by viewModel.uiState.collectAsState()
     val ble = uiState.bleState
@@ -101,7 +99,11 @@ fun CameraScreen(
                             fontWeight = FontWeight.Bold
                         )
                         Text(
-                            text = ble.deviceName ?: "Insta360 GO 3S",
+                            text = if (ble.connectionStatus == BleConnectionStatus.CONNECTED) {
+                                ble.deviceName ?: "Insta360 GO 3S"
+                            } else {
+                                "Not Connected"
+                            },
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
@@ -179,6 +181,7 @@ fun CameraScreen(
                 durationSeconds = uiState.recordingDurationSeconds,
                 isConnected = ble.connectionStatus == BleConnectionStatus.CONNECTED,
                 onModeSelected = { viewModel.setMode(it) },
+                onCycleMode = { viewModel.cycleMode() },
                 onShutterClick = {
                     haptic.performHapticFeedback(HapticFeedbackType.LongPress)
                     viewModel.onShutterClicked()
@@ -419,11 +422,16 @@ fun GpsTelemetryCard(
                 verticalAlignment = Alignment.Bottom,
                 horizontalArrangement = Arrangement.Center
             ) {
-                val speedValue = if (isSpeedMph) gps.speedMph else gps.speedKmh
+                val speedDisplay = if (gps.hasFix) {
+                    val speedValue = if (isSpeedMph) gps.speedMph else gps.speedKmh
+                    String.format(Locale.US, "%.1f", speedValue)
+                } else {
+                    "—"
+                }
                 val unitText = if (isSpeedMph) "mph" else "km/h"
 
                 Text(
-                    text = String.format(Locale.US, "%.1f", speedValue),
+                    text = speedDisplay,
                     style = MaterialTheme.typography.displayLarge.copy(
                         fontSize = 64.sp,
                         fontWeight = FontWeight.Bold,
@@ -459,19 +467,19 @@ fun GpsTelemetryCard(
                 TelemetryMetricItem(
                     icon = Icons.Default.Height,
                     label = "Altitude",
-                    value = String.format(Locale.US, "%.1f m", gps.altitudeMeters),
+                    value = if (gps.hasFix) String.format(Locale.US, "%.1f m", gps.altitudeMeters) else "—",
                     modifier = Modifier.weight(1f)
                 )
                 TelemetryMetricItem(
                     icon = Icons.Default.Speed,
                     label = "Accuracy",
-                    value = String.format(Locale.US, "±%.1f m", gps.accuracyMeters),
+                    value = if (gps.hasFix) String.format(Locale.US, "±%.1f m", gps.accuracyMeters) else "—",
                     modifier = Modifier.weight(1f)
                 )
                 TelemetryMetricItem(
                     icon = Icons.Default.LocationOn,
                     label = "Heading",
-                    value = String.format(Locale.US, "%.0f°", gps.bearingDegrees),
+                    value = if (gps.hasFix) String.format(Locale.US, "%.0f°", gps.bearingDegrees) else "—",
                     modifier = Modifier.weight(1f)
                 )
             }
@@ -482,6 +490,14 @@ fun GpsTelemetryCard(
             val streamActive = isRecording && gps.hasFix
             val badgeBg = if (streamActive) Color(0xFF2E7D32).copy(alpha = 0.12f) else MaterialTheme.colorScheme.surfaceVariant
             val badgeColor = if (streamActive) Color(0xFF2E7D32) else MaterialTheme.colorScheme.onSurfaceVariant
+
+            val streamText = if (streamActive) {
+                "Injecting Telemetry to Video (1 Hz)"
+            } else if (!gps.hasFix) {
+                "Waiting for GPS Fix"
+            } else {
+                "Telemetry Stream Ready"
+            }
 
             Row(
                 modifier = Modifier
@@ -503,7 +519,7 @@ fun GpsTelemetryCard(
                         tint = badgeColor
                     )
                     Text(
-                        text = if (streamActive) "Injecting Telemetry to Video (1 Hz)" else "Telemetry Stream Ready",
+                        text = streamText,
                         style = MaterialTheme.typography.bodySmall,
                         fontWeight = FontWeight.Medium,
                         color = badgeColor
@@ -565,6 +581,7 @@ fun CameraControlCard(
     durationSeconds: Long,
     isConnected: Boolean,
     onModeSelected: (CaptureMode) -> Unit,
+    onCycleMode: () -> Unit,
     onShutterClick: () -> Unit
 ) {
     ElevatedCard(
@@ -575,37 +592,56 @@ fun CameraControlCard(
             modifier = Modifier.padding(16.dp),
             horizontalAlignment = Alignment.CenterHorizontally
         ) {
-            Text(
-                text = "Camera Control",
-                style = MaterialTheme.typography.titleMedium,
-                fontWeight = FontWeight.SemiBold,
-                modifier = Modifier.align(Alignment.Start)
-            )
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(
+                    text = "Camera Control",
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.SemiBold
+                )
+
+                if (isConnected) {
+                    OutlinedButton(
+                        onClick = onCycleMode,
+                        modifier = Modifier.height(32.dp)
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Sync,
+                            contentDescription = "Cycle Mode",
+                            modifier = Modifier.size(14.dp)
+                        )
+                        Spacer(modifier = Modifier.width(4.dp))
+                        Text(
+                            text = "Cycle Mode",
+                            style = MaterialTheme.typography.labelSmall
+                        )
+                    }
+                }
+            }
 
             Spacer(modifier = Modifier.height(14.dp))
 
-            // Mode Selection Chips
+            // Mode Selection Chips (Video & Photo only)
             Row(
                 modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceEvenly
+                horizontalArrangement = Arrangement.Center
             ) {
                 FilterChip(
                     selected = currentMode == CaptureMode.VIDEO,
                     onClick = { onModeSelected(CaptureMode.VIDEO) },
                     label = { Text("Video") },
-                    leadingIcon = { Icon(Icons.Default.Videocam, contentDescription = null, modifier = Modifier.size(18.dp)) }
+                    leadingIcon = { Icon(Icons.Default.Videocam, contentDescription = null, modifier = Modifier.size(18.dp)) },
+                    modifier = Modifier.padding(horizontal = 8.dp)
                 )
                 FilterChip(
                     selected = currentMode == CaptureMode.PHOTO,
                     onClick = { onModeSelected(CaptureMode.PHOTO) },
                     label = { Text("Photo") },
-                    leadingIcon = { Icon(Icons.Default.CameraAlt, contentDescription = null, modifier = Modifier.size(18.dp)) }
-                )
-                FilterChip(
-                    selected = currentMode == CaptureMode.TIMELAPSE,
-                    onClick = { onModeSelected(CaptureMode.TIMELAPSE) },
-                    label = { Text("Timelapse") },
-                    leadingIcon = { Icon(Icons.Default.Timelapse, contentDescription = null, modifier = Modifier.size(18.dp)) }
+                    leadingIcon = { Icon(Icons.Default.CameraAlt, contentDescription = null, modifier = Modifier.size(18.dp)) },
+                    modifier = Modifier.padding(horizontal = 8.dp)
                 )
             }
 

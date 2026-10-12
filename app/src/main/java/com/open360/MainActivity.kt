@@ -1,11 +1,9 @@
 package com.open360
 
 import android.Manifest
-import android.content.Intent
 import android.content.pm.PackageManager
 import android.os.Build
 import android.os.Bundle
-import android.provider.Settings
 import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
@@ -13,17 +11,12 @@ import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.viewModels
 import androidx.core.content.ContextCompat
-import com.open360.core.ble.CameraWakeUpBleManager
-import com.open360.core.network.WifiNetworkBinder
 import com.open360.ui.camera.CameraScreen
 import com.open360.ui.camera.CameraViewModel
 import com.open360.ui.theme.Open360Theme
 
 class MainActivity : ComponentActivity() {
     private val cameraViewModel: CameraViewModel by viewModels()
-
-    private lateinit var wifiNetworkBinder: WifiNetworkBinder
-    private lateinit var bleManager: CameraWakeUpBleManager
 
     private val permissionLauncher = registerForActivityResult(
         ActivityResultContracts.RequestMultiplePermissions()
@@ -34,7 +27,7 @@ class MainActivity : ComponentActivity() {
         } else {
             Toast.makeText(
                 this,
-                "Bluetooth and Location permissions required to wake up camera",
+                "Bluetooth and Location permissions required to control camera and record GPS",
                 Toast.LENGTH_LONG
             ).show()
         }
@@ -44,24 +37,13 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
 
-        wifiNetworkBinder = WifiNetworkBinder(this)
-        bleManager = CameraWakeUpBleManager(this)
-
-        // Automatically bind process whenever Wi-Fi is connected
-        wifiNetworkBinder.startListening {
-            cameraViewModel.connect()
-        }
-
         checkAndRequestPermissions()
 
         setContent {
             Open360Theme {
                 CameraScreen(
                     viewModel = cameraViewModel,
-                    onWakeUpClick = { onWakeUpRequested() },
-                    onOpenWifiSettingsClick = {
-                        startActivity(Intent(Settings.ACTION_WIFI_SETTINGS))
-                    }
+                    onWakeUpClick = { onWakeUpRequested() }
                 )
             }
         }
@@ -106,12 +88,7 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun wakeUpAndConnect() {
-        Toast.makeText(this, "Broadcasting wake-up beacon to GO 3S...", Toast.LENGTH_SHORT).show()
-        cameraViewModel.wakeUpCamera(serialSuffix = "8JY3HF")
-    }
-
-    override fun onDestroy() {
-        super.onDestroy()
-        wifiNetworkBinder.stopListening()
+        Toast.makeText(this, "Broadcasting wake-up beacon...", Toast.LENGTH_SHORT).show()
+        cameraViewModel.wakeUpCamera()
     }
 }

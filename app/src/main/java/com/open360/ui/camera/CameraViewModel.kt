@@ -67,7 +67,7 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
         gpsEngine.startTracking()
     }
 
-    fun wakeUpCamera(serialSuffix: String = "8JY3HF") {
+    fun wakeUpCamera(serialSuffix: String? = null) {
         bleManager.startWakeUpBroadcast(serialSuffix)
         // Also initiate scan after broadcasting wake beacon
         viewModelScope.launch {
@@ -112,16 +112,22 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
             CaptureMode.PHOTO -> {
                 bleManager.takePhoto()
             }
-            CaptureMode.VIDEO,
-            CaptureMode.FREE_FRAME,
-            CaptureMode.TIMELAPSE,
-            CaptureMode.SLOW_MOTION -> {
+            CaptureMode.VIDEO -> {
                 if (current.bleState.isRecording) {
                     bleManager.stopRecording()
                 } else {
                     bleManager.startRecording()
                 }
             }
+        }
+    }
+
+    fun cycleMode() {
+        bleManager.cycleMode()
+        // Toggle UI mode to reflect cycle
+        _uiState.update {
+            val next = if (it.currentMode == CaptureMode.VIDEO) CaptureMode.PHOTO else CaptureMode.VIDEO
+            it.copy(currentMode = next)
         }
     }
 
