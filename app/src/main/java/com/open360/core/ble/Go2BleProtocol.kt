@@ -23,13 +23,11 @@ object Go2BleProtocol {
     const val SUBTYPE_MESSAGE: Byte = 0x40
     const val SUBTYPE_SYNC: Byte = 0x41
 
-    // Inner packet type of the wake-up packet. A camera that is switched off sends the packet
-    // straight back, from its Bluetooth chip, without switching on.
-    const val WAKE_UP_INNER_TYPE: Byte = 0xB0.toByte()
-
-    /** Whether an inner packet from the camera is its acknowledgement of the wake-up packet. */
-    fun isWakeUpAcknowledgement(innerData: ByteArray): Boolean =
-        innerData.size >= 5 && innerData[4] == WAKE_UP_INNER_TYPE
+    // The wake-up authorization and its answer use an envelope type and subtype of their own
+    const val TYPE_WAKE_AUTHORIZATION: Byte = 0x0C
+    const val SUBTYPE_WAKE_AUTHORIZATION: Byte = 0x02
+    const val TYPE_WAKE_AUTHORIZATION_REPLY: Byte = 0x0D
+    const val SUBTYPE_WAKE_AUTHORIZATION_REPLY: Byte = 0x03
 
     const val INNER_HEADER_SIZE = 16
     const val ENVELOPE_HEADER_SIZE = 5
@@ -303,29 +301,6 @@ object Go2BleProtocol {
         )
     }
 
-    private const val OPTION_AUTHORIZATION_ID = 38
-    private const val OPTION_BT_WAKEUP_SW = 97
-
-    /**
-     * Builds the payload of a GetOptions request for the camera's Bluetooth wake-up settings:
-     * the authorization id it holds and its wake-up switch.
-     */
-    fun buildWakeUpOptionsRequest(): ByteArray =
-        byteArrayOf(0x0A, 0x02, OPTION_AUTHORIZATION_ID.toByte(), OPTION_BT_WAKEUP_SW.toByte())
-
-    /** The camera's Bluetooth wake-up settings. A value it left out is null. */
-    data class WakeUpOptions(val authorizationId: String?, val wakeUpSwitch: Int?)
-
-    /** Decodes the reply to [buildWakeUpOptionsRequest]. */
-    fun parseWakeUpOptionsReply(payload: ByteArray): WakeUpOptions? {
-        val options = readProtoFields(payload)[2] as? ByteArray ?: return null
-        val fields = readProtoFields(options)
-        return WakeUpOptions(
-            authorizationId = (fields[OPTION_AUTHORIZATION_ID] as? ByteArray)?.let { String(it, Charsets.UTF_8) },
-            wakeUpSwitch = (fields[OPTION_BT_WAKEUP_SW] as? Long)?.toInt()
-        )
-    }
-
     /** What the camera is doing: its CameraCaptureState and how long it has been recording. */
     data class CaptureStatusReply(val captureState: Int, val captureSeconds: Int)
 
@@ -472,26 +447,42 @@ object Go2BleProtocol {
         return encodeMessagePacket(byteArrayOf(0x07, 0x00, 0x00, 0x00, 0x05, 0x00, 0x00))
     }
 
+    private val AUTHORIZATION_ID_FORMAT =
+        Regex("[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}")
+
+    /** Whether [id] has the form of an authorization id: 36 characters, like a UUID. */
+    fun isValidAuthorizationId(id: String): Boolean = AUTHORIZATION_ID_FORMAT.matches(id)
+
     /**
-     * Builds the packet meant to switch on a GO camera that is powered off but still connected
-     * over Bluetooth: FF 06 40, an 8-byte inner message of type 0xB0 with the value 1, and the
-     * checksum. It is one of only two fixed packets in the Insta360 app (the other is the
-     * keep-alive), next to a routine that logs "send notify to wake up go2". That it is the
-     * wake-up packet is inferred from that, not seen in the app's code, which is hidden.
+     * Builds the message that switches on a GO camera that is powered off but connected over
+     * Bluetooth: FF 0C 02, the length, the authorization id as 36 ASCII characters, and the
+     * checksum. Captured from the Insta360 app, which writes it as the first thing after
+     * subscribing to notifications. The id is the one that app registered with the camera.
      */
-    fun buildWakeUpPacket(asRequest: Boolean = false): ByteArray {
-        val inner = byteArrayOf(0x08, 0x00, 0x00, 0x00, WAKE_UP_INNER_TYPE, 0x00, 0x00, 0x01)
-        val buf = ByteBuffer.allocate(ENVELOPE_HEADER_SIZE + inner.size + CRC_SIZE).order(ByteOrder.LITTLE_ENDIAN)
+    fun buildWakeAuthorizationPacket(authorizationId: String): ByteArray {
+        val id = authorizationId.toByteArray(Charsets.US_ASCII)
+        val buf = ByteBuffer.allocate(ENVELOPE_HEADER_SIZE + id.size + CRC_SIZE).order(ByteOrder.LITTLE_ENDIAN)
         buf.put(MARKER)
-        // The Insta360 app's copy carries the type the camera's own packets have; the other
-        // form is the type this app's requests have
-        buf.put(if (asRequest) TYPE_MESSAGE else TYPE_RESPONSE)
-        buf.put(SUBTYPE_MESSAGE)
-        buf.putShort(inner.size.toShort())
-        buf.put(inner)
-        val crc = BleCrc16.compute(buf.array(), 0, ENVELOPE_HEADER_SIZE + inner.size)
+        buf.put(TYPE_WAKE_AUTHORIZATION)
+        buf.put(SUBTYPE_WAKE_AUTHORIZATION)
+        buf.putShort(id.size.toShort())
+        buf.put(id)
+        val crc = BleCrc16.compute(buf.array(), 0, ENVELOPE_HEADER_SIZE + id.size)
         buf.putShort(crc.toShort())
         return buf.array()
+    }
+
+    /**
+     * Reads the camera's answer to the wake-up authorization (FF 0D 03, one byte): true when it
+     * accepts it, which it did with the value 1 about 0.3 s after the message, two seconds before
+     * the camera itself was on. Returns null for any other packet.
+     */
+    fun parseWakeAuthorizationReply(raw: ByteArray): Boolean? {
+        val packet = decodePacket(raw) ?: return null
+        if (packet.typeByte != TYPE_WAKE_AUTHORIZATION_REPLY || packet.subtypeByte != SUBTYPE_WAKE_AUTHORIZATION_REPLY) {
+            return null
+        }
+        return packet.innerData.firstOrNull() == 1.toByte()
     }
 
     const val REMOTE_BTN_POWER = 0x00

@@ -209,34 +209,28 @@ class Go2BleProtocolTest {
     }
 
     @Test
-    fun testWakeUpPacketMatchesTheOneInTheInsta360App() {
-        assertTrue(hex("ff0640080008000000b00000016d90").contentEquals(Go2BleProtocol.buildWakeUpPacket()))
+    fun testWakeAuthorizationPacket() {
+        // A made-up id; the checksum was worked out separately from the app's own routine
+        val id = "00000000-1111-2222-3333-444444444444"
+        assertTrue(
+            hex("ff0c02240030303030303030302d313131312d323232322d333333332d343434343434343434343434d7ba")
+                .contentEquals(Go2BleProtocol.buildWakeAuthorizationPacket(id))
+        )
+        assertTrue(Go2BleProtocol.isValidAuthorizationId(id))
+        assertEquals(false, Go2BleProtocol.isValidAuthorizationId("not an id"))
+        assertEquals(false, Go2BleProtocol.isValidAuthorizationId(""))
     }
 
     @Test
-    fun testWakeUpAcknowledgementIsToldApartFromACameraThatIsOn() {
-        // What a switched-off GO 3S sent back 0.2 s after the wake-up packet: the same bytes
-        val echoed = Go2BleProtocol.decodePacket(hex("ff0640080008000000b00000016d90"))
-        assertNotNull(echoed)
-        assertTrue(Go2BleProtocol.isWakeUpAcknowledgement(echoed!!.innerData))
-
-        // A keep-alive answer, which only a camera that is on sends
-        val keepAlive = Go2BleProtocol.decodePacket(hex("ff06400700070000000500006fba"))
-        assertNotNull(keepAlive)
-        assertEquals(false, Go2BleProtocol.isWakeUpAcknowledgement(keepAlive!!.innerData))
-    }
-
-    @Test
-    fun testWakeUpOptionsRequestAndReply() {
-        // Options 38 (authorization id) and 97 (wake-up switch) as a packed list
-        assertTrue(hex("0a022661").contentEquals(Go2BleProtocol.buildWakeUpOptionsRequest()))
-
-        // Built from the published definitions; not captured from a camera.
-        // Options { authorization_id (38) = "abc", bt_wakeup_sw (97) = 1 }
-        val reply = Go2BleProtocol.parseWakeUpOptionsReply(hex("0826086112" + "09" + "b20203616263" + "880601"))
-        assertEquals("abc", reply?.authorizationId)
-        assertEquals(1, reply?.wakeUpSwitch)
-        assertNull(Go2BleProtocol.parseWakeUpOptionsReply(ByteArray(0)))
+    fun testWakeAuthorizationReply() {
+        // What a switched-off GO 3S answered the Insta360 app: accepted
+        assertEquals(true, Go2BleProtocol.parseWakeAuthorizationReply(hex("ff0d03010001a991")))
+        // The same answer with the value 0
+        assertEquals(false, Go2BleProtocol.parseWakeAuthorizationReply(hex("ff0d030100006851")))
+        // Other packets are not this answer: a keep-alive answer and the camera's sync packet
+        assertNull(Go2BleProtocol.parseWakeAuthorizationReply(hex("ff06400700070000000500006fba")))
+        assertNull(Go2BleProtocol.parseWakeAuthorizationReply(hex("ff06410a00abbaabbaabbaabbaabba4ee2")))
+        assertNull(Go2BleProtocol.parseWakeAuthorizationReply(ByteArray(0)))
     }
 
     @Test

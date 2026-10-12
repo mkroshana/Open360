@@ -161,16 +161,12 @@ class GpsRemoteBleManager(private val context: Context) {
         // 6.4 s after the first frame.
         private const val JOINED_RECORDING_ROUNDING_MS = 500L
 
-        // How long each wake-up attempt is given before the next is tried
-        private const val WAKE_STEP_MS = 4000L
+        // How long the camera's Bluetooth is given to answer the wake-up authorization, and
+        // then the camera to switch on. With the Insta360 app these took 0.3 s and 2.1 s.
+        private const val WAKE_REPLY_MS = 3000L
+        private const val WAKE_SWITCH_ON_MS = 8000L
 
-        val SERVICE_B000: UUID = UUID.fromString("0000b000-0000-1000-8000-00805f9b34fb")
-        val WRITE_B001: UUID = UUID.fromString("0000b001-0000-1000-8000-00805f9b34fb")
-        val B000_NOTIFY_CHANNELS: List<UUID> = listOf(
-            UUID.fromString("0000b002-0000-1000-8000-00805f9b34fb"),
-            UUID.fromString("0000b003-0000-1000-8000-00805f9b34fb"),
-            UUID.fromString("0000b004-0000-1000-8000-00805f9b34fb")
-        )
+        private const val PREF_WAKE_AUTHORIZATION_ID = "wake_authorization_id"
 
         val CCCD_UUID: UUID = UUID.fromString("00002902-0000-1000-8000-00805f9b34fb")
     }
@@ -201,8 +197,6 @@ class GpsRemoteBleManager(private val context: Context) {
     private var captureStatusQuerySeq = -1
     @Volatile
     private var statusOptionsQuerySeq = -1
-    @Volatile
-    private var wakeUpOptionsQuerySeq = -1
 
     // Whether the status requests have gone out on this connection
     @Volatile
@@ -216,15 +210,9 @@ class GpsRemoteBleManager(private val context: Context) {
     @Volatile
     private var startCommandAtMs: Long? = null
     private val gpsQueue = ConcurrentLinkedQueue<ByteArray>()
-    private val pendingSubscriptions = ConcurrentLinkedQueue<BluetoothGattCharacteristic>()
-    private var pendingSubscribeAck: CompletableDeferred<Boolean>? = null
-
-    // Placed on the write queue to tell the worker that a subscription is waiting
-    private val subscribeReady = ByteArray(0)
-
-    // The same for a packet that goes to the second service's write channel
-    private val pendingSecondServiceWrites = ConcurrentLinkedQueue<ByteArray>()
-    private val secondServiceWriteReady = ByteArray(0)
+    // Completed by the camera's answer to the wake-up authorization
+    @Volatile
+    private var wakeReply: CompletableDeferred<Boolean>? = null
     private var wakeJob: Job? = null
 
     // Both are used only by the write queue worker
@@ -240,12 +228,6 @@ class GpsRemoteBleManager(private val context: Context) {
             for (packet in writeChannel) {
                 if (packet === gpsReady) {
                     flushGps()
-                } else if (packet === subscribeReady) {
-                    performSubscribe()
-                } else if (packet === secondServiceWriteReady) {
-                    val waiting = pendingSecondServiceWrites.poll()
-                    val target = activeGatt?.getService(SERVICE_B000)?.getCharacteristic(WRITE_B001)
-                    if (waiting != null && target != null) performGattWrite(waiting, target)
                 } else {
                     performGattWrite(packet)
                 }
@@ -283,6 +265,24 @@ class GpsRemoteBleManager(private val context: Context) {
     /**
      * Broadcasts the Apple iBeacon wake-up beacon ("ORBIT" + serial suffix) to wake camera from sleep.
      */
+    /**
+     * The authorization id the camera accepts a wake-up from, or null when none is stored.
+     * It is the id the Insta360 app on this phone registered with the camera; this app has
+     * no way of its own to obtain one yet.
+     */
+    fun getWakeAuthorizationId(): String? {
+        val prefs = context.getSharedPreferences("open360_ble_prefs", Context.MODE_PRIVATE)
+        return prefs.getString(PREF_WAKE_AUTHORIZATION_ID, null)?.takeIf { Go2BleProtocol.isValidAuthorizationId(it) }
+    }
+
+    /** Stores the wake-up authorization id. Returns false when it is not a valid id. */
+    fun saveWakeAuthorizationId(id: String): Boolean {
+        if (!Go2BleProtocol.isValidAuthorizationId(id)) return false
+        val prefs = context.getSharedPreferences("open360_ble_prefs", Context.MODE_PRIVATE)
+        prefs.edit().putString(PREF_WAKE_AUTHORIZATION_ID, id).apply()
+        return true
+    }
+
     fun getSavedSerialSuffix(): String {
         val prefs = context.getSharedPreferences("open360_ble_prefs", Context.MODE_PRIVATE)
         return prefs.getString("camera_serial_suffix", "8JY3HF") ?: "8JY3HF"
@@ -594,7 +594,6 @@ class GpsRemoteBleManager(private val context: Context) {
                     requestStatusOnce()
                 }
             }
-            pendingSubscribeAck?.complete(status == BluetoothGatt.GATT_SUCCESS)
         }
 
         @Deprecated("Deprecated in Java")
@@ -615,16 +614,15 @@ class GpsRemoteBleManager(private val context: Context) {
         if (characteristic.uuid == NOTIFY_BE82 || characteristic.uuid == NOTIFY_CE82) {
             handleIncomingNotification(value)
         } else {
-            // The second service's channels: what they carry is still being worked out
+            // Nothing else is subscribed to; logged in case the camera sends on another channel
             Log.i(TAG, "Notification on ${characteristic.uuid}: ${value.toHex(96)}")
         }
     }
 
     /**
-     * Tries to switch on a camera that is connected but powered off. How the Insta360 app does
-     * it is not known for certain, so three things are tried in turn, each logged, stopping as
-     * soon as the camera answers: the wake-up packet on the command channel, the same packet on
-     * the second service's write channel, and subscribing to the second service.
+     * Switches on a camera that is connected but powered off, the way the Insta360 app was seen
+     * to: the authorization id is written before anything else on a fresh link, the camera's
+     * Bluetooth chip answers whether it accepts it, and about two seconds later the camera is on.
      */
     private fun wakeCamera() {
         if (writeCharacteristic == null) return
@@ -634,43 +632,39 @@ class GpsRemoteBleManager(private val context: Context) {
             try {
                 // A camera that is on says so within a second of the link opening
                 if (answersWithin(1000)) {
-                    Log.i(TAG, "Wake: the camera is already answering")
+                    Log.i(TAG, "Wake: the camera is already on")
                     return@launch
                 }
-                val packet = Go2BleProtocol.buildWakeUpPacket()
-
-                Log.i(TAG, "Wake step 1: wake-up packet, the first thing sent on this link")
-                queuePacket(packet)
-                if (answersWithin(WAKE_STEP_MS)) {
-                    Log.i(TAG, "Wake: the camera answered after step 1")
-                    return@launch
-                }
-
-                // The Insta360 app's handshake sends a sync packet of its own after the wake-up
-                Log.i(TAG, "Wake step 2: sync packet from the phone")
-                queuePacket(Go2BleProtocol.buildSyncResponsePacket())
-                if (answersWithin(WAKE_STEP_MS)) {
-                    Log.i(TAG, "Wake: the camera answered after step 2")
+                val id = getWakeAuthorizationId()
+                if (id == null) {
+                    Log.w(TAG, "Wake: no authorization id has been set")
+                    _state.update { it.copy(lastError = "Wake Up needs the camera's authorization ID") }
                     return@launch
                 }
 
-                Log.i(TAG, "Wake step 3: wake-up packet sent as a request")
-                queuePacket(Go2BleProtocol.buildWakeUpPacket(asRequest = true))
-                if (answersWithin(WAKE_STEP_MS)) {
-                    Log.i(TAG, "Wake: the camera answered after step 3")
-                    return@launch
+                val reply = CompletableDeferred<Boolean>()
+                wakeReply = reply
+                Log.i(TAG, "Wake: sending the authorization")
+                queuePacket(Go2BleProtocol.buildWakeAuthorizationPacket(id))
+                when (withTimeoutOrNull(WAKE_REPLY_MS) { reply.await() }) {
+                    null -> {
+                        Log.w(TAG, "Wake: the camera did not answer the authorization")
+                        return@launch
+                    }
+                    false -> {
+                        _state.update { it.copy(lastError = "The camera refused the wake-up authorization") }
+                        return@launch
+                    }
+                    true -> Unit
                 }
 
-                Log.i(TAG, "Wake step 4: wake-up packet on the second service, then subscribing to it")
-                pendingSecondServiceWrites.add(packet)
-                writeChannel.trySend(secondServiceWriteReady)
-                subscribeSecondService()
-                if (answersWithin(WAKE_STEP_MS)) {
-                    Log.i(TAG, "Wake: the camera answered after step 4")
+                if (answersWithin(WAKE_SWITCH_ON_MS)) {
+                    Log.i(TAG, "Wake: the camera is on")
                 } else {
-                    Log.w(TAG, "Wake: the camera did not switch on")
+                    Log.w(TAG, "Wake: the camera accepted the authorization but did not switch on")
                 }
             } finally {
+                wakeReply = null
                 wakeInProgress = false
                 // Carry on as after any connection; a camera that is off answers once it is on
                 requestStatusOnce()
@@ -679,8 +673,8 @@ class GpsRemoteBleManager(private val context: Context) {
     }
 
     /**
-     * Wakes a camera that is off by opening a fresh link to it and sending the wake-up packet
-     * before anything else, which is the order the Insta360 app's routine works in.
+     * Wakes a camera that is off by opening a fresh link to it, on which the wake-up
+     * authorization is the first thing sent.
      */
     fun wakeByConnecting() {
         wakeOnNextConnect = true
@@ -696,64 +690,21 @@ class GpsRemoteBleManager(private val context: Context) {
         statusRequested = true
         queryCaptureStatus()
         queryStatusOptions()
-        queryWakeUpOptions()
     }
 
     private suspend fun answersWithin(timeoutMs: Long): Boolean =
         withTimeoutOrNull(timeoutMs) { state.first { it.isCameraAwake } } != null
 
-    /**
-     * Subscribes to the notify channels of the camera's second service (0xB000), one after the
-     * other. The Insta360 app's strings name this service; what it is for is not known.
-     */
-    @SuppressLint("MissingPermission")
-    private fun subscribeSecondService() {
-        val gatt = activeGatt ?: return
-        val service = gatt.getService(SERVICE_B000) ?: run {
-            Log.w(TAG, "Camera has no 0xB000 service")
-            return
-        }
-        for (uuid in B000_NOTIFY_CHANNELS) {
-            val characteristic = service.getCharacteristic(uuid) ?: continue
-            pendingSubscriptions.add(characteristic)
-            // Bluetooth allows one request at a time, so these take their turn on the write queue
-            writeChannel.trySend(subscribeReady)
-        }
-    }
-
-    @SuppressLint("MissingPermission")
-    private suspend fun performSubscribe() {
-        val gatt = activeGatt ?: return
-        val characteristic = pendingSubscriptions.poll() ?: return
-        val descriptor = characteristic.getDescriptor(CCCD_UUID) ?: return
-        gatt.setCharacteristicNotification(characteristic, true)
-
-        var retries = 5
-        while (retries > 0) {
-            val ack = CompletableDeferred<Boolean>()
-            pendingSubscribeAck = ack
-            val initiated = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-                gatt.writeDescriptor(descriptor, BluetoothGattDescriptor.ENABLE_NOTIFICATION_VALUE) ==
-                    BluetoothStatusCodes.SUCCESS
-            } else {
-                @Suppress("DEPRECATION")
-                descriptor.value = BluetoothGattDescriptor.ENABLE_NOTIFICATION_VALUE
-                @Suppress("DEPRECATION")
-                gatt.writeDescriptor(descriptor)
-            }
-            if (initiated) {
-                Log.i(TAG, "Subscribing to ${characteristic.uuid}")
-                withTimeoutOrNull(2000) { ack.await() }
-                return
-            }
-            retries--
-            delay(100)
-        }
-        Log.w(TAG, "Could not subscribe to ${characteristic.uuid}")
-    }
-
     private fun handleIncomingNotification(raw: ByteArray) {
         Log.v(TAG, "RX ${raw.toHex()}")
+
+        // The camera's Bluetooth chip answers the wake-up authorization while the camera is off
+        Go2BleProtocol.parseWakeAuthorizationReply(raw)?.let { accepted ->
+            Log.i(TAG, if (accepted) "The camera accepted the wake-up authorization" else "The camera refused the wake-up authorization")
+            wakeReply?.complete(accepted)
+            return
+        }
+
         val decoded = Go2BleProtocol.decodePacket(raw)
         if (decoded == null) {
             // Check for raw sync pattern: "AB BA"
@@ -764,13 +715,7 @@ class GpsRemoteBleManager(private val context: Context) {
             return
         }
 
-        // The camera's Bluetooth chip answers the wake-up packet even while the camera is off
-        if (decoded.isMessage && Go2BleProtocol.isWakeUpAcknowledgement(decoded.innerData)) {
-            Log.i(TAG, "The camera's Bluetooth acknowledged the wake-up packet: ${raw.toHex()}")
-            return
-        }
-
-        // Anything else valid from the camera, a keep-alive answer included, shows it is switched on
+        // Anything valid from the camera, a keep-alive answer included, shows it is switched on
         lastHeardAtMs = SystemClock.elapsedRealtime()
         if (!_state.value.isCameraAwake) {
             Log.i(TAG, "Camera is answering")
@@ -881,13 +826,6 @@ class GpsRemoteBleManager(private val context: Context) {
                     if (inner.sequence == statusOptionsQuerySeq) {
                         statusOptionsQuerySeq = -1
                         Go2BleProtocol.parseStatusOptionsReply(inner.payload)?.let { onStatusOptionsReply(it) }
-                    }
-                    if (inner.sequence == wakeUpOptionsQuerySeq) {
-                        wakeUpOptionsQuerySeq = -1
-                        Go2BleProtocol.parseWakeUpOptionsReply(inner.payload)?.let { options ->
-                            Log.i(TAG, "Wake-up settings: authorization id=${options.authorizationId}, " +
-                                "switch=${options.wakeUpSwitch}, raw=$hexPayload")
-                        }
                     }
                     if (inner.sequence == stopCaptureSeq) {
                         stopCaptureSeq = -1
@@ -1010,10 +948,10 @@ class GpsRemoteBleManager(private val context: Context) {
     }
 
     @SuppressLint("MissingPermission")
-    private suspend fun performGattWrite(packet: ByteArray, target: BluetoothGattCharacteristic? = null) {
+    private suspend fun performGattWrite(packet: ByteArray) {
         val gatt = activeGatt ?: return
-        val char = target ?: writeCharacteristic ?: return
-        Log.v(TAG, if (target == null) "TX ${packet.toHex()}" else "TX to ${target.uuid}: ${packet.toHex()}")
+        val char = writeCharacteristic ?: return
+        Log.v(TAG, "TX ${packet.toHex()}")
 
         var retries = 3
         while (retries > 0) {
@@ -1120,18 +1058,6 @@ class GpsRemoteBleManager(private val context: Context) {
         val seq = nextSeq()
         captureStatusQuerySeq = seq
         val inner = Go2BleProtocol.encodeInnerMessage(Go2BleProtocol.CMD_GET_CURRENT_CAPTURE_STATUS, seq)
-        queuePacket(Go2BleProtocol.encodeMessagePacket(inner))
-    }
-
-    /** Asks the camera for its Bluetooth wake-up settings, which are logged. */
-    private fun queryWakeUpOptions() {
-        val seq = nextSeq()
-        wakeUpOptionsQuerySeq = seq
-        val inner = Go2BleProtocol.encodeInnerMessage(
-            Go2BleProtocol.CMD_GET_OPTIONS,
-            seq,
-            Go2BleProtocol.buildWakeUpOptionsRequest()
-        )
         queuePacket(Go2BleProtocol.encodeMessagePacket(inner))
     }
 

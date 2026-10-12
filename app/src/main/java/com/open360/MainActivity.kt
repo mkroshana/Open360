@@ -1,6 +1,7 @@
 package com.open360
 
 import android.Manifest
+import android.content.Intent
 import android.content.pm.PackageManager
 import android.os.Build
 import android.os.Bundle
@@ -16,6 +17,10 @@ import com.open360.ui.camera.CameraViewModel
 import com.open360.ui.theme.Open360Theme
 
 class MainActivity : ComponentActivity() {
+    private companion object {
+        const val EXTRA_WAKE_AUTHORIZATION_ID = "wake_authorization_id"
+    }
+
     private val cameraViewModel: CameraViewModel by viewModels()
 
     private val permissionLauncher = registerForActivityResult(
@@ -38,6 +43,7 @@ class MainActivity : ComponentActivity() {
         enableEdgeToEdge()
 
         checkAndRequestPermissions()
+        storeWakeAuthorizationId(intent)
 
         setContent {
             Open360Theme {
@@ -47,6 +53,26 @@ class MainActivity : ComponentActivity() {
                 )
             }
         }
+    }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        storeWakeAuthorizationId(intent)
+    }
+
+    /**
+     * Stores the wake-up authorization id when the app is started with one:
+     * `adb shell am start -n com.open360/.MainActivity --es wake_authorization_id <id>`.
+     * There is no screen for entering it yet.
+     */
+    private fun storeWakeAuthorizationId(intent: Intent?) {
+        val id = intent?.getStringExtra(EXTRA_WAKE_AUTHORIZATION_ID) ?: return
+        val saved = cameraViewModel.bleManager.saveWakeAuthorizationId(id)
+        Toast.makeText(
+            this,
+            if (saved) "Wake-Up ID Saved" else "That Is Not a Valid Wake-Up ID",
+            Toast.LENGTH_SHORT
+        ).show()
     }
 
     private fun getRequiredPermissions(): List<String> {
@@ -88,7 +114,7 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun wakeUpAndConnect() {
-        Toast.makeText(this, "Broadcasting wake-up beacon...", Toast.LENGTH_SHORT).show()
+        Toast.makeText(this, "Waking the Camera...", Toast.LENGTH_SHORT).show()
         cameraViewModel.wakeUpCamera()
     }
 }
