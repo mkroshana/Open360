@@ -38,6 +38,8 @@ data class RemoteUiState(
     val isSpeedMph: Boolean = false,
     val recordingDurationSeconds: Long = 0L,
     val keepGpsActiveInBackground: Boolean = true,
+    // The ID a switched-off camera accepts a wake-up from, null when none is stored
+    val wakeUpId: String? = null,
     val isConnected: Boolean = false,
     val isRecording: Boolean = false,
     val cameraDisplayInfo: String? = null
@@ -195,6 +197,8 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
             }
         }
 
+        _uiState.update { it.copy(wakeUpId = bleManager.getWakeAuthorizationId()) }
+
         // Start GPS tracking immediately so speed and location are available
         gpsEngine.startTracking()
 
@@ -246,6 +250,17 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
 
     fun toggleSpeedUnit() {
         _uiState.update { it.copy(isSpeedMph = !it.isSpeedMph) }
+    }
+
+    /**
+     * Stores the wake-up ID. IDs are lower case as the camera holds them, so that is how one is
+     * kept however it was typed. Returns false when it is not a valid ID.
+     */
+    fun saveWakeUpId(id: String): Boolean {
+        val normalized = id.trim().lowercase()
+        if (!bleManager.saveWakeAuthorizationId(normalized)) return false
+        _uiState.update { it.copy(wakeUpId = normalized) }
+        return true
     }
 
     fun toggleKeepGpsInBackground() {

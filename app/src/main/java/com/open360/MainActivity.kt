@@ -63,11 +63,11 @@ class MainActivity : ComponentActivity() {
     /**
      * Stores the wake-up authorization id when the app is started with one:
      * `adb shell am start -n com.open360/.MainActivity --es wake_authorization_id <id>`.
-     * There is no screen for entering it yet.
+     * It can also be entered on the Wake-Up ID card.
      */
     private fun storeWakeAuthorizationId(intent: Intent?) {
         val id = intent?.getStringExtra(EXTRA_WAKE_AUTHORIZATION_ID) ?: return
-        val saved = cameraViewModel.bleManager.saveWakeAuthorizationId(id)
+        val saved = cameraViewModel.saveWakeUpId(id)
         Toast.makeText(
             this,
             if (saved) "Wake-Up ID Saved" else "That Is Not a Valid Wake-Up ID",

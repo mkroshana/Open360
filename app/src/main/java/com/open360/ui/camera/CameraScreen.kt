@@ -213,6 +213,11 @@ fun CameraScreen(
                 onToggle = { viewModel.toggleKeepGpsInBackground() }
             )
 
+            WakeUpIdCard(
+                id = uiState.wakeUpId,
+                onSave = { viewModel.saveWakeUpId(it) }
+            )
+
             Spacer(modifier = Modifier.height(16.dp))
         }
     }
