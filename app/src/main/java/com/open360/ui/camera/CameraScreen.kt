@@ -75,6 +75,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.open360.core.ble.BleConnectionStatus
+import com.open360.core.ble.CameraDetails
 import com.open360.core.gps.GpxTrackState
 import com.open360.core.model.CaptureMode
 import java.util.Locale
@@ -364,6 +365,10 @@ fun CameraStatusCard(
                 }
             }
 
+            if (ble.connectionStatus == BleConnectionStatus.CONNECTED) {
+                CameraDetailRows(details = ble.details)
+            }
+
             AnimatedVisibility(visible = server.lastError != null || ble.lastError != null) {
                 Text(
                     text = server.lastError ?: ble.lastError ?: "",
@@ -439,6 +444,47 @@ fun CameraStatusCard(
                         Text(text = "Power Off")
                     }
                 }
+            }
+        }
+    }
+}
+
+/**
+ * What the camera has reported about itself, one line each. A line appears once the camera has
+ * sent its value.
+ */
+@Composable
+private fun CameraDetailRows(details: CameraDetails) {
+    val rows = ArrayList<Triple<String, String, Boolean>>()
+
+    val storageProblem = CameraStatusText.storageProblem(details.cardState)
+    if (storageProblem != null) {
+        rows.add(Triple("Storage", storageProblem, true))
+    } else if (details.captureSecondsLeft != null) {
+        rows.add(Triple("Recording Time Left", CameraStatusText.timeLeft(details.captureSecondsLeft), false))
+    }
+
+    if (rows.isEmpty()) return
+
+    Spacer(modifier = Modifier.height(10.dp))
+    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+        rows.forEach { (label, value, isProblem) ->
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(
+                    text = label,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                Text(
+                    text = value,
+                    style = MaterialTheme.typography.bodyMedium,
+                    fontWeight = FontWeight.Medium,
+                    color = if (isProblem) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurface
+                )
             }
         }
     }

@@ -50,6 +50,16 @@ enum class BleConnectionStatus {
     CONNECTED
 }
 
+/**
+ * What the camera reports about itself besides its battery and recording state. Each value is
+ * null until the camera has sent it, and all are forgotten when the link ends.
+ */
+data class CameraDetails(
+    // Recording time left on the storage at the current mode's bitrate
+    val captureSecondsLeft: Int? = null,
+    val cardState: Go2BleProtocol.CardState? = null
+)
+
 data class BleCameraState(
     val connectionStatus: BleConnectionStatus = BleConnectionStatus.DISCONNECTED,
     val isRecording: Boolean = false,
@@ -62,6 +72,7 @@ data class BleCameraState(
     val lastVideoFile: String? = null,
     val batteryPercent: Int? = null,
     val isCharging: Boolean = false,
+    val details: CameraDetails = CameraDetails(),
     val deviceName: String? = null,
     val deviceAddress: String? = null,
     val lastGpsSentTimeMs: Long = 0L,
@@ -419,7 +430,8 @@ class GpsRemoteBleManager(private val context: Context) {
                         connectionStatus = BleConnectionStatus.DISCONNECTED,
                         isRecording = false,
                         isCaptureStarting = false,
-                        isCaptureStopping = false
+                        isCaptureStopping = false,
+                        details = CameraDetails()
                     )
                 }
             }
@@ -546,6 +558,17 @@ class GpsRemoteBleManager(private val context: Context) {
                     parseCaptureStatus(inner.payload)
                 }
 
+                Go2BleProtocol.NOTIF_CAPTURE_TIME_LEFT -> {
+                    Go2BleProtocol.parseCaptureTimeLeft(inner.payload)?.let { seconds ->
+                        updateDetails { it.copy(captureSecondsLeft = seconds) }
+                    }
+                }
+
+                Go2BleProtocol.NOTIF_STORAGE_UPDATE -> {
+                    val cardState = Go2BleProtocol.parseStorageUpdate(inner.payload)
+                    updateDetails { it.copy(cardState = cardState) }
+                }
+
                 Go2BleProtocol.NOTIF_PERIODIC_STATUS -> {
                     when (Go2BleProtocol.parseCaptureStep(inner.payload)) {
                         Go2BleProtocol.CAPTURE_STEP_VIDEO_STARTING -> {
@@ -581,6 +604,10 @@ class GpsRemoteBleManager(private val context: Context) {
                 }
             }
         }
+    }
+
+    private fun updateDetails(change: (CameraDetails) -> CameraDetails) {
+        _state.update { it.copy(details = change(it.details)) }
     }
 
     private fun parseBatteryUpdate(payload: ByteArray) {
@@ -879,7 +906,8 @@ class GpsRemoteBleManager(private val context: Context) {
                 connectionStatus = BleConnectionStatus.DISCONNECTED,
                 isRecording = false,
                 isCaptureStarting = false,
-                isCaptureStopping = false
+                isCaptureStopping = false,
+                details = CameraDetails()
             )
         }
     }

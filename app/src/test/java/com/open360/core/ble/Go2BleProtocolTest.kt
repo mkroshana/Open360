@@ -168,6 +168,28 @@ class Go2BleProtocolTest {
         assertNull(Go2BleProtocol.parseCapturedFilePath(byteArrayOf(0x08, 0x64, 0x10, 0x01)))
     }
 
+    private fun hex(s: String) = s.chunked(2).map { it.toInt(16).toByte() }.toByteArray()
+
+    @Test
+    fun testCaptureTimeLeftFromCameraNotification() {
+        // Captured from a GO 3S: in Video mode, then in PRO Video mode on the same storage
+        assertEquals(6510, Go2BleProtocol.parseCaptureTimeLeft(hex("08ee321000")))
+        assertEquals(4796, Go2BleProtocol.parseCaptureTimeLeft(hex("08bc251000")))
+        assertNull(Go2BleProtocol.parseCaptureTimeLeft(ByteArray(0)))
+    }
+
+    @Test
+    fun testStorageUpdateCardStates() {
+        // Captured from a GO 3S with working storage
+        assertEquals(Go2BleProtocol.CardState.OK, Go2BleProtocol.parseStorageUpdate(hex("0800")))
+        assertEquals(Go2BleProtocol.CardState.NO_CARD, Go2BleProtocol.parseStorageUpdate(hex("0801")))
+        assertEquals(Go2BleProtocol.CardState.FULL, Go2BleProtocol.parseStorageUpdate(hex("0802")))
+        assertEquals(Go2BleProtocol.CardState.WRITE_PROTECTED, Go2BleProtocol.parseStorageUpdate(hex("0804")))
+        assertEquals(Go2BleProtocol.CardState.ERROR, Go2BleProtocol.parseStorageUpdate(hex("0809")))
+        // A message that leaves the state out carries the default
+        assertEquals(Go2BleProtocol.CardState.OK, Go2BleProtocol.parseStorageUpdate(ByteArray(0)))
+    }
+
     @Test
     fun testKeepAlivePacketCarriesWifiKeepAliveBytes() {
         val decoded = Go2BleProtocol.decodePacket(Go2BleProtocol.buildKeepAlivePacket())

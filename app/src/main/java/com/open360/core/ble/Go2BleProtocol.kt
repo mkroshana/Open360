@@ -37,8 +37,9 @@ object Go2BleProtocol {
 
     // Camera notification codes
     const val NOTIF_BATTERY_UPDATE = 0x2003
+    const val NOTIF_STORAGE_UPDATE = 0x2006
     const val NOTIF_CURRENT_CAPTURE_STATUS = 0x2010
-    const val NOTIF_BATTERY_STATE_GO3 = 0x2021
+    const val NOTIF_CAPTURE_TIME_LEFT = 0x2021
     const val NOTIF_PERIODIC_STATUS = 0x2026
 
     // Architecture A fixed 9-byte commands (GPS Remote emulation)
@@ -168,6 +169,32 @@ object Go2BleProtocol {
             onExternalPower = powerType == 1L
         )
     }
+
+    /**
+     * Reads the recording time left on the storage, in seconds, from notification 0x2021
+     * (field 1). The code is not in the published definitions. On a GO 3S the value falls while
+     * a clip records and differs between capture modes on the same storage (6552 in Video, 4796
+     * in PRO Video), which is how the time left at the mode's bitrate would behave.
+     */
+    fun parseCaptureTimeLeft(payload: ByteArray): Int? =
+        (readProtoFields(payload)[1] as? Long)?.takeIf { it in 0..Int.MAX_VALUE }?.toInt()
+
+    /** The camera's storage states, CardState in the published definitions. */
+    enum class CardState { OK, NO_CARD, FULL, INVALID_FORMAT, WRITE_PROTECTED, ERROR }
+
+    /**
+     * Decodes the storage update notification (0x2006, NotificationCardUpdate). Field 1 is the
+     * state; a message without it means the default, which is OK.
+     */
+    fun parseStorageUpdate(payload: ByteArray): CardState =
+        when (readProtoFields(payload)[1] as? Long ?: 0L) {
+            0L -> CardState.OK
+            1L -> CardState.NO_CARD
+            2L -> CardState.FULL
+            3L -> CardState.INVALID_FORMAT
+            4L -> CardState.WRITE_PROTECTED
+            else -> CardState.ERROR
+        }
 
     /**
      * Reads the top-level fields of a protobuf message: varints as Long, length-delimited
