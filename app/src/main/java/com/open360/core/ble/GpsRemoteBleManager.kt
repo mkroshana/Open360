@@ -97,9 +97,11 @@ class GpsRemoteBleManager(private val context: Context) {
         // on who started the recording. The notice comes about 0.2 s after the app's start
         // command, with the first frame 1.61 and 1.67 s later on two clips. When the camera's
         // own button is used the notice comes well into the start-up, with the first frame 0.2
-        // to 0.4 s later on four clips.
+        // to 0.4 s later on four clips. On a ride, though, the GPS of a clip started with the
+        // button sat about 0.2 s later against the camera's motion sensors than that of a clip
+        // started from the app, so the button figure is taken as 0.55 s.
         private const val FIRST_FRAME_AFTER_APP_START_NOTICE_MS = 1640L
-        private const val FIRST_FRAME_AFTER_BUTTON_START_NOTICE_MS = 350L
+        private const val FIRST_FRAME_AFTER_BUTTON_START_NOTICE_MS = 550L
 
         // Used for an app start until the notice arrives
         private const val FIRST_FRAME_AFTER_START_COMMAND_MS = 1850L
