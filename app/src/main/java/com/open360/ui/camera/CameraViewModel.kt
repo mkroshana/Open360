@@ -1,6 +1,7 @@
 package com.open360.ui.camera
 
 import android.app.Application
+import android.content.Context
 import android.os.SystemClock
 import android.util.Log
 import androidx.lifecycle.AndroidViewModel
@@ -58,6 +59,9 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
     companion object {
         private const val TAG = "CameraViewModel"
 
+        // Whether GPS and the camera link are kept going with the display off; on unless turned off
+        private const val PREF_KEEP_GPS_IN_BACKGROUND = "keep_gps_in_background"
+
         // The camera reports "recording" about a second after the clip really starts: on three
         // GO 3S clips the time between its start and stop reports was 0.85 to 1.06 s shorter
         // than the clip. The timer starts from this value to make up for it.
@@ -94,7 +98,11 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
     private val gpsTimeline = GpsTimeline(keepMs = GPS_HISTORY_MS)
     private val gpsSchedule = GpsStreamSchedule(GPS_SAMPLE_INTERVAL_MS, MAX_WAIT_FOR_NEXT_FIX_MS)
 
-    private val _uiState = MutableStateFlow(RemoteUiState())
+    private val settings = application.getSharedPreferences("open360_settings", Context.MODE_PRIVATE)
+
+    private val _uiState = MutableStateFlow(
+        RemoteUiState(keepGpsActiveInBackground = settings.getBoolean(PREF_KEEP_GPS_IN_BACKGROUND, true))
+    )
     val uiState: StateFlow<RemoteUiState> = _uiState.asStateFlow()
 
     private var recordingTimerJob: Job? = null
@@ -335,7 +343,9 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
     }
 
     fun toggleKeepGpsInBackground() {
-        _uiState.update { it.copy(keepGpsActiveInBackground = !it.keepGpsActiveInBackground) }
+        val keep = !_uiState.value.keepGpsActiveInBackground
+        settings.edit().putBoolean(PREF_KEEP_GPS_IN_BACKGROUND, keep).apply()
+        _uiState.update { it.copy(keepGpsActiveInBackground = keep) }
         updateBackgroundService()
     }
 
