@@ -143,6 +143,19 @@ object Go2BleProtocol {
     fun parseCaptureStep(payload: ByteArray): Int? = (readProtoFields(payload)[1] as? Long)?.toInt()
 
     /**
+     * Reads the CameraCaptureState the capture step belongs to (field 4 of notification 0x2026).
+     * Seen on a GO 3S: 1 for a Video clip, 17 for a PRO Video clip, 4 for a photo. It arrives
+     * with the start notice, two to three seconds before the capture status notification.
+     */
+    fun parseCaptureStepState(payload: ByteArray): Int? = (readProtoFields(payload)[4] as? Long)?.toInt()
+
+    /**
+     * Reads the CameraCaptureState (field 1) from the capture status notification (0x2010).
+     * A message that leaves it out carries the default, NOT_CAPTURE.
+     */
+    fun parseCaptureState(payload: ByteArray): Int = (readProtoFields(payload)[1] as? Long ?: 0L).toInt()
+
+    /**
      * Reads the file path from the camera's reply to a stop capture command, for example
      * "/DCIM/Camera01/VID_20261012_163049_00_066.mp4". The reply holds a video message in
      * field 1 whose own field 1 is the path.
@@ -151,6 +164,15 @@ object Go2BleProtocol {
         val video = readProtoFields(payload)[1] as? ByteArray ?: return null
         val path = readProtoFields(video)[1] as? ByteArray ?: return null
         return String(path, Charsets.UTF_8).takeIf { it.isNotBlank() }
+    }
+
+    /**
+     * Reads the clip length in whole seconds from the camera's reply to a stop capture command
+     * (field 3 of the video message). On a GO 3S it was 41 for a 41.7 s clip.
+     */
+    fun parseCapturedFileSeconds(payload: ByteArray): Int? {
+        val video = readProtoFields(payload)[1] as? ByteArray ?: return null
+        return (readProtoFields(video)[3] as? Long)?.takeIf { it in 0..Int.MAX_VALUE }?.toInt()
     }
 
     data class BatteryStatus(val levelPercent: Int, val onExternalPower: Boolean)

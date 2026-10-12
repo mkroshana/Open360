@@ -166,6 +166,24 @@ class Go2BleProtocolTest {
 
         // The battery query reply has no file in it
         assertNull(Go2BleProtocol.parseCapturedFilePath(byteArrayOf(0x08, 0x64, 0x10, 0x01)))
+
+        // The same reply gives the clip's length in whole seconds
+        assertEquals(41, Go2BleProtocol.parseCapturedFileSeconds(reply))
+        assertNull(Go2BleProtocol.parseCapturedFileSeconds(byteArrayOf(0x08, 0x64, 0x10, 0x01)))
+    }
+
+    @Test
+    fun testRecordingModeFromStartNoticeAndCaptureStatus() {
+        // Start notices captured from a GO 3S: started from the app (Video), then with the
+        // camera's button in PRO Video mode
+        assertEquals(1, Go2BleProtocol.parseCaptureStepState(hex("080218a5951b20012805")))
+        assertEquals(17, Go2BleProtocol.parseCaptureStepState(hex("080218aca70120112802")))
+
+        // Capture status for the same two modes, then for the camera going idle
+        assertEquals(1, Go2BleProtocol.parseCaptureState(hex("0801100020b817280530880e3800500058036001")))
+        assertEquals(17, Go2BleProtocol.parseCaptureState(hex("0811100020b817280530880e3800500058036001")))
+        assertEquals(0, Go2BleProtocol.parseCaptureState(hex("080010002000280030880e3800500058036001")))
+        assertEquals(0, Go2BleProtocol.parseCaptureState(ByteArray(0)))
     }
 
     private fun hex(s: String) = s.chunked(2).map { it.toInt(16).toByte() }.toByteArray()

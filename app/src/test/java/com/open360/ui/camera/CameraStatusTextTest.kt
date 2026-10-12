@@ -33,6 +33,23 @@ class CameraStatusTextTest {
     }
 
     @Test
+    fun testRecordingModeNames() {
+        assertEquals("Video", CameraStatusText.recordingMode(1))
+        assertEquals("PRO Video", CameraStatusText.recordingMode(17))
+        assertNull(CameraStatusText.recordingMode(null))
+        assertNull(CameraStatusText.recordingMode(0))
+        assertNull(CameraStatusText.recordingMode(99))
+    }
+
+    @Test
+    fun testClipLength() {
+        assertEquals("41 s", CameraStatusText.clipLength(41))
+        assertEquals("3 min 30 s", CameraStatusText.clipLength(210))
+        assertEquals("1 min 0 s", CameraStatusText.clipLength(60))
+        assertEquals("1 h 2 min", CameraStatusText.clipLength(3725))
+    }
+
+    @Test
     fun testPodLine() {
         val onBattery = ChargeBoxStatus(connected = true, battery = BatteryStatus(69, onExternalPower = false))
         val pluggedIn = ChargeBoxStatus(connected = true, battery = BatteryStatus(65, onExternalPower = true))

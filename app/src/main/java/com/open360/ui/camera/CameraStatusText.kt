@@ -29,6 +29,37 @@ object CameraStatusText {
         CardState.ERROR -> "Error"
     }
 
+    /**
+     * The name of a recording mode from its CameraCaptureState, or null for one with no name
+     * here. Only Video (1) and PRO Video (17) have been seen from a GO 3S; the rest follow the
+     * names in the published definitions.
+     */
+    fun recordingMode(captureState: Int?): String? = when (captureState) {
+        1 -> "Video"
+        2 -> "Timelapse"
+        7 -> "Bullet Time"
+        9 -> "HDR Video"
+        12 -> "Interval Video"
+        13 -> "TimeShift"
+        17 -> "PRO Video"
+        18 -> "Loop Recording"
+        20 -> "FPV"
+        22 -> "Slow Motion"
+        else -> null
+    }
+
+    /** A clip length such as "41 s", "3 min 30 s" or "1 h 2 min". */
+    fun clipLength(seconds: Int): String {
+        val hours = seconds / 3600
+        val minutes = seconds % 3600 / 60
+        val secs = seconds % 60
+        return when {
+            hours > 0 -> "$hours h $minutes min"
+            minutes > 0 -> "$minutes min $secs s"
+            else -> "$secs s"
+        }
+    }
+
     /** The Action Pod's line: its battery, "72%, Plugged In", or "Not Connected". */
     fun pod(status: ChargeBoxStatus): String {
         if (!status.connected) return "Not Connected"

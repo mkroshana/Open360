@@ -74,8 +74,8 @@ import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.open360.core.ble.BleCameraState
 import com.open360.core.ble.BleConnectionStatus
-import com.open360.core.ble.CameraDetails
 import com.open360.core.gps.GpxTrackState
 import com.open360.core.model.CaptureMode
 import java.util.Locale
@@ -366,7 +366,7 @@ fun CameraStatusCard(
             }
 
             if (ble.connectionStatus == BleConnectionStatus.CONNECTED) {
-                CameraDetailRows(details = ble.details)
+                CameraDetailRows(ble = ble)
             }
 
             AnimatedVisibility(visible = server.lastError != null || ble.lastError != null) {
@@ -454,45 +454,73 @@ fun CameraStatusCard(
  * sent its value.
  */
 @Composable
-private fun CameraDetailRows(details: CameraDetails) {
-    val rows = ArrayList<Triple<String, String, Boolean>>()
+private fun CameraDetailRows(ble: BleCameraState) {
+    val details = ble.details
+    val rows = ArrayList<StatusLine>()
+
+    CameraStatusText.recordingMode(details.recordingState)?.let { mode ->
+        rows.add(StatusLine("Recording Mode", mode))
+    }
 
     val storageProblem = CameraStatusText.storageProblem(details.cardState)
     if (storageProblem != null) {
-        rows.add(Triple("Storage", storageProblem, true))
+        rows.add(StatusLine("Storage", storageProblem, isProblem = true))
     } else if (details.captureSecondsLeft != null) {
-        rows.add(Triple("Recording Time Left", CameraStatusText.timeLeft(details.captureSecondsLeft), false))
+        rows.add(StatusLine("Recording Time Left", CameraStatusText.timeLeft(details.captureSecondsLeft)))
     }
 
     details.pod?.let { pod ->
-        rows.add(Triple("Action Pod", CameraStatusText.pod(pod), CameraStatusText.podIsLow(pod)))
+        rows.add(StatusLine("Action Pod", CameraStatusText.pod(pod), isProblem = CameraStatusText.podIsLow(pod)))
+    }
+
+    if (ble.lastVideoFile != null) {
+        val length = ble.lastVideoSeconds?.let { CameraStatusText.clipLength(it) } ?: "Saved"
+        rows.add(StatusLine("Last Clip", length, note = ble.lastVideoFile))
     }
 
     if (rows.isEmpty()) return
 
     Spacer(modifier = Modifier.height(10.dp))
     Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-        rows.forEach { (label, value, isProblem) ->
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Text(
-                    text = label,
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-                Text(
-                    text = value,
-                    style = MaterialTheme.typography.bodyMedium,
-                    fontWeight = FontWeight.Medium,
-                    color = if (isProblem) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurface
-                )
+        rows.forEach { line ->
+            Column {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        text = line.label,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    Text(
+                        text = line.value,
+                        style = MaterialTheme.typography.bodyMedium,
+                        fontWeight = FontWeight.Medium,
+                        color = if (line.isProblem) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurface
+                    )
+                }
+                if (line.note != null) {
+                    Text(
+                        text = line.note,
+                        style = MaterialTheme.typography.labelSmall,
+                        fontFamily = FontFamily.Monospace,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
             }
         }
     }
 }
+
+/** One line of camera status: a label, its value, and an optional note shown underneath. */
+private data class StatusLine(
+    val label: String,
+    val value: String,
+    val isProblem: Boolean = false,
+    val note: String? = null
+)
 
 @Composable
 fun GpsTelemetryCard(
