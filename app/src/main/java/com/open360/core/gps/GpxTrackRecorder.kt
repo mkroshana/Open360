@@ -120,7 +120,7 @@ class GpxTrackRecorder(private val context: Context) {
                 _state.update { it.copy(pointCount = s.fixes.size, lastError = null) }
             } catch (e: Exception) {
                 Log.e(TAG, "Could not write GPX track", e)
-                _state.update { it.copy(lastError = "Could not write GPX track: ${e.message}") }
+                _state.update { it.copy(lastError = "Could not save the route file: ${e.message}") }
             }
         }
     }
@@ -212,14 +212,14 @@ class GpxTrackRecorder(private val context: Context) {
         s.finalized = true
         if (s.fixes.isEmpty()) {
             Log.i(TAG, "Recording ended with no GPS fixes, no track saved")
-            _state.value = GpxTrackState(lastError = "No GPS fixes during the last recording, no track saved")
+            _state.value = GpxTrackState(lastError = "No GPS during the last recording, so no route was saved")
             return
         }
         try {
             rewrite(s)
         } catch (e: Exception) {
             Log.e(TAG, "Could not complete GPX track", e)
-            _state.update { it.copy(lastError = "Could not complete GPX track: ${e.message}") }
+            _state.update { it.copy(lastError = "Could not finish the route file: ${e.message}") }
         } finally {
             closeFile(s)
         }

@@ -310,12 +310,12 @@ fun CameraStatusCard(
             }
 
             val statusText = when {
-                server.isCameraConnected -> "GPS Remote Connected (10 Hz NMEA)"
+                server.isCameraConnected -> "Connected as a GPS Remote"
                 isAsleep -> "Camera Is Off"
                 ble.connectionStatus == BleConnectionStatus.CONNECTED -> "Connected"
                 server.isAdvertising -> "Broadcasting as Insta360 GPS Remote"
-                ble.connectionStatus == BleConnectionStatus.SCANNING -> "Scanning for Camera..."
-                ble.connectionStatus == BleConnectionStatus.CONNECTING -> "Connecting to Camera..."
+                ble.connectionStatus == BleConnectionStatus.SCANNING -> "Looking for the Camera..."
+                ble.connectionStatus == BleConnectionStatus.CONNECTING -> "Connecting to the Camera..."
                 else -> "Disconnected"
             }
 
@@ -369,7 +369,7 @@ fun CameraStatusCard(
                     )
                     Text(
                         text = if (isAsleep) {
-                            "Its Bluetooth is connected but the camera is not answering. Press the camera's button to switch it on."
+                            "The camera is nearby but switched off. Tap Wake Up or press the camera's button to switch it on."
                         } else {
                             "Turn the camera on and keep it nearby. Open360 connects to it directly."
                         },
@@ -566,7 +566,7 @@ fun GpsTelemetryCard(
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 Text(
-                    text = "GPS Telemetry",
+                    text = "GPS",
                     style = MaterialTheme.typography.titleMedium,
                     fontWeight = FontWeight.SemiBold
                 )
@@ -578,12 +578,12 @@ fun GpsTelemetryCard(
                 ) {
                     Icon(
                         imageVector = if (gps.hasFix) Icons.Default.GpsFixed else Icons.Default.GpsNotFixed,
-                        contentDescription = "Fix Status",
+                        contentDescription = "GPS Signal",
                         modifier = Modifier.size(16.dp),
                         tint = if (gps.hasFix) Color(0xFF2E7D32) else MaterialTheme.colorScheme.error
                     )
                     Text(
-                        text = if (gps.hasFix) "${gps.satellitesInFix} Satellites" else "Acquiring Fix...",
+                        text = if (gps.hasFix) "${gps.satellitesInFix} Satellites" else "Finding Satellites...",
                         style = MaterialTheme.typography.labelMedium,
                         color = if (gps.hasFix) Color(0xFF2E7D32) else MaterialTheme.colorScheme.onSurfaceVariant
                     )
@@ -670,10 +670,10 @@ fun GpsTelemetryCard(
             val streamText = when {
                 streamActive && isRecording && joinedLateSeconds != null ->
                     "Sending GPS, Joined $joinedLateSeconds s After the Start"
-                streamActive && isRecording -> "Sending GPS to Camera (10 Hz)"
+                streamActive && isRecording -> "Sending GPS to the Camera"
                 streamActive -> "GPS Ready, Sent While Recording"
-                isCameraConnected && !gps.hasFix -> "Waiting for GPS Fix"
-                else -> "Telemetry Stream Ready"
+                isCameraConnected && !gps.hasFix -> "Waiting for GPS"
+                else -> "No Camera Connected"
             }
 
             Row(
@@ -691,7 +691,7 @@ fun GpsTelemetryCard(
                 ) {
                     Icon(
                         imageVector = if (streamActive) Icons.Default.CheckCircle else Icons.Default.Sync,
-                        contentDescription = "Stream Status",
+                        contentDescription = "GPS Sending Status",
                         modifier = Modifier.size(16.dp),
                         tint = badgeColor
                     )
@@ -715,7 +715,7 @@ fun GpsTelemetryCard(
             if (track.fileName != null) {
                 Spacer(modifier = Modifier.height(8.dp))
                 Text(
-                    text = "GPX track: ${track.folder}/${track.fileName} (${track.pointCount} points)",
+                    text = "Route file: ${track.folder}/${track.fileName} (${track.pointCount} points)",
                     style = MaterialTheme.typography.labelSmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
@@ -807,12 +807,12 @@ fun CameraControlCard(
                     ) {
                         Icon(
                             imageVector = Icons.Default.Sync,
-                            contentDescription = "Cycle Mode",
+                            contentDescription = "Next Mode",
                             modifier = Modifier.size(14.dp)
                         )
                         Spacer(modifier = Modifier.width(4.dp))
                         Text(
-                            text = "Cycle Mode",
+                            text = "Next Mode",
                             style = MaterialTheme.typography.labelSmall
                         )
                     }
@@ -945,7 +945,7 @@ fun CameraControlCard(
 
             if (!isConnected || isAsleep) {
                 Text(
-                    text = if (isAsleep) "Switch the camera on to control it" else "Connect camera to control",
+                    text = if (isAsleep) "Switch the camera on to control it" else "Connect the camera to control it",
                     style = MaterialTheme.typography.labelSmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     modifier = Modifier.padding(top = 4.dp)

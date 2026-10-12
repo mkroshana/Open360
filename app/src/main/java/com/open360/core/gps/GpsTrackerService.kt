@@ -137,10 +137,10 @@ class GpsTrackerService : Service() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             val channel = NotificationChannel(
                 CHANNEL_ID,
-                "GPS Telemetry Tracking",
+                "Camera Connection",
                 NotificationManager.IMPORTANCE_LOW
             ).apply {
-                description = "Monitors and streams GPS location to Insta360 camera"
+                description = "Shown while Open360 is connected to the camera and sending it GPS"
                 setShowBadge(false)
             }
             val nm = getSystemService(NotificationManager::class.java)

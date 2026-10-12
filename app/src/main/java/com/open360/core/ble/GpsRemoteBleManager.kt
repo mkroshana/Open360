@@ -334,14 +334,14 @@ class GpsRemoteBleManager(private val context: Context) {
     @SuppressLint("MissingPermission")
     fun startWakeUpBroadcast(serialSuffix: String? = null, onComplete: (() -> Unit)? = null) {
         if (!canAdvertise()) {
-            _state.update { it.copy(lastError = "Missing BLUETOOTH_ADVERTISE permission") }
+            _state.update { it.copy(lastError = "Open360 is not allowed to use Bluetooth. Allow Nearby Devices for it in the phone's settings.") }
             return
         }
 
         val targetSuffix = serialSuffix?.takeIf { it.isNotBlank() } ?: getSavedSerialSuffix()
 
         val advertiser = bluetoothAdapter?.bluetoothLeAdvertiser ?: run {
-            _state.update { it.copy(lastError = "Bluetooth advertiser not available") }
+            _state.update { it.copy(lastError = "Bluetooth is off or not available") }
             return
         }
 
@@ -386,7 +386,7 @@ class GpsRemoteBleManager(private val context: Context) {
 
             override fun onStartFailure(errorCode: Int) {
                 Log.e(TAG, "Wake-up beacon broadcast failed: $errorCode")
-                _state.update { it.copy(lastError = "Wake broadcast error: $errorCode") }
+                _state.update { it.copy(lastError = "Could not send the wake-up signal (error $errorCode)") }
             }
         })
     }
@@ -397,12 +397,12 @@ class GpsRemoteBleManager(private val context: Context) {
     @SuppressLint("MissingPermission")
     fun startScanAndConnect(targetSerialSuffix: String? = null) {
         if (!canScan()) {
-            _state.update { it.copy(lastError = "Missing Bluetooth permissions") }
+            _state.update { it.copy(lastError = "Open360 is not allowed to use Bluetooth. Allow Nearby Devices for it in the phone's settings.") }
             return
         }
 
         val scanner = bluetoothAdapter?.bluetoothLeScanner ?: run {
-            _state.update { it.copy(lastError = "Bluetooth scanner not available") }
+            _state.update { it.copy(lastError = "Bluetooth is off or not available. Turn it on to find the camera.") }
             return
         }
 
@@ -449,7 +449,7 @@ class GpsRemoteBleManager(private val context: Context) {
                 _state.update {
                     it.copy(
                         connectionStatus = BleConnectionStatus.DISCONNECTED,
-                        lastError = "Scan failed with error $errorCode"
+                        lastError = "Could not look for the camera (error $errorCode)"
                     )
                 }
             }
@@ -568,7 +568,7 @@ class GpsRemoteBleManager(private val context: Context) {
         override fun onServicesDiscovered(gatt: BluetoothGatt, status: Int) {
             if (status != BluetoothGatt.GATT_SUCCESS) {
                 Log.e(TAG, "Service discovery failed: $status")
-                _state.update { it.copy(lastError = "Service discovery failed ($status)") }
+                _state.update { it.copy(lastError = "Could not finish connecting to the camera (error $status)") }
                 return
             }
 
@@ -690,7 +690,7 @@ class GpsRemoteBleManager(private val context: Context) {
                         return@launch
                     }
                     false -> {
-                        _state.update { it.copy(lastError = "The camera refused the wake-up authorization") }
+                        _state.update { it.copy(lastError = "The camera did not allow Wake Up. Set it up again in Settings.") }
                         return@launch
                     }
                     true -> Unit
