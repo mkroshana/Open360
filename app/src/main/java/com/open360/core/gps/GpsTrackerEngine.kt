@@ -8,10 +8,12 @@ import android.location.GnssStatus
 import android.location.Location
 import android.location.LocationListener
 import android.location.LocationManager
+import android.location.altitude.AltitudeConverter
 import android.os.Build
 import android.os.Bundle
-import android.os.Looper
+import android.os.HandlerThread
 import android.util.Log
+import androidx.annotation.RequiresApi
 import androidx.core.content.ContextCompat
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -38,6 +40,8 @@ class GpsTrackerEngine(private val context: Context) {
 
     private var isTracking = false
     private var locationCallback: ((Double, Double, Double) -> Unit)? = null
+    private var locationThread: HandlerThread? = null
+    private var altitudeSourceLogged = false
 
     private fun hasLocationPermission(): Boolean {
         val fine = ContextCompat.checkSelfPermission(context, Manifest.permission.ACCESS_FINE_LOCATION)
@@ -50,7 +54,7 @@ class GpsTrackerEngine(private val context: Context) {
             val speedMps = if (location.hasSpeed()) location.speed else 0f
             val speedKmh = speedMps * 3.6f
             val speedMph = speedMps * 2.23694f
-            val altitude = if (location.hasAltitude()) location.altitude else 0.0
+            val altitude = seaLevelAltitude(location)
             val bearing = if (location.hasBearing()) location.bearing else 0f
             val accuracy = if (location.hasAccuracy()) location.accuracy else 0f
 
@@ -58,7 +62,8 @@ class GpsTrackerEngine(private val context: Context) {
                 current.copy(
                     latitude = location.latitude,
                     longitude = location.longitude,
-                    altitudeMeters = altitude,
+                    // A fix without altitude (network provider) keeps the last known one
+                    altitudeMeters = altitude ?: current.altitudeMeters,
                     speedKmh = speedKmh,
                     speedMph = speedMph,
                     bearingDegrees = bearing,
@@ -68,7 +73,7 @@ class GpsTrackerEngine(private val context: Context) {
                 )
             }
 
-            locationCallback?.invoke(location.latitude, location.longitude, altitude)
+            locationCallback?.invoke(location.latitude, location.longitude, altitude ?: _telemetry.value.altitudeMeters)
         }
 
         @Deprecated("Deprecated in Java")
@@ -78,6 +83,45 @@ class GpsTrackerEngine(private val context: Context) {
     }
 
     private var gnssCallback: GnssStatus.Callback? = null
+
+    /**
+     * Height above mean sea level, or null when the fix has no altitude.
+     *
+     * Location.altitude is height above the WGS84 ellipsoid, which is about 100 m off sea level
+     * in some regions. Android 14 and later can convert it; older versions keep the ellipsoid value.
+     */
+    private fun seaLevelAltitude(location: Location): Double? {
+        if (!location.hasAltitude()) return null
+        val ellipsoid = location.altitude
+        val seaLevel = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
+            Api34.mslAltitude(context, location)
+        } else {
+            null
+        }
+        if (!altitudeSourceLogged) {
+            altitudeSourceLogged = true
+            Log.i(TAG, "Altitude: ellipsoid=$ellipsoid m, sea level=${seaLevel ?: "unavailable"} m")
+        }
+        return seaLevel ?: ellipsoid
+    }
+
+    @RequiresApi(Build.VERSION_CODES.UPSIDE_DOWN_CAKE)
+    private object Api34 {
+        private val converter = AltitudeConverter()
+
+        // Reads geoid data from disk the first time, so it must stay off the main thread.
+        fun mslAltitude(context: Context, location: Location): Double? {
+            if (!location.hasMslAltitude()) {
+                try {
+                    converter.addMslAltitudeToLocation(context, location)
+                } catch (e: Exception) {
+                    Log.w(TAG, "Sea level altitude unavailable: ${e.message}")
+                    return null
+                }
+            }
+            return if (location.hasMslAltitude()) location.mslAltitudeMeters else null
+        }
+    }
 
     /**
      * Starts receiving continuous 1 Hz GPS updates and GNSS satellite statistics.
@@ -97,6 +141,11 @@ class GpsTrackerEngine(private val context: Context) {
 
         locationCallback = onLocationUpdate
         isTracking = true
+        altitudeSourceLogged = false
+
+        // Fixes arrive on a worker thread because the sea level conversion can touch disk
+        val thread = HandlerThread("GpsTrackerEngine").apply { start() }
+        locationThread = thread
 
         try {
             // Subscribe to GPS provider for high accuracy
@@ -106,7 +155,7 @@ class GpsTrackerEngine(private val context: Context) {
                     UPDATE_INTERVAL_MS,
                     MIN_DISTANCE_METERS,
                     locationListener,
-                    Looper.getMainLooper()
+                    thread.looper
                 )
             }
 
@@ -117,7 +166,7 @@ class GpsTrackerEngine(private val context: Context) {
                     UPDATE_INTERVAL_MS,
                     MIN_DISTANCE_METERS,
                     locationListener,
-                    Looper.getMainLooper()
+                    thread.looper
                 )
             }
 
@@ -149,6 +198,8 @@ class GpsTrackerEngine(private val context: Context) {
         } catch (e: Exception) {
             Log.e(TAG, "Failed to start GPS tracking", e)
             isTracking = false
+            thread.quitSafely()
+            locationThread = null
         }
     }
 
@@ -164,6 +215,8 @@ class GpsTrackerEngine(private val context: Context) {
         val lm = locationManager ?: return
         try {
             lm.removeUpdates(locationListener)
+            locationThread?.quitSafely()
+            locationThread = null
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
                 gnssCallback?.let { lm.unregisterGnssStatusCallback(it) }
                 gnssCallback = null
