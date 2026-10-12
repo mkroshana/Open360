@@ -217,11 +217,21 @@ fun CameraScreen(
                 id = uiState.wakeUpId,
                 registration = uiState.bleState.wakeUpRegistration,
                 onSave = { viewModel.saveWakeUpId(it) },
-                onRegister = { viewModel.registerWakeUpId() }
+                onSetUp = { viewModel.openWakeUpSetup() }
             )
 
             Spacer(modifier = Modifier.height(16.dp))
         }
+    }
+
+    if (uiState.wakeUpSetupOpen) {
+        WakeUpSetupDialog(
+            connectionStatus = ble.connectionStatus,
+            cameraOn = ble.connectionStatus == BleConnectionStatus.CONNECTED && ble.isCameraAwake,
+            registration = ble.wakeUpRegistration,
+            onStart = { viewModel.startWakeUpSetup() },
+            onClose = { viewModel.closeWakeUpSetup() }
+        )
     }
 }
 

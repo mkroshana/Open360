@@ -10,6 +10,7 @@ import com.open360.core.ble.BleConnectionStatus
 import com.open360.core.ble.GpsRemoteBleManager
 import com.open360.core.ble.InstaGpsRemoteGattServer
 import com.open360.core.ble.InstaGpsRemoteServerState
+import com.open360.core.ble.WakeUpRegistration
 import com.open360.core.gps.GpsFix
 import com.open360.core.gps.GpsStreamSchedule
 import com.open360.core.gps.GpsTelemetry
@@ -20,6 +21,7 @@ import com.open360.core.gps.GpxTrackRecorder
 import com.open360.core.gps.GpxTrackState
 import com.open360.core.gps.runAtFixedRate
 import com.open360.core.model.CaptureMode
+import java.util.UUID
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -40,6 +42,8 @@ data class RemoteUiState(
     val keepGpsActiveInBackground: Boolean = true,
     // The ID a switched-off camera accepts a wake-up from, null when none is stored
     val wakeUpId: String? = null,
+    // Whether the set-up that gets the camera to allow this app to wake it is on screen
+    val wakeUpSetupOpen: Boolean = false,
     val isConnected: Boolean = false,
     val isRecording: Boolean = false,
     val cameraDisplayInfo: String? = null
@@ -197,7 +201,14 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
             }
         }
 
-        _uiState.update { it.copy(wakeUpId = bleManager.getWakeAuthorizationId()) }
+        // The set-up for Wake Up is put forward once, the first time the app runs without an ID
+        val wakeUpId = bleManager.getWakeAuthorizationId()
+        _uiState.update {
+            it.copy(
+                wakeUpId = wakeUpId,
+                wakeUpSetupOpen = wakeUpId == null && !bleManager.wasWakeUpSetupOffered()
+            )
+        }
 
         // Start GPS tracking immediately so speed and location are available
         gpsEngine.startTracking()
@@ -210,6 +221,9 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
         val ble = bleManager.state.value
         // Nothing to wake when the camera is already on
         if (ble.connectionStatus == BleConnectionStatus.CONNECTED && ble.isCameraAwake) return
+
+        // A GO camera only wakes for an app it has allowed, which the set-up takes care of
+        if (_uiState.value.wakeUpId == null) openWakeUpSetup()
 
         // A GO camera that is off still accepts a connection and is woken over a fresh one.
         // The beacon is for cameras that sleep without advertising.
@@ -260,15 +274,38 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
         val normalized = id.trim().lowercase()
         if (!bleManager.saveWakeAuthorizationId(normalized)) return false
         _uiState.update { it.copy(wakeUpId = normalized) }
-        // What the camera said about the last ID no longer applies
-        bleManager.checkWakeUpId(normalized)
+        // What the camera said about the last ID no longer applies. A camera that is on is asked
+        // about this one, and asks on its own screen to allow it if it does not know it.
+        bleManager.registerWakeUpId(normalized)
         return true
     }
 
-    /** Gets the camera to authorize the stored wake-up ID, which is confirmed on the camera. */
-    fun registerWakeUpId() {
-        val id = _uiState.value.wakeUpId ?: return
-        bleManager.registerWakeUpId(id)
+    fun openWakeUpSetup() {
+        _uiState.update { it.copy(wakeUpSetupOpen = true) }
+    }
+
+    fun closeWakeUpSetup() {
+        bleManager.markWakeUpSetupOffered()
+        _uiState.update { it.copy(wakeUpSetupOpen = false) }
+    }
+
+    /**
+     * Starts the set-up, or tries it again: looks for the camera if it is not connected, makes a
+     * wake-up ID if there is none, and asks the camera about the ID. A camera that is off is
+     * asked as soon as it answers. Does nothing more while the camera is already being asked.
+     */
+    fun startWakeUpSetup() {
+        bleManager.markWakeUpSetupOffered()
+        val ble = bleManager.state.value
+        if (ble.connectionStatus == BleConnectionStatus.DISCONNECTED) bleManager.startScanAndConnect()
+
+        val id = _uiState.value.wakeUpId
+        when {
+            id == null -> saveWakeUpId(UUID.randomUUID().toString())
+            ble.wakeUpRegistration == WakeUpRegistration.CHECKING ||
+                ble.wakeUpRegistration == WakeUpRegistration.CONFIRM_ON_CAMERA -> Unit
+            else -> bleManager.registerWakeUpId(id)
+        }
     }
 
     fun toggleKeepGpsInBackground() {

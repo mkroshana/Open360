@@ -227,27 +227,19 @@ class Go2BleProtocolTest {
         val request = Go2BleProtocol.buildCheckAuthorizationPayload("00000000-1111-2222-3333-444444444444")
         assertTrue(hex("0a2430303030303030302d313131312d323232322d333333332d3434343434343434343434341002").contentEquals(request))
 
-        // What a GO 3S answered for the Insta360 app's id: authorized
+        // What a GO 3S answered for an id it had authorized, and for one newly made in the app
         assertEquals(Go2BleProtocol.AuthorizationStatus.AUTHORIZED, Go2BleProtocol.parseCheckAuthorizationReply(hex("0800")))
-        // The other values in the published definitions; not captured from a camera
         assertEquals(Go2BleProtocol.AuthorizationStatus.UNAUTHORIZED, Go2BleProtocol.parseCheckAuthorizationReply(hex("0801")))
+        // The remaining value in the published definitions; not captured from a camera
         assertEquals(Go2BleProtocol.AuthorizationStatus.BUSY, Go2BleProtocol.parseCheckAuthorizationReply(hex("0802")))
 
+        // What the GO 3S sent once the new app had been allowed on it
+        assertEquals(Go2BleProtocol.AuthorizationResult.SUCCESS, Go2BleProtocol.parseAuthorizationResult(hex("0800")))
+        // The published values with the operation type in a second field; not captured
         assertEquals(Go2BleProtocol.AuthorizationResult.SUCCESS, Go2BleProtocol.parseAuthorizationResult(hex("08001000")))
         assertEquals(Go2BleProtocol.AuthorizationResult.REJECTED, Go2BleProtocol.parseAuthorizationResult(hex("08011000")))
         assertEquals(Go2BleProtocol.AuthorizationResult.TIMED_OUT, Go2BleProtocol.parseAuthorizationResult(hex("08021000")))
         assertEquals(Go2BleProtocol.AuthorizationResult.BUSY, Go2BleProtocol.parseAuthorizationResult(hex("08031000")))
-    }
-
-    @Test
-    fun testSetAuthorizationIdRequest() {
-        // Option type 38 in the packed list, then Options with the id as its field 38.
-        // Built from the published definitions; not captured from the Insta360 app.
-        val request = Go2BleProtocol.buildSetAuthorizationIdPayload("00000000-1111-2222-3333-444444444444")
-        assertTrue(
-            hex("0a01261227b2022430303030303030302d313131312d323232322d333333332d343434343434343434343434")
-                .contentEquals(request)
-        )
     }
 
     @Test

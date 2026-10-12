@@ -10,6 +10,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedCard
@@ -34,15 +35,15 @@ import java.util.UUID
 
 /**
  * Shows the wake-up ID, the one a switched-off camera accepts a wake-up from, with what the
- * camera says about it, and lets it be copied to another device, replaced, or registered with
- * the camera.
+ * camera says about it, and lets it be copied to another device or replaced. With no ID, or
+ * with one the camera did not come to accept, it leads to the set-up.
  */
 @Composable
 fun WakeUpIdCard(
     id: String?,
     registration: WakeUpRegistration,
     onSave: (String) -> Boolean,
-    onRegister: () -> Unit
+    onSetUp: () -> Unit
 ) {
     val clipboard = LocalClipboardManager.current
     var editing by remember { mutableStateOf(false) }
@@ -68,7 +69,7 @@ fun WakeUpIdCard(
             )
             Spacer(modifier = Modifier.height(10.dp))
             Text(
-                text = id ?: "Not Set",
+                text = id ?: "Not Set Up",
                 style = MaterialTheme.typography.bodyMedium,
                 fontFamily = if (id != null) FontFamily.Monospace else FontFamily.Default,
                 color = if (id != null) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.onSurfaceVariant
@@ -88,19 +89,27 @@ fun WakeUpIdCard(
             }
             Spacer(modifier = Modifier.height(10.dp))
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                OutlinedButton(
-                    onClick = { id?.let { clipboard.setText(AnnotatedString(it)) } },
-                    enabled = id != null,
-                    contentPadding = buttonPadding
-                ) {
-                    Text("Copy")
-                }
-                OutlinedButton(onClick = { editing = true }, contentPadding = buttonPadding) {
-                    Text(if (id == null) "Set" else "Change")
-                }
-                if (id != null && CameraStatusText.canRegisterWakeUpId(registration)) {
-                    OutlinedButton(onClick = onRegister, contentPadding = buttonPadding) {
-                        Text("Register")
+                if (id == null) {
+                    FilledTonalButton(onClick = onSetUp, contentPadding = buttonPadding) {
+                        Text("Set Up")
+                    }
+                    OutlinedButton(onClick = { editing = true }, contentPadding = buttonPadding) {
+                        Text("Enter an ID")
+                    }
+                } else {
+                    OutlinedButton(
+                        onClick = { clipboard.setText(AnnotatedString(id)) },
+                        contentPadding = buttonPadding
+                    ) {
+                        Text("Copy")
+                    }
+                    OutlinedButton(onClick = { editing = true }, contentPadding = buttonPadding) {
+                        Text("Change")
+                    }
+                    if (CameraStatusText.wakeUpRegistrationIsProblem(registration)) {
+                        OutlinedButton(onClick = onSetUp, contentPadding = buttonPadding) {
+                            Text("Set Up")
+                        }
                     }
                 }
             }
@@ -142,7 +151,7 @@ private fun WakeUpIdDialog(
                     supportingText = {
                         Text(
                             if (entered.isEmpty() || valid) {
-                                "Paste the ID from a device the camera already wakes for, or make a new one and register it."
+                                "Paste the ID from a device the camera already wakes for, or make a new one. The camera asks to allow a new one."
                             } else {
                                 "An ID is 36 characters in five groups, like 0f8fad5b-d9cb-469f-a165-70867728950e."
                             }

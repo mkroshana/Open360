@@ -114,7 +114,10 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun wakeUpAndConnect() {
-        Toast.makeText(this, "Waking the Camera...", Toast.LENGTH_SHORT).show()
+        // Without a wake-up ID the camera is only looked for, and the set-up is shown
+        if (cameraViewModel.uiState.value.wakeUpId != null) {
+            Toast.makeText(this, "Waking the Camera...", Toast.LENGTH_SHORT).show()
+        }
         cameraViewModel.wakeUpCamera()
     }
 }
