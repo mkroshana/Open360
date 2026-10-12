@@ -2,6 +2,7 @@ package com.open360.ui.camera
 
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -28,19 +29,26 @@ import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import com.open360.core.ble.Go2BleProtocol
+import com.open360.core.ble.WakeUpRegistration
 import java.util.UUID
 
 /**
- * Shows the wake-up ID, the one a switched-off camera accepts a wake-up from, and lets it be
- * copied to another device or replaced.
+ * Shows the wake-up ID, the one a switched-off camera accepts a wake-up from, with what the
+ * camera says about it, and lets it be copied to another device, replaced, or registered with
+ * the camera.
  */
 @Composable
 fun WakeUpIdCard(
     id: String?,
-    onSave: (String) -> Boolean
+    registration: WakeUpRegistration,
+    onSave: (String) -> Boolean,
+    onRegister: () -> Unit
 ) {
     val clipboard = LocalClipboardManager.current
     var editing by remember { mutableStateOf(false) }
+    val registrationText = if (id != null) CameraStatusText.wakeUpRegistration(registration) else null
+    // Narrower than the default, so that three buttons fit across a small phone
+    val buttonPadding = PaddingValues(horizontal = 16.dp, vertical = 8.dp)
 
     OutlinedCard(
         modifier = Modifier.fillMaxWidth(),
@@ -65,16 +73,35 @@ fun WakeUpIdCard(
                 fontFamily = if (id != null) FontFamily.Monospace else FontFamily.Default,
                 color = if (id != null) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.onSurfaceVariant
             )
+            if (registrationText != null) {
+                Spacer(modifier = Modifier.height(4.dp))
+                Text(
+                    text = registrationText,
+                    style = MaterialTheme.typography.bodySmall,
+                    fontWeight = FontWeight.Medium,
+                    color = if (CameraStatusText.wakeUpRegistrationIsProblem(registration)) {
+                        MaterialTheme.colorScheme.error
+                    } else {
+                        MaterialTheme.colorScheme.onSurfaceVariant
+                    }
+                )
+            }
             Spacer(modifier = Modifier.height(10.dp))
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 OutlinedButton(
                     onClick = { id?.let { clipboard.setText(AnnotatedString(it)) } },
-                    enabled = id != null
+                    enabled = id != null,
+                    contentPadding = buttonPadding
                 ) {
                     Text("Copy")
                 }
-                OutlinedButton(onClick = { editing = true }) {
+                OutlinedButton(onClick = { editing = true }, contentPadding = buttonPadding) {
                     Text(if (id == null) "Set" else "Change")
+                }
+                if (id != null && CameraStatusText.canRegisterWakeUpId(registration)) {
+                    OutlinedButton(onClick = onRegister, contentPadding = buttonPadding) {
+                        Text("Register")
+                    }
                 }
             }
         }

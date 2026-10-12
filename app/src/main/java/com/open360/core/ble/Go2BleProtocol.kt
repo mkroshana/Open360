@@ -37,8 +37,12 @@ object Go2BleProtocol {
     const val CMD_TAKE_PICTURE = 0x03
     const val CMD_START_CAPTURE = 0x04
     const val CMD_STOP_CAPTURE = 0x05
+    const val CMD_SET_OPTIONS = 0x07
     const val CMD_GET_OPTIONS = 0x08
     const val CMD_GET_CURRENT_CAPTURE_STATUS = 0x0F
+    const val CMD_CHECK_AUTHORIZATION = 0x27
+    // Sent with no payload: its one published field, the operation type, defaults to BLE_CONNECT
+    const val CMD_REQUEST_AUTHORIZATION = 0x56
     // 0x19 is CALIBRATE_GYRO in the published definitions and must not be sent. Earlier
     // versions sent it on every connect as a "battery query": the reply was always 100, even
     // with the battery at 96%, and the camera refused it while recording.
@@ -52,6 +56,7 @@ object Go2BleProtocol {
     const val NOTIF_STORAGE_UPDATE = 0x2006
     const val NOTIF_STORAGE_FULL = 0x2007
     const val NOTIF_CURRENT_CAPTURE_STATUS = 0x2010
+    const val NOTIF_AUTHORIZATION_RESULT = 0x2011
     const val NOTIF_TEMPERATURE = 0x2016
     const val NOTIF_CHARGE_BOX_STATUS = 0x201E
     const val NOTIF_CAPTURE_TIME_LEFT = 0x2021
@@ -445,6 +450,55 @@ object Go2BleProtocol {
      */
     fun buildKeepAlivePacket(): ByteArray {
         return encodeMessagePacket(byteArrayOf(0x07, 0x00, 0x00, 0x00, 0x05, 0x00, 0x00))
+    }
+
+    /**
+     * Builds a CheckAuthorization request, which asks the camera whether it has authorized an
+     * id: the id (field 1) and a second field of 2, as the Insta360 app was seen to send it.
+     */
+    fun buildCheckAuthorizationPayload(authorizationId: String): ByteArray {
+        val id = authorizationId.toByteArray(Charsets.US_ASCII)
+        return byteArrayOf(0x0A, id.size.toByte()) + id + byteArrayOf(0x10, 0x02)
+    }
+
+    /** The camera's answer to CheckAuthorization, AuthorizationStatus in the published definitions. */
+    enum class AuthorizationStatus { AUTHORIZED, UNAUTHORIZED, BUSY }
+
+    /**
+     * Decodes the reply to CheckAuthorization. Field 1 is the status; a reply that leaves it out
+     * carries the default, AUTHORIZED, which is what the camera sent for the Insta360 app's id.
+     */
+    fun parseCheckAuthorizationReply(payload: ByteArray): AuthorizationStatus =
+        when (readProtoFields(payload)[1] as? Long ?: 0L) {
+            0L -> AuthorizationStatus.AUTHORIZED
+            1L -> AuthorizationStatus.UNAUTHORIZED
+            else -> AuthorizationStatus.BUSY
+        }
+
+    /** How a request for authorization ended, AuthorizationResult in the published definitions. */
+    enum class AuthorizationResult { SUCCESS, REJECTED, TIMED_OUT, BUSY }
+
+    /** Decodes the authorization result notification (0x2011). Field 1 is the result. */
+    fun parseAuthorizationResult(payload: ByteArray): AuthorizationResult =
+        when (readProtoFields(payload)[1] as? Long ?: 0L) {
+            0L -> AuthorizationResult.SUCCESS
+            1L -> AuthorizationResult.REJECTED
+            2L -> AuthorizationResult.TIMED_OUT
+            else -> AuthorizationResult.BUSY
+        }
+
+    private const val OPTION_AUTHORIZATION_ID = 38
+
+    /**
+     * Builds a SetOptions request that gives the camera its authorization id: the option's type
+     * in the packed list (field 1) and, in the Options message (field 2), the id as the field of
+     * the same number.
+     */
+    fun buildSetAuthorizationIdPayload(authorizationId: String): ByteArray {
+        val id = authorizationId.toByteArray(Charsets.US_ASCII)
+        // Field 38 as a length-delimited value is the two-byte tag b2 02
+        val options = byteArrayOf(0xB2.toByte(), 0x02, id.size.toByte()) + id
+        return byteArrayOf(0x0A, 0x01, OPTION_AUTHORIZATION_ID.toByte(), 0x12, options.size.toByte()) + options
     }
 
     private val AUTHORIZATION_ID_FORMAT =

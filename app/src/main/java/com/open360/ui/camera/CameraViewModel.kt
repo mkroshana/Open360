@@ -260,7 +260,15 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
         val normalized = id.trim().lowercase()
         if (!bleManager.saveWakeAuthorizationId(normalized)) return false
         _uiState.update { it.copy(wakeUpId = normalized) }
+        // What the camera said about the last ID no longer applies
+        bleManager.checkWakeUpId(normalized)
         return true
+    }
+
+    /** Gets the camera to authorize the stored wake-up ID, which is confirmed on the camera. */
+    fun registerWakeUpId() {
+        val id = _uiState.value.wakeUpId ?: return
+        bleManager.registerWakeUpId(id)
     }
 
     fun toggleKeepGpsInBackground() {

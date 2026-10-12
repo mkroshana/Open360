@@ -215,7 +215,9 @@ fun CameraScreen(
 
             WakeUpIdCard(
                 id = uiState.wakeUpId,
-                onSave = { viewModel.saveWakeUpId(it) }
+                registration = uiState.bleState.wakeUpRegistration,
+                onSave = { viewModel.saveWakeUpId(it) },
+                onRegister = { viewModel.registerWakeUpId() }
             )
 
             Spacer(modifier = Modifier.height(16.dp))

@@ -2,6 +2,7 @@ package com.open360.ui.camera
 
 import com.open360.core.ble.Go2BleProtocol.CardState
 import com.open360.core.ble.Go2BleProtocol.ChargeBoxStatus
+import com.open360.core.ble.WakeUpRegistration
 
 /**
  * Wording for what the camera reports about itself. Kept apart from the screen so it can be
@@ -71,6 +72,37 @@ object CameraStatusText {
     fun podIsLow(status: ChargeBoxStatus): Boolean {
         val battery = status.battery ?: return false
         return status.connected && !battery.onExternalPower && battery.levelPercent <= LOW_BATTERY_PERCENT
+    }
+
+    /** What the camera says about the wake-up ID, or null when it has not been asked. */
+    fun wakeUpRegistration(registration: WakeUpRegistration): String? = when (registration) {
+        WakeUpRegistration.NONE -> null
+        WakeUpRegistration.CHECKING -> "Asking the Camera..."
+        WakeUpRegistration.CONFIRM_ON_CAMERA -> "Confirm on the Camera"
+        WakeUpRegistration.AUTHORIZED -> "Accepted by the Camera"
+        WakeUpRegistration.NOT_AUTHORIZED -> "Not Accepted by the Camera"
+        WakeUpRegistration.REJECTED -> "Declined on the Camera"
+        WakeUpRegistration.TIMED_OUT -> "Not Confirmed in Time"
+        WakeUpRegistration.CAMERA_BUSY -> "The Camera Is Busy, Try Again"
+        WakeUpRegistration.NO_ANSWER -> "No Answer From the Camera"
+        WakeUpRegistration.CAMERA_OFF -> "Switch the Camera On First"
+    }
+
+    /** Whether the wake-up ID's state is one that keeps Wake Up from working. */
+    fun wakeUpRegistrationIsProblem(registration: WakeUpRegistration): Boolean = when (registration) {
+        WakeUpRegistration.NONE,
+        WakeUpRegistration.CHECKING,
+        WakeUpRegistration.CONFIRM_ON_CAMERA,
+        WakeUpRegistration.AUTHORIZED -> false
+        else -> true
+    }
+
+    /** Whether registering the ID can be offered: not while it is accepted or being asked about. */
+    fun canRegisterWakeUpId(registration: WakeUpRegistration): Boolean = when (registration) {
+        WakeUpRegistration.AUTHORIZED,
+        WakeUpRegistration.CHECKING,
+        WakeUpRegistration.CONFIRM_ON_CAMERA -> false
+        else -> true
     }
 
     const val LOW_BATTERY_PERCENT = 20

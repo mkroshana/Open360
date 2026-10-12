@@ -67,8 +67,23 @@ data class CameraDetails(
     val temperatureHigh: Boolean = false
 )
 
+/** Where getting the camera to authorize a wake-up ID stands. */
+enum class WakeUpRegistration {
+    NONE,
+    CHECKING,
+    CONFIRM_ON_CAMERA,
+    AUTHORIZED,
+    NOT_AUTHORIZED,
+    REJECTED,
+    TIMED_OUT,
+    CAMERA_BUSY,
+    NO_ANSWER,
+    CAMERA_OFF
+}
+
 data class BleCameraState(
     val connectionStatus: BleConnectionStatus = BleConnectionStatus.DISCONNECTED,
+    val wakeUpRegistration: WakeUpRegistration = WakeUpRegistration.NONE,
     // Whether the camera itself is answering. A GO 3S that is powered off still accepts a
     // Bluetooth connection, but sends nothing and acts on nothing until it is switched on.
     val isCameraAwake: Boolean = false,
@@ -168,6 +183,11 @@ class GpsRemoteBleManager(private val context: Context) {
 
         private const val PREF_WAKE_AUTHORIZATION_ID = "wake_authorization_id"
 
+        // How long the camera is given to answer an authorization check, and how long the
+        // request waits to be confirmed on the camera
+        private const val AUTHORIZATION_REPLY_MS = 5000L
+        private const val AUTHORIZATION_CONFIRM_MS = 60_000L
+
         val CCCD_UUID: UUID = UUID.fromString("00002902-0000-1000-8000-00805f9b34fb")
     }
 
@@ -213,6 +233,23 @@ class GpsRemoteBleManager(private val context: Context) {
     // Completed by the camera's answer to the wake-up authorization
     @Volatile
     private var wakeReply: CompletableDeferred<Boolean>? = null
+
+    // Checking and registering a wake-up ID. Each request is matched to its reply by sequence
+    // number; a null answer means the camera returned an error status for it.
+    @Volatile
+    private var registrationJob: Job? = null
+    @Volatile
+    private var authorizationCheckSeq = -1
+    @Volatile
+    private var authorizationCheckReply: CompletableDeferred<Go2BleProtocol.AuthorizationStatus?>? = null
+    @Volatile
+    private var authorizationRequestSeq = -1
+    @Volatile
+    private var authorizationOutcome: CompletableDeferred<Go2BleProtocol.AuthorizationResult?>? = null
+    @Volatile
+    private var authorizationIdSetSeq = -1
+    @Volatile
+    private var authorizationIdSetReply: CompletableDeferred<Boolean>? = null
     private var wakeJob: Job? = null
 
     // Both are used only by the write queue worker
@@ -266,9 +303,9 @@ class GpsRemoteBleManager(private val context: Context) {
      * Broadcasts the Apple iBeacon wake-up beacon ("ORBIT" + serial suffix) to wake camera from sleep.
      */
     /**
-     * The authorization id the camera accepts a wake-up from, or null when none is stored.
-     * It is the id the Insta360 app on this phone registered with the camera; this app has
-     * no way of its own to obtain one yet.
+     * The authorization id sent to wake the camera, or null when none is stored. The camera
+     * only wakes for an id it has authorized: one copied from a device it already wakes for, or
+     * one registered with [registerWakeUpId].
      */
     fun getWakeAuthorizationId(): String? {
         val prefs = context.getSharedPreferences("open360_ble_prefs", Context.MODE_PRIVATE)
@@ -506,6 +543,7 @@ class GpsRemoteBleManager(private val context: Context) {
                 writeCharacteristic = null
                 stopKeepAlive()
                 markRecordingStop()
+                registrationJob?.cancel()
                 _state.update {
                     it.copy(
                         connectionStatus = BleConnectionStatus.DISCONNECTED,
@@ -513,7 +551,12 @@ class GpsRemoteBleManager(private val context: Context) {
                         isRecording = false,
                         isCaptureStarting = false,
                         isCaptureStopping = false,
-                        details = CameraDetails()
+                        details = CameraDetails(),
+                        // What the camera last said about the ID stays; a question cut short does not
+                        wakeUpRegistration = when (it.wakeUpRegistration) {
+                            WakeUpRegistration.CHECKING, WakeUpRegistration.CONFIRM_ON_CAMERA -> WakeUpRegistration.NONE
+                            else -> it.wakeUpRegistration
+                        }
                     )
                 }
             }
@@ -673,6 +716,149 @@ class GpsRemoteBleManager(private val context: Context) {
     }
 
     /**
+     * Asks the camera whether it accepts [id] for waking it, which changes nothing on the camera;
+     * the Insta360 app was seen to ask the same on every connection. The answer is reported in
+     * [BleCameraState.wakeUpRegistration]. With the camera off there is nothing to ask.
+     */
+    fun checkWakeUpId(id: String) {
+        registrationJob?.cancel()
+        registrationJob = scope.launch {
+            if (!cameraIsOn()) {
+                setRegistration(WakeUpRegistration.NONE)
+                return@launch
+            }
+            setRegistration(WakeUpRegistration.CHECKING)
+            setRegistration(registrationFor(checkAuthorization(id)))
+        }
+    }
+
+    /**
+     * Gets the camera to authorize [id] for waking it. Unless it already accepts the id,
+     * authorization is requested, which has to be confirmed on the camera; the request names
+     * no id, so the camera is then given the id as its authorization id option. Progress is
+     * reported in [BleCameraState.wakeUpRegistration].
+     *
+     * Only the check was seen from the Insta360 app. The request and the option are written
+     * from the published definitions.
+     */
+    fun registerWakeUpId(id: String) {
+        registrationJob?.cancel()
+        registrationJob = scope.launch {
+            if (!cameraIsOn()) {
+                setRegistration(WakeUpRegistration.CAMERA_OFF)
+                return@launch
+            }
+
+            setRegistration(WakeUpRegistration.CHECKING)
+            val before = checkAuthorization(id)
+            if (before != Go2BleProtocol.AuthorizationStatus.UNAUTHORIZED) {
+                setRegistration(registrationFor(before))
+                return@launch
+            }
+
+            val outcome = CompletableDeferred<Go2BleProtocol.AuthorizationResult?>()
+            authorizationOutcome = outcome
+            val seq = nextSeq()
+            authorizationRequestSeq = seq
+            Log.i(TAG, "Authorization: requesting it, to be confirmed on the camera")
+            queuePacket(
+                Go2BleProtocol.encodeMessagePacket(
+                    Go2BleProtocol.encodeInnerMessage(Go2BleProtocol.CMD_REQUEST_AUTHORIZATION, seq)
+                )
+            )
+            setRegistration(WakeUpRegistration.CONFIRM_ON_CAMERA)
+
+            withTimeoutOrNull(AUTHORIZATION_CONFIRM_MS) { outcome.await() }
+            authorizationOutcome = null
+            authorizationRequestSeq = -1
+            if (!outcome.isCompleted) {
+                setRegistration(WakeUpRegistration.TIMED_OUT)
+                return@launch
+            }
+            val failure = when (outcome.await()) {
+                Go2BleProtocol.AuthorizationResult.SUCCESS -> null
+                Go2BleProtocol.AuthorizationResult.REJECTED -> WakeUpRegistration.REJECTED
+                Go2BleProtocol.AuthorizationResult.TIMED_OUT -> WakeUpRegistration.TIMED_OUT
+                Go2BleProtocol.AuthorizationResult.BUSY -> WakeUpRegistration.CAMERA_BUSY
+                // An error status came back in place of an acknowledgement
+                null -> WakeUpRegistration.NOT_AUTHORIZED
+            }
+            if (failure != null) {
+                setRegistration(failure)
+                return@launch
+            }
+
+            var after = checkAuthorization(id)
+            if (after == Go2BleProtocol.AuthorizationStatus.UNAUTHORIZED) {
+                Log.i(TAG, "Authorization: confirmed, giving the camera the id")
+                val taken = setAuthorizationId(id)
+                Log.i(TAG, if (taken) "Authorization: the camera took the id" else "Authorization: the camera did not take the id")
+                after = checkAuthorization(id)
+            }
+            setRegistration(registrationFor(after))
+        }
+    }
+
+    private fun cameraIsOn(): Boolean {
+        val current = _state.value
+        return current.connectionStatus == BleConnectionStatus.CONNECTED && current.isCameraAwake
+    }
+
+    private fun registrationFor(status: Go2BleProtocol.AuthorizationStatus?): WakeUpRegistration = when (status) {
+        Go2BleProtocol.AuthorizationStatus.AUTHORIZED -> WakeUpRegistration.AUTHORIZED
+        Go2BleProtocol.AuthorizationStatus.UNAUTHORIZED -> WakeUpRegistration.NOT_AUTHORIZED
+        Go2BleProtocol.AuthorizationStatus.BUSY -> WakeUpRegistration.CAMERA_BUSY
+        null -> WakeUpRegistration.NO_ANSWER
+    }
+
+    private fun setRegistration(registration: WakeUpRegistration) {
+        Log.i(TAG, "Wake-up ID registration: $registration")
+        _state.update { it.copy(wakeUpRegistration = registration) }
+    }
+
+    /** Asks the camera whether it has authorized [id]. Null when it gives no usable answer. */
+    private suspend fun checkAuthorization(id: String): Go2BleProtocol.AuthorizationStatus? {
+        val reply = CompletableDeferred<Go2BleProtocol.AuthorizationStatus?>()
+        authorizationCheckReply = reply
+        val seq = nextSeq()
+        authorizationCheckSeq = seq
+        queuePacket(
+            Go2BleProtocol.encodeMessagePacket(
+                Go2BleProtocol.encodeInnerMessage(
+                    Go2BleProtocol.CMD_CHECK_AUTHORIZATION,
+                    seq,
+                    Go2BleProtocol.buildCheckAuthorizationPayload(id)
+                )
+            )
+        )
+        val status = withTimeoutOrNull(AUTHORIZATION_REPLY_MS) { reply.await() }
+        authorizationCheckReply = null
+        authorizationCheckSeq = -1
+        return status
+    }
+
+    /** Gives the camera [id] as its authorization id option. False unless it acknowledges it. */
+    private suspend fun setAuthorizationId(id: String): Boolean {
+        val reply = CompletableDeferred<Boolean>()
+        authorizationIdSetReply = reply
+        val seq = nextSeq()
+        authorizationIdSetSeq = seq
+        queuePacket(
+            Go2BleProtocol.encodeMessagePacket(
+                Go2BleProtocol.encodeInnerMessage(
+                    Go2BleProtocol.CMD_SET_OPTIONS,
+                    seq,
+                    Go2BleProtocol.buildSetAuthorizationIdPayload(id)
+                )
+            )
+        )
+        val taken = withTimeoutOrNull(AUTHORIZATION_REPLY_MS) { reply.await() } == true
+        authorizationIdSetReply = null
+        authorizationIdSetSeq = -1
+        return taken
+    }
+
+    /**
      * Wakes a camera that is off by opening a fresh link to it, on which the wake-up
      * authorization is the first thing sent.
      */
@@ -721,6 +907,8 @@ class GpsRemoteBleManager(private val context: Context) {
             Log.i(TAG, "Camera is answering")
             _state.update { it.copy(isCameraAwake = true) }
             requestStatusOnce()
+            // Shows whether Wake Up will work with this camera
+            if (registrationJob?.isActive != true) getWakeAuthorizationId()?.let { checkWakeUpId(it) }
         }
 
         if (decoded.isSync) {
@@ -780,6 +968,12 @@ class GpsRemoteBleManager(private val context: Context) {
                     parseCaptureStatus(inner.payload)
                 }
 
+                Go2BleProtocol.NOTIF_AUTHORIZATION_RESULT -> {
+                    val result = Go2BleProtocol.parseAuthorizationResult(inner.payload)
+                    Log.i(TAG, "Authorization result from the camera: $result ($hexPayload)")
+                    authorizationOutcome?.complete(result)
+                }
+
                 Go2BleProtocol.NOTIF_CAPTURE_TIME_LEFT -> {
                     Go2BleProtocol.parseCaptureTimeLeft(inner.payload)?.let { seconds ->
                         updateDetails { it.copy(captureSecondsLeft = seconds) }
@@ -827,6 +1021,19 @@ class GpsRemoteBleManager(private val context: Context) {
                         statusOptionsQuerySeq = -1
                         Go2BleProtocol.parseStatusOptionsReply(inner.payload)?.let { onStatusOptionsReply(it) }
                     }
+                    if (inner.sequence == authorizationCheckSeq) {
+                        authorizationCheckSeq = -1
+                        Log.i(TAG, "Authorization check reply: $hexPayload")
+                        authorizationCheckReply?.complete(Go2BleProtocol.parseCheckAuthorizationReply(inner.payload))
+                    }
+                    if (inner.sequence == authorizationRequestSeq) {
+                        authorizationRequestSeq = -1
+                        Log.i(TAG, "Authorization request taken by the camera: $hexPayload")
+                    }
+                    if (inner.sequence == authorizationIdSetSeq) {
+                        authorizationIdSetSeq = -1
+                        authorizationIdSetReply?.complete(true)
+                    }
                     if (inner.sequence == stopCaptureSeq) {
                         stopCaptureSeq = -1
                         Go2BleProtocol.parseCapturedFilePath(inner.payload)?.let { path ->
@@ -839,7 +1046,19 @@ class GpsRemoteBleManager(private val context: Context) {
                 }
 
                 in 100..599 -> {
-                    Log.w(TAG, "Camera returned status ${inner.commandCode} for seq ${inner.sequence}")
+                    Log.w(TAG, "Camera returned status ${inner.commandCode} for seq ${inner.sequence}: $hexPayload")
+                    if (inner.sequence == authorizationCheckSeq) {
+                        authorizationCheckSeq = -1
+                        authorizationCheckReply?.complete(null)
+                    }
+                    if (inner.sequence == authorizationRequestSeq) {
+                        authorizationRequestSeq = -1
+                        authorizationOutcome?.complete(null)
+                    }
+                    if (inner.sequence == authorizationIdSetSeq) {
+                        authorizationIdSetSeq = -1
+                        authorizationIdSetReply?.complete(false)
+                    }
                 }
             }
         }

@@ -3,6 +3,7 @@ package com.open360.ui.camera
 import com.open360.core.ble.Go2BleProtocol.BatteryStatus
 import com.open360.core.ble.Go2BleProtocol.CardState
 import com.open360.core.ble.Go2BleProtocol.ChargeBoxStatus
+import com.open360.core.ble.WakeUpRegistration
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
@@ -66,5 +67,38 @@ class CameraStatusTextTest {
         assertTrue(CameraStatusText.podIsLow(low))
         assertFalse(CameraStatusText.podIsLow(lowButCharging))
         assertFalse(CameraStatusText.podIsLow(gone))
+    }
+
+    @Test
+    fun testWakeUpRegistrationLine() {
+        // Nothing is said before the camera has been asked
+        assertNull(CameraStatusText.wakeUpRegistration(WakeUpRegistration.NONE))
+        assertEquals("Accepted by the Camera", CameraStatusText.wakeUpRegistration(WakeUpRegistration.AUTHORIZED))
+        assertEquals("Not Accepted by the Camera", CameraStatusText.wakeUpRegistration(WakeUpRegistration.NOT_AUTHORIZED))
+
+        // Every state but the unasked one has wording
+        WakeUpRegistration.entries.filter { it != WakeUpRegistration.NONE }.forEach {
+            assertTrue(it.name, !CameraStatusText.wakeUpRegistration(it).isNullOrBlank())
+        }
+
+        // An accepted ID and a question in progress are not problems, and leave nothing to register
+        listOf(WakeUpRegistration.AUTHORIZED, WakeUpRegistration.CHECKING, WakeUpRegistration.CONFIRM_ON_CAMERA).forEach {
+            assertFalse(it.name, CameraStatusText.wakeUpRegistrationIsProblem(it))
+            assertFalse(it.name, CameraStatusText.canRegisterWakeUpId(it))
+        }
+        // An ID the camera has not been asked about can be registered without being a problem
+        assertFalse(CameraStatusText.wakeUpRegistrationIsProblem(WakeUpRegistration.NONE))
+        assertTrue(CameraStatusText.canRegisterWakeUpId(WakeUpRegistration.NONE))
+        listOf(
+            WakeUpRegistration.NOT_AUTHORIZED,
+            WakeUpRegistration.REJECTED,
+            WakeUpRegistration.TIMED_OUT,
+            WakeUpRegistration.CAMERA_BUSY,
+            WakeUpRegistration.NO_ANSWER,
+            WakeUpRegistration.CAMERA_OFF
+        ).forEach {
+            assertTrue(it.name, CameraStatusText.wakeUpRegistrationIsProblem(it))
+            assertTrue(it.name, CameraStatusText.canRegisterWakeUpId(it))
+        }
     }
 }
