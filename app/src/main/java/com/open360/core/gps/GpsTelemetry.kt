@@ -12,6 +12,8 @@ data class GpsTelemetry(
     val satellitesTotal: Int = 0,
     val hasFix: Boolean = false,
     val timestampEpochMs: Long = 0L,
+    // SystemClock.elapsedRealtime() of the fix, for measuring its age without the wall clock
+    val fixElapsedRealtimeMs: Long = 0L,
     val isStreamingToCamera: Boolean = false
 ) {
     val speedKnots: Double get() = (speedKmh / 1.852).toDouble()

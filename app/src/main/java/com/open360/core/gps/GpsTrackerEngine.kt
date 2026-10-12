@@ -69,7 +69,8 @@ class GpsTrackerEngine(private val context: Context) {
                     bearingDegrees = bearing,
                     accuracyMeters = accuracy,
                     hasFix = true,
-                    timestampEpochMs = location.time
+                    timestampEpochMs = location.time,
+                    fixElapsedRealtimeMs = location.elapsedRealtimeNanos / 1_000_000
                 )
             }
 

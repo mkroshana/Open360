@@ -39,6 +39,7 @@ import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withTimeoutOrNull
 import java.util.UUID
+import java.util.concurrent.ConcurrentLinkedQueue
 
 enum class BleConnectionStatus {
     DISCONNECTED,
@@ -76,6 +77,9 @@ class GpsRemoteBleManager(private val context: Context) {
         private const val KEEP_ALIVE_INTERVAL_MS = 2000L
         private const val CAPTURE_CHANGE_TIMEOUT_MS = 10_000L
 
+        // 10 s of samples. Beyond this the link is not keeping up and the oldest are dropped.
+        private const val MAX_QUEUED_GPS_RECORDS = 100
+
         val SERVICE_BE80: UUID = UUID.fromString("0000be80-0000-1000-8000-00805f9b34fb")
         val WRITE_BE81: UUID = UUID.fromString("0000be81-0000-1000-8000-00805f9b34fb")
         val NOTIFY_BE82: UUID = UUID.fromString("0000be82-0000-1000-8000-00805f9b34fb")
@@ -105,17 +109,25 @@ class GpsRemoteBleManager(private val context: Context) {
     private var activeScanCallback: ScanCallback? = null
     private var keepAliveJob: Job? = null
     private var captureChangeTimeoutJob: Job? = null
-    private val gpsBatch = mutableListOf<ByteArray>()
+    private val gpsQueue = ConcurrentLinkedQueue<ByteArray>()
+
+    // Placed on the write queue to tell the worker that gpsQueue has records to send
+    private val gpsReady = ByteArray(0)
 
     init {
         // Start write queue worker loop
         scope.launch {
             for (packet in writeChannel) {
-                performGattWrite(packet)
+                if (packet === gpsReady) {
+                    flushGps()
+                } else {
+                    performGattWrite(packet)
+                }
             }
         }
     }
 
+    @Synchronized
     private fun nextSeq(): Int {
         val s = sequenceNumber
         sequenceNumber = if (sequenceNumber >= 254) 1 else sequenceNumber + 1
@@ -360,7 +372,7 @@ class GpsRemoteBleManager(private val context: Context) {
                 Log.w(TAG, "GATT disconnected, status=$status")
                 writeCharacteristic = null
                 stopKeepAlive()
-                synchronized(gpsBatch) { gpsBatch.clear() }
+                gpsQueue.clear()
                 _state.update {
                     it.copy(
                         connectionStatus = BleConnectionStatus.DISCONNECTED,
@@ -451,7 +463,7 @@ class GpsRemoteBleManager(private val context: Context) {
     }
 
     private fun handleIncomingNotification(raw: ByteArray) {
-        Log.d(TAG, "RX ${raw.toHex()}")
+        Log.v(TAG, "RX ${raw.toHex()}")
         val decoded = Go2BleProtocol.decodePacket(raw)
         if (decoded == null) {
             // Check for raw sync pattern: "AB BA"
@@ -471,7 +483,9 @@ class GpsRemoteBleManager(private val context: Context) {
         if (decoded.isMessage) {
             val inner = Go2BleProtocol.decodeInnerMessage(decoded.innerData) ?: return
             val hexPayload = inner.payload.joinToString("") { "%02x".format(it) }
-            Log.d(TAG, "Received camera message: code=0x${Integer.toHexString(inner.commandCode)}, seq=${inner.sequence}, size=${inner.payload.size}, payload=$hexPayload")
+            // 200 OK responses arrive for every GPS upload, ten times a second
+            val level = if (inner.commandCode == 0xC8) Log.VERBOSE else Log.DEBUG
+            Log.println(level, TAG, "Received camera message: code=0x${Integer.toHexString(inner.commandCode)}, seq=${inner.sequence}, size=${inner.payload.size}, payload=$hexPayload")
 
             when (inner.commandCode) {
                 Go2BleProtocol.CMD_CALIBRATE_GYRO -> {
@@ -492,7 +506,7 @@ class GpsRemoteBleManager(private val context: Context) {
                 }
 
                 0xC8 -> { // 200 OK Response
-                    Log.d(TAG, "Camera returned 200 OK for seq ${inner.sequence}")
+                    Log.v(TAG, "Camera returned 200 OK for seq ${inner.sequence}")
                     if (inner.payload.size == 4) {
                         parseBatteryUpdate(inner.payload)
                     }
@@ -565,7 +579,7 @@ class GpsRemoteBleManager(private val context: Context) {
     private suspend fun performGattWrite(packet: ByteArray) {
         val gatt = activeGatt ?: return
         val char = writeCharacteristic ?: return
-        Log.d(TAG, "TX ${packet.toHex()}")
+        Log.v(TAG, "TX ${packet.toHex()}")
 
         var retries = 3
         while (retries > 0) {
@@ -666,7 +680,11 @@ class GpsRemoteBleManager(private val context: Context) {
     }
 
     /**
-     * Queues one GPS fix for the camera. Fixes go out as UploadGps batches sized to fit one write.
+     * Queues one GPS sample for the camera.
+     *
+     * Every sample is sent, in order, as soon as the link is free, because the stored records
+     * appear to be placed on the video by their position in the stream. When the link falls
+     * behind, waiting samples go out together, up to what fits in one write.
      */
     fun addGpsFix(
         timestampMs: Long,
@@ -674,15 +692,27 @@ class GpsRemoteBleManager(private val context: Context) {
         longitude: Double,
         speedMps: Double,
         bearingDegrees: Double,
-        altitudeMeters: Double
+        altitudeMeters: Double,
+        hasFix: Boolean = true
     ) {
         if (writeCharacteristic == null) return
-        val record = Go2BleProtocol.buildGpsRecord(timestampMs, latitude, longitude, speedMps, bearingDegrees, altitudeMeters)
-        val batch = synchronized(gpsBatch) {
-            gpsBatch.add(record)
-            if (gpsBatch.size < Go2BleProtocol.gpsRecordsPerPacket(attMtu)) return
-            gpsBatch.toList().also { gpsBatch.clear() }
+        gpsQueue.add(
+            Go2BleProtocol.buildGpsRecord(timestampMs, latitude, longitude, speedMps, bearingDegrees, altitudeMeters, hasFix)
+        )
+        if (gpsQueue.size > MAX_QUEUED_GPS_RECORDS) {
+            gpsQueue.poll()
+            Log.w(TAG, "GPS queue full, dropped the oldest sample")
         }
+        writeChannel.trySend(gpsReady)
+    }
+
+    private suspend fun flushGps() {
+        val max = Go2BleProtocol.gpsRecordsPerPacket(attMtu)
+        val batch = ArrayList<ByteArray>(max)
+        while (batch.size < max) {
+            batch.add(gpsQueue.poll() ?: break)
+        }
+        if (batch.isEmpty()) return
 
         val seq = nextSeq()
         val inner = Go2BleProtocol.encodeInnerMessage(
@@ -690,8 +720,8 @@ class GpsRemoteBleManager(private val context: Context) {
             seq,
             Go2BleProtocol.buildUploadGpsPayload(batch)
         )
-        Log.d(TAG, "UploadGps seq=$seq records=${batch.size}")
-        queuePacket(Go2BleProtocol.encodeMessagePacket(inner))
+        Log.v(TAG, "UploadGps seq=$seq records=${batch.size}")
+        performGattWrite(Go2BleProtocol.encodeMessagePacket(inner))
         _state.update { it.copy(lastGpsSentTimeMs = System.currentTimeMillis()) }
     }
 
@@ -723,7 +753,7 @@ class GpsRemoteBleManager(private val context: Context) {
     fun disconnect() {
         stopScan()
         stopKeepAlive()
-        synchronized(gpsBatch) { gpsBatch.clear() }
+        gpsQueue.clear()
         activeGatt?.disconnect()
         activeGatt?.close()
         activeGatt = null

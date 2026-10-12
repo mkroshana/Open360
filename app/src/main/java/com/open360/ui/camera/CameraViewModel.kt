@@ -1,6 +1,7 @@
 package com.open360.ui.camera
 
 import android.app.Application
+import android.os.SystemClock
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.open360.core.ble.BleCameraState
@@ -13,6 +14,7 @@ import com.open360.core.gps.GpsTrackerEngine
 import com.open360.core.gps.GpsTrackerService
 import com.open360.core.gps.GpxTrackRecorder
 import com.open360.core.gps.GpxTrackState
+import com.open360.core.gps.runAtFixedRate
 import com.open360.core.model.CaptureMode
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
@@ -44,6 +46,13 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
         // GO 3S clips the time between its start and stop reports was 0.85 to 1.06 s shorter
         // than the clip. The timer starts from this value to make up for it.
         private const val CAPTURE_STATUS_LAG_SECONDS = 1L
+
+        private const val GPS_SAMPLE_INTERVAL_MS = 100L
+        private const val MAX_CATCH_UP_MS = 2000L
+
+        // The phone delivers a fix about once a second. After three seconds without one the
+        // last position no longer describes where the camera is.
+        private const val STALE_FIX_MS = 3000L
     }
 
     val bleManager = GpsRemoteBleManager(application)
@@ -273,20 +282,30 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
     private fun startGpsTelemetryInjection() {
         gpsStreamJob?.cancel()
         gpsStreamJob = viewModelScope.launch {
-            while (isActive) {
+            // The clip stores when the first GPS record arrived, not when each one did, so the
+            // rest are placed by their position in the stream at 10 per second. That is inferred
+            // from the clip metadata (first_gps_timestamp), not confirmed. It means the stream has
+            // to be exactly 10 Hz with no gaps, and a sample goes out on every tick even without
+            // a usable fix.
+            runAtFixedRate(GPS_SAMPLE_INTERVAL_MS, MAX_CATCH_UP_MS, SystemClock::elapsedRealtime) {
                 val gps = _uiState.value.gpsState
-                if (gps.hasFix && gps.timestampEpochMs > 0) {
-                    bleManager.addGpsFix(
-                        timestampMs = gps.timestampEpochMs,
-                        latitude = gps.latitude,
-                        longitude = gps.longitude,
-                        speedMps = gps.speedKmh / 3.6,
-                        bearingDegrees = gps.bearingDegrees.toDouble(),
-                        altitudeMeters = gps.altitudeMeters
-                    )
-                }
-                // 10 Hz, the rate the camera gets from the GPS Remote and the official SDK sample
-                delay(100)
+                val hasPosition = gps.hasFix && gps.timestampEpochMs > 0
+                val fixAgeMs = SystemClock.elapsedRealtime() - gps.fixElapsedRealtimeMs
+                bleManager.addGpsFix(
+                    // A fresh fix keeps its own time. Otherwise the sample carries the current time.
+                    timestampMs = when {
+                        hasPosition && fixAgeMs <= STALE_FIX_MS -> gps.timestampEpochMs
+                        hasPosition -> gps.timestampEpochMs + fixAgeMs
+                        else -> System.currentTimeMillis()
+                    },
+                    latitude = gps.latitude,
+                    longitude = gps.longitude,
+                    speedMps = gps.speedKmh / 3.6,
+                    bearingDegrees = gps.bearingDegrees.toDouble(),
+                    altitudeMeters = gps.altitudeMeters,
+                    // An old position is marked void instead of being passed off as current
+                    hasFix = hasPosition && fixAgeMs <= STALE_FIX_MS
+                )
             }
         }
     }
