@@ -12,6 +12,7 @@ import android.location.altitude.AltitudeConverter
 import android.os.Build
 import android.os.Bundle
 import android.os.HandlerThread
+import android.os.SystemClock
 import android.util.Log
 import androidx.annotation.RequiresApi
 import androidx.core.content.ContextCompat
@@ -55,6 +56,7 @@ class GpsTrackerEngine(private val context: Context) {
             val speedKmh = speedMps * 3.6f
             val speedMph = speedMps * 2.23694f
             val altitude = seaLevelAltitude(location)
+            Log.v(TAG, "Fix delivered ${SystemClock.elapsedRealtime() - location.elapsedRealtimeNanos / 1_000_000} ms after it was taken")
             val bearing = if (location.hasBearing()) location.bearing else 0f
             val accuracy = if (location.hasAccuracy()) location.accuracy else 0f
 

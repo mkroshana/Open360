@@ -9,7 +9,10 @@ import com.open360.core.ble.BleConnectionStatus
 import com.open360.core.ble.GpsRemoteBleManager
 import com.open360.core.ble.InstaGpsRemoteGattServer
 import com.open360.core.ble.InstaGpsRemoteServerState
+import com.open360.core.gps.GpsFix
+import com.open360.core.gps.GpsStreamSchedule
 import com.open360.core.gps.GpsTelemetry
+import com.open360.core.gps.GpsTimeline
 import com.open360.core.gps.GpsTrackerEngine
 import com.open360.core.gps.GpsTrackerService
 import com.open360.core.gps.GpxTrackRecorder
@@ -50,15 +53,17 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
         private const val GPS_SAMPLE_INTERVAL_MS = 100L
         private const val MAX_CATCH_UP_MS = 2000L
 
-        // The phone delivers a fix about once a second. After three seconds without one the
-        // last position no longer describes where the camera is.
-        private const val STALE_FIX_MS = 3000L
+        // A sample is sent once the fix after its moment has arrived, normally within two
+        // seconds. If no fix comes in this long the sample goes out as void instead.
+        private const val MAX_WAIT_FOR_NEXT_FIX_MS = 4000L
     }
 
     val bleManager = GpsRemoteBleManager(application)
     val gattServer = InstaGpsRemoteGattServer(application)
     val gpsEngine = GpsTrackerEngine(application)
     private val trackRecorder = GpxTrackRecorder(application)
+    private val gpsTimeline = GpsTimeline()
+    private val gpsSchedule = GpsStreamSchedule(GPS_SAMPLE_INTERVAL_MS, MAX_WAIT_FOR_NEXT_FIX_MS)
 
     private val _uiState = MutableStateFlow(RemoteUiState())
     val uiState: StateFlow<RemoteUiState> = _uiState.asStateFlow()
@@ -145,6 +150,13 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
         viewModelScope.launch {
             trackRecorder.state.collect { track ->
                 _uiState.update { it.copy(trackState = track) }
+            }
+        }
+
+        // Keep the recent fixes for interpolating the samples sent to the camera
+        viewModelScope.launch {
+            gpsEngine.telemetry.collect { gps ->
+                gps.toFix()?.let { gpsTimeline.add(it) }
             }
         }
 
@@ -282,30 +294,28 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
     private fun startGpsTelemetryInjection() {
         gpsStreamJob?.cancel()
         gpsStreamJob = viewModelScope.launch {
-            // The clip stores when the first GPS record arrived, not when each one did, so the
-            // rest are placed by their position in the stream at 10 per second. That is inferred
-            // from the clip metadata (first_gps_timestamp), not confirmed. It means the stream has
-            // to be exactly 10 Hz with no gaps, and a sample goes out on every tick even without
-            // a usable fix.
-            runAtFixedRate(GPS_SAMPLE_INTERVAL_MS, MAX_CATCH_UP_MS, SystemClock::elapsedRealtime) {
-                val gps = _uiState.value.gpsState
-                val hasPosition = gps.hasFix && gps.timestampEpochMs > 0
-                val fixAgeMs = SystemClock.elapsedRealtime() - gps.fixElapsedRealtimeMs
-                bleManager.addGpsFix(
-                    // A fresh fix keeps its own time. Otherwise the sample carries the current time.
-                    timestampMs = when {
-                        hasPosition && fixAgeMs <= STALE_FIX_MS -> gps.timestampEpochMs
-                        hasPosition -> gps.timestampEpochMs + fixAgeMs
-                        else -> System.currentTimeMillis()
-                    },
-                    latitude = gps.latitude,
-                    longitude = gps.longitude,
-                    speedMps = gps.speedKmh / 3.6,
-                    bearingDegrees = gps.bearingDegrees.toDouble(),
-                    altitudeMeters = gps.altitudeMeters,
-                    // An old position is marked void instead of being passed off as current
-                    hasFix = hasPosition && fixAgeMs <= STALE_FIX_MS
-                )
+            // The clip stores when the first GPS record arrived, not when each one did, and
+            // Insta360 Studio shows that first record on the first frame and the rest 100 ms
+            // apart by counting. So the samples sent are the positions at the first frame, 100 ms
+            // later, 200 ms later and so on, each interpolated between the fixes around it.
+            // They go out in a batch each time a new fix makes the next ones known.
+            runAtFixedRate(GPS_SAMPLE_INTERVAL_MS, MAX_CATCH_UP_MS, SystemClock::elapsedRealtime) { scheduledMs ->
+                gpsSchedule.setFirstFrame(bleManager.state.value.recordingFirstFrameAtMs)
+                for (moment in gpsSchedule.due(scheduledMs, gpsTimeline.newestFixMs())) {
+                    val sample = gpsTimeline.sampleAt(moment)
+                    bleManager.addGpsFix(
+                        // With no fix at all the sample still carries the time of its moment
+                        timestampMs = sample?.utcMs
+                            ?: (System.currentTimeMillis() - (SystemClock.elapsedRealtime() - moment)),
+                        latitude = sample?.latitude ?: 0.0,
+                        longitude = sample?.longitude ?: 0.0,
+                        speedMps = sample?.speedMps ?: 0.0,
+                        bearingDegrees = sample?.bearingDegrees ?: 0.0,
+                        altitudeMeters = sample?.altitudeMeters ?: 0.0,
+                        // A moment with no fix close on both sides is sent as void
+                        hasFix = sample?.valid == true
+                    )
+                }
             }
         }
     }
@@ -313,6 +323,20 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
     private fun stopGpsTelemetryInjection() {
         gpsStreamJob?.cancel()
         gpsStreamJob = null
+    }
+
+    /** The fix this telemetry holds, or null before the first position has arrived. */
+    private fun GpsTelemetry.toFix(): GpsFix? {
+        if (timestampEpochMs <= 0 || fixElapsedRealtimeMs <= 0) return null
+        return GpsFix(
+            elapsedMs = fixElapsedRealtimeMs,
+            utcMs = timestampEpochMs,
+            latitude = latitude,
+            longitude = longitude,
+            altitudeMeters = altitudeMeters,
+            speedMps = speedKmh / 3.6,
+            bearingDegrees = bearingDegrees.toDouble()
+        )
     }
 
     override fun onCleared() {

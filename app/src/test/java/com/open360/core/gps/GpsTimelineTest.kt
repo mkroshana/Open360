@@ -1,0 +1,83 @@
+package com.open360.core.gps
+
+import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNull
+import org.junit.Assert.assertTrue
+import org.junit.Test
+
+class GpsTimelineTest {
+
+    private fun fix(elapsedMs: Long, lat: Double, lon: Double, speed: Double = 0.0, bearing: Double = 0.0, alt: Double = 0.0) =
+        GpsFix(elapsedMs, utcMs = 1_767_268_800_000L + elapsedMs, lat, lon, alt, speed, bearing)
+
+    @Test
+    fun emptyTimelineHasNoAnswer() {
+        assertNull(GpsTimeline().sampleAt(1000))
+    }
+
+    @Test
+    fun interpolatesBetweenTheFixBeforeAndAfter() {
+        val timeline = GpsTimeline()
+        timeline.add(fix(10_000, lat = 6.0000, lon = 79.0000, speed = 2.0, alt = 10.0))
+        timeline.add(fix(11_000, lat = 6.0010, lon = 79.0020, speed = 4.0, alt = 20.0))
+
+        val s = timeline.sampleAt(10_300)!!
+        assertTrue(s.valid)
+        assertEquals(6.0003, s.latitude, 1e-9)
+        assertEquals(79.0006, s.longitude, 1e-9)
+        assertEquals(2.6, s.speedMps, 1e-9)
+        assertEquals(13.0, s.altitudeMeters, 1e-9)
+        // The sample's time is the requested moment, to the millisecond
+        assertEquals(1_767_268_800_000L + 10_300, s.utcMs)
+    }
+
+    @Test
+    fun aMomentExactlyOnAFixReturnsThatFix() {
+        val timeline = GpsTimeline()
+        timeline.add(fix(10_000, 6.0, 79.0))
+        timeline.add(fix(11_000, 6.1, 79.1))
+        val s = timeline.sampleAt(11_000)!!
+        assertTrue(s.valid)
+        assertEquals(6.1, s.latitude, 1e-12)
+    }
+
+    @Test
+    fun doesNotPredictPastTheNewestFix() {
+        val timeline = GpsTimeline()
+        timeline.add(fix(10_000, 6.0, 79.0))
+        timeline.add(fix(11_000, 6.1, 79.1))
+
+        val s = timeline.sampleAt(11_400)!!
+        assertFalse(s.valid)
+        assertEquals(1_767_268_800_000L + 11_400, s.utcMs)
+    }
+
+    @Test
+    fun aGapBetweenFixesIsNotBridged() {
+        val timeline = GpsTimeline(maxGapMs = 2500)
+        timeline.add(fix(10_000, 6.0, 79.0))
+        timeline.add(fix(14_000, 6.4, 79.4)) // 4 s without a fix
+
+        assertFalse(timeline.sampleAt(12_000)!!.valid)
+    }
+
+    @Test
+    fun bearingTurnsTheShortWayThroughNorth() {
+        val timeline = GpsTimeline()
+        timeline.add(fix(10_000, 6.0, 79.0, bearing = 350.0))
+        timeline.add(fix(11_000, 6.0, 79.0, bearing = 10.0))
+
+        assertEquals(0.0, timeline.sampleAt(10_500)!!.bearingDegrees, 1e-9)
+        assertEquals(355.0, timeline.sampleAt(10_250)!!.bearingDegrees, 1e-9)
+    }
+
+    @Test
+    fun ignoresAFixThatIsNotNewerThanTheLast() {
+        val timeline = GpsTimeline()
+        timeline.add(fix(10_000, 6.0, 79.0))
+        timeline.add(fix(11_000, 6.1, 79.1))
+        timeline.add(fix(11_000, 9.9, 99.9)) // same moment again
+        assertEquals(6.1, timeline.sampleAt(11_000)!!.latitude, 1e-12)
+    }
+}
