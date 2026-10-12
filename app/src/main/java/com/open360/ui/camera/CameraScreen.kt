@@ -75,6 +75,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.open360.core.ble.BleConnectionStatus
+import com.open360.core.gps.GpxTrackState
 import com.open360.core.model.CaptureMode
 import java.util.Locale
 
@@ -189,6 +190,7 @@ fun CameraScreen(
                 isRecording = uiState.isRecording,
                 isCameraConnected = uiState.isConnected,
                 lastGpsSentTimeMs = lastGpsSentTime,
+                track = uiState.trackState,
                 onToggleSpeedUnit = { viewModel.toggleSpeedUnit() }
             )
 
@@ -447,6 +449,7 @@ fun GpsTelemetryCard(
     isRecording: Boolean,
     isCameraConnected: Boolean = false,
     lastGpsSentTimeMs: Long,
+    track: GpxTrackState = GpxTrackState(),
     onToggleSpeedUnit: () -> Unit
 ) {
     ElevatedCard(
@@ -602,6 +605,23 @@ fun GpsTelemetryCard(
                         color = badgeColor
                     )
                 }
+            }
+
+            if (track.fileName != null) {
+                Spacer(modifier = Modifier.height(8.dp))
+                Text(
+                    text = "GPX track: ${track.folder}/${track.fileName} (${track.pointCount} points)",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+            if (track.lastError != null) {
+                Spacer(modifier = Modifier.height(8.dp))
+                Text(
+                    text = track.lastError,
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.error
+                )
             }
         }
     }

@@ -11,6 +11,8 @@ import com.open360.core.ble.InstaGpsRemoteServerState
 import com.open360.core.gps.GpsTelemetry
 import com.open360.core.gps.GpsTrackerEngine
 import com.open360.core.gps.GpsTrackerService
+import com.open360.core.gps.GpxTrackRecorder
+import com.open360.core.gps.GpxTrackState
 import com.open360.core.model.CaptureMode
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
@@ -25,6 +27,7 @@ data class RemoteUiState(
     val bleState: BleCameraState = BleCameraState(),
     val serverState: InstaGpsRemoteServerState = InstaGpsRemoteServerState(),
     val gpsState: GpsTelemetry = GpsTelemetry(),
+    val trackState: GpxTrackState = GpxTrackState(),
     val currentMode: CaptureMode = CaptureMode.VIDEO,
     val isSpeedMph: Boolean = false,
     val recordingDurationSeconds: Long = 0L,
@@ -39,6 +42,7 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
     val bleManager = GpsRemoteBleManager(application)
     val gattServer = InstaGpsRemoteGattServer(application)
     val gpsEngine = GpsTrackerEngine(application)
+    private val trackRecorder = GpxTrackRecorder(application)
 
     private val _uiState = MutableStateFlow(RemoteUiState())
     val uiState: StateFlow<RemoteUiState> = _uiState.asStateFlow()
@@ -114,6 +118,17 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
             gpsEngine.telemetry.collect { gps ->
                 _uiState.update { it.copy(gpsState = gps) }
                 gattServer.updateGpsTelemetry(gps)
+                // hasFix can turn true from satellite counts before the first position arrives
+                if (gps.hasFix && gps.timestampEpochMs > 0) {
+                    trackRecorder.addPoint(gps.latitude, gps.longitude, gps.altitudeMeters, gps.timestampEpochMs)
+                }
+            }
+        }
+
+        // Collect the GPX track file status
+        viewModelScope.launch {
+            trackRecorder.state.collect { track ->
+                _uiState.update { it.copy(trackState = track) }
             }
         }
 
@@ -274,6 +289,7 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
     override fun onCleared() {
         super.onCleared()
         gpsEngine.stopTracking()
+        trackRecorder.stop()
         gattServer.stopServer()
         bleManager.disconnect()
         recordingTimerJob?.cancel()
