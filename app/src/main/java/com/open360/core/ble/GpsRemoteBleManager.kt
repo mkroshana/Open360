@@ -341,11 +341,6 @@ class GpsRemoteBleManager(private val context: Context) {
 
             _state.update { it.copy(connectionStatus = BleConnectionStatus.CONNECTED) }
             Log.i(TAG, "Camera BLE successfully connected. Ready for commands.")
-
-            // Query initial battery status
-            scope.launch {
-                queryBattery()
-            }
         }
 
         override fun onCharacteristicWrite(
@@ -358,6 +353,10 @@ class GpsRemoteBleManager(private val context: Context) {
 
         override fun onDescriptorWrite(gatt: BluetoothGatt, descriptor: BluetoothGattDescriptor, status: Int) {
             Log.i(TAG, "Descriptor write finished on ${descriptor.uuid}, status=$status")
+            if (status == BluetoothGatt.GATT_SUCCESS) {
+                // Subscription complete: channel is open for writes
+                queryBattery()
+            }
         }
 
         @Deprecated("Deprecated in Java")
@@ -393,7 +392,8 @@ class GpsRemoteBleManager(private val context: Context) {
 
         if (decoded.isMessage) {
             val inner = Go2BleProtocol.decodeInnerMessage(decoded.innerData) ?: return
-            Log.d(TAG, "Received camera message: code=0x${Integer.toHexString(inner.commandCode)}, seq=${inner.sequence}, size=${inner.payload.size}")
+            val hexPayload = inner.payload.joinToString("") { "%02x".format(it) }
+            Log.d(TAG, "Received camera message: code=0x${Integer.toHexString(inner.commandCode)}, seq=${inner.sequence}, size=${inner.payload.size}, payload=$hexPayload")
 
             when (inner.commandCode) {
                 Go2BleProtocol.CMD_CALIBRATE_GYRO,
@@ -408,33 +408,42 @@ class GpsRemoteBleManager(private val context: Context) {
 
                 0xC8 -> { // 200 OK Response
                     Log.d(TAG, "Camera returned 200 OK for seq ${inner.sequence}")
+                    if (inner.payload.size == 4) {
+                        parseBatteryUpdate(inner.payload)
+                    }
                 }
             }
         }
     }
 
     private fun parseBatteryUpdate(payload: ByteArray) {
-        // Varint or raw level parsing:
-        // Field 1 (varint): battery % (0-100)
-        // Field 2 (varint): charging state (0=not charging, 1=charging)
         if (payload.isEmpty()) return
         try {
             var batteryLevel: Int? = null
             var isCharging = false
 
             var idx = 0
-            while (idx < payload.size) {
+            while (idx < payload.size - 1) {
                 val tag = payload[idx].toInt() and 0xFF
-                idx++
-                if (idx >= payload.size) break
-                val value = payload[idx].toInt() and 0xFF
-                idx++
-
-                val fieldNumber = tag ushr 3
-                if (fieldNumber == 1) {
-                    batteryLevel = value
-                } else if (fieldNumber == 2) {
-                    isCharging = (value == 1)
+                when (tag) {
+                    0x08 -> { // Field 1: battery percentage (0-100) on GO 3S
+                        val level = payload[idx + 1].toInt() and 0xFF
+                        if (level in 0..100) {
+                            batteryLevel = level
+                        }
+                        idx += 2
+                    }
+                    0x10 -> { // Field 2: charging state (1 = charging, 0 = discharging) on GO 3S
+                        isCharging = (payload[idx + 1].toInt() and 0xFF) == 1
+                        idx += 2
+                    }
+                    0x18 -> { // Field 3: charging state on legacy models
+                        isCharging = (payload[idx + 1].toInt() and 0xFF) == 1
+                        idx += 2
+                    }
+                    else -> {
+                        idx++
+                    }
                 }
             }
 
@@ -467,25 +476,34 @@ class GpsRemoteBleManager(private val context: Context) {
         val gatt = activeGatt ?: return
         val char = writeCharacteristic ?: return
 
-        val ack = CompletableDeferred<Boolean>()
-        pendingWriteAck = ack
+        var retries = 3
+        while (retries > 0) {
+            val ack = CompletableDeferred<Boolean>()
+            pendingWriteAck = ack
 
-        val initiated = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-            val status = gatt.writeCharacteristic(char, packet, BluetoothGattCharacteristic.WRITE_TYPE_DEFAULT)
-            status == BluetoothStatusCodes.SUCCESS
-        } else {
-            @Suppress("DEPRECATION")
-            char.value = packet
-            @Suppress("DEPRECATION")
-            char.writeType = BluetoothGattCharacteristic.WRITE_TYPE_DEFAULT
-            @Suppress("DEPRECATION")
-            gatt.writeCharacteristic(char)
-        }
+            val initiated = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                val status = gatt.writeCharacteristic(char, packet, BluetoothGattCharacteristic.WRITE_TYPE_DEFAULT)
+                status == BluetoothStatusCodes.SUCCESS
+            } else {
+                @Suppress("DEPRECATION")
+                char.value = packet
+                @Suppress("DEPRECATION")
+                char.writeType = BluetoothGattCharacteristic.WRITE_TYPE_DEFAULT
+                @Suppress("DEPRECATION")
+                gatt.writeCharacteristic(char)
+            }
 
-        if (initiated) {
-            withTimeoutOrNull(1000) { ack.await() }
-        } else {
-            Log.w(TAG, "Failed to initiate GATT write on ${char.uuid}")
+            if (initiated) {
+                withTimeoutOrNull(1000) { ack.await() }
+                return
+            } else {
+                retries--
+                if (retries > 0) {
+                    kotlinx.coroutines.delay(100)
+                } else {
+                    Log.w(TAG, "Failed to initiate GATT write on ${char.uuid} after retries")
+                }
+            }
         }
     }
 
