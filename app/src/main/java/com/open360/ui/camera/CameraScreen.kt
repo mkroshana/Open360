@@ -198,6 +198,7 @@ fun CameraScreen(
                 isStopping = uiState.bleState.isCaptureStopping,
                 durationSeconds = uiState.recordingDurationSeconds,
                 isConnected = uiState.isConnected,
+                isAsleep = ble.connectionStatus == BleConnectionStatus.CONNECTED && !ble.isCameraAwake,
                 onModeSelected = { viewModel.setMode(it) },
                 onCycleMode = { viewModel.cycleMode() },
                 onShutterClick = {
@@ -289,8 +290,12 @@ fun CameraStatusCard(
             Spacer(modifier = Modifier.height(12.dp))
 
             // Connection state badge
+            // The camera's Bluetooth answers while the camera itself is switched off
+            val isAsleep = ble.connectionStatus == BleConnectionStatus.CONNECTED && !ble.isCameraAwake
+
             val statusColor = when {
                 server.isCameraConnected -> Color(0xFF2E7D32)
+                isAsleep -> Color(0xFFE65100)
                 ble.connectionStatus == BleConnectionStatus.CONNECTED -> Color(0xFF2E7D32)
                 server.isAdvertising || ble.connectionStatus == BleConnectionStatus.SCANNING -> Color(0xFFE65100)
                 else -> MaterialTheme.colorScheme.outline
@@ -298,6 +303,7 @@ fun CameraStatusCard(
 
             val statusText = when {
                 server.isCameraConnected -> "GPS Remote Connected (10 Hz NMEA)"
+                isAsleep -> "Camera Is Off"
                 ble.connectionStatus == BleConnectionStatus.CONNECTED -> "Connected"
                 server.isAdvertising -> "Broadcasting as Insta360 GPS Remote"
                 ble.connectionStatus == BleConnectionStatus.SCANNING -> "Scanning for Camera..."
@@ -306,6 +312,7 @@ fun CameraStatusCard(
             }
 
             val statusIcon = when {
+                isAsleep -> Icons.Default.PowerSettingsNew
                 uiState.isConnected -> Icons.Default.CheckCircle
                 server.isAdvertising || ble.connectionStatus == BleConnectionStatus.SCANNING -> Icons.Default.Sync
                 else -> Icons.Default.BluetoothDisabled
@@ -334,8 +341,8 @@ fun CameraStatusCard(
                 )
             }
 
-            // Connection instructions when camera is not connected
-            if (!uiState.isConnected) {
+            // What to do when the camera cannot be used yet
+            if (!uiState.isConnected || isAsleep) {
                 Spacer(modifier = Modifier.height(8.dp))
                 Row(
                     modifier = Modifier
@@ -353,7 +360,11 @@ fun CameraStatusCard(
                         modifier = Modifier.size(16.dp)
                     )
                     Text(
-                        text = "Turn the camera on and keep it nearby. Open360 connects to it directly.",
+                        text = if (isAsleep) {
+                            "Its Bluetooth is connected but the camera is not answering. Press the camera's button to switch it on."
+                        } else {
+                            "Turn the camera on and keep it nearby. Open360 connects to it directly."
+                        },
                         style = MaterialTheme.typography.labelSmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
@@ -756,6 +767,7 @@ fun CameraControlCard(
     isStopping: Boolean = false,
     durationSeconds: Long,
     isConnected: Boolean,
+    isAsleep: Boolean = false,
     onModeSelected: (CaptureMode) -> Unit,
     onCycleMode: () -> Unit,
     onShutterClick: () -> Unit
@@ -874,7 +886,7 @@ fun CameraControlCard(
                     .clip(CircleShape)
                     .background(buttonColor.copy(alpha = 0.15f))
                     .border(3.dp, buttonColor, CircleShape)
-                    .clickable(enabled = isConnected) { onShutterClick() },
+                    .clickable(enabled = isConnected && !isAsleep) { onShutterClick() },
                 contentAlignment = Alignment.Center
             ) {
                 if (isRecording) {
@@ -919,12 +931,12 @@ fun CameraControlCard(
                 text = actionLabel,
                 style = MaterialTheme.typography.bodyMedium,
                 fontWeight = FontWeight.Medium,
-                color = if (!isConnected) MaterialTheme.colorScheme.onSurfaceVariant else MaterialTheme.colorScheme.onSurface
+                color = if (!isConnected || isAsleep) MaterialTheme.colorScheme.onSurfaceVariant else MaterialTheme.colorScheme.onSurface
             )
 
-            if (!isConnected) {
+            if (!isConnected || isAsleep) {
                 Text(
-                    text = "Connect camera to control",
+                    text = if (isAsleep) "Switch the camera on to control it" else "Connect camera to control",
                     style = MaterialTheme.typography.labelSmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     modifier = Modifier.padding(top = 4.dp)

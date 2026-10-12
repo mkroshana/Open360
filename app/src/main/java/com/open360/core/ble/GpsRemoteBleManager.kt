@@ -68,6 +68,9 @@ data class CameraDetails(
 
 data class BleCameraState(
     val connectionStatus: BleConnectionStatus = BleConnectionStatus.DISCONNECTED,
+    // Whether the camera itself is answering. A GO 3S that is powered off still accepts a
+    // Bluetooth connection, but sends nothing and acts on nothing until it is switched on.
+    val isCameraAwake: Boolean = false,
     val isRecording: Boolean = false,
     val isCaptureStarting: Boolean = false,
     val isCaptureStopping: Boolean = false,
@@ -104,6 +107,13 @@ class GpsRemoteBleManager(private val context: Context) {
     companion object {
         private const val TAG = "GpsRemoteBleManager"
         private const val KEEP_ALIVE_INTERVAL_MS = 2000L
+
+        // An awake camera answers every keep-alive. After this long with nothing from it, it
+        // is taken to have gone to sleep.
+        private const val CAMERA_SILENT_MS = 7000L
+
+        // How long the wake beacon is broadcast for
+        private const val WAKE_BEACON_MS = 10_000
         private const val LOW_BATTERY_CLEARED_PERCENT = 20
         private const val CAPTURE_CHANGE_TIMEOUT_MS = 10_000L
 
@@ -167,6 +177,8 @@ class GpsRemoteBleManager(private val context: Context) {
     private var captureChangeTimeoutJob: Job? = null
     @Volatile
     private var stopCaptureSeq = -1
+    @Volatile
+    private var lastHeardAtMs = 0L
     @Volatile
     private var captureStatusQuerySeq = -1
     @Volatile
@@ -275,8 +287,9 @@ class GpsRemoteBleManager(private val context: Context) {
         val settings = AdvertiseSettings.Builder()
             .setAdvertiseMode(AdvertiseSettings.ADVERTISE_MODE_LOW_LATENCY)
             .setTxPowerLevel(AdvertiseSettings.ADVERTISE_TX_POWER_HIGH)
-            .setConnectable(false)
-            .setTimeout(6000)
+            // A sleeping camera's scanner is documented as expecting a connectable advertisement
+            .setConnectable(true)
+            .setTimeout(WAKE_BEACON_MS)
             .build()
 
         val data = AdvertiseData.Builder()
@@ -389,6 +402,10 @@ class GpsRemoteBleManager(private val context: Context) {
             while (isActive) {
                 delay(KEEP_ALIVE_INTERVAL_MS)
                 queuePacket(Go2BleProtocol.buildKeepAlivePacket())
+                if (_state.value.isCameraAwake && SystemClock.elapsedRealtime() - lastHeardAtMs > CAMERA_SILENT_MS) {
+                    Log.w(TAG, "Camera has stopped answering")
+                    _state.update { it.copy(isCameraAwake = false) }
+                }
             }
         }
     }
@@ -444,6 +461,7 @@ class GpsRemoteBleManager(private val context: Context) {
                 _state.update {
                     it.copy(
                         connectionStatus = BleConnectionStatus.DISCONNECTED,
+                        isCameraAwake = false,
                         isRecording = false,
                         isCaptureStarting = false,
                         isCaptureStopping = false,
@@ -542,6 +560,13 @@ class GpsRemoteBleManager(private val context: Context) {
                 queuePacket(Go2BleProtocol.buildSyncResponsePacket())
             }
             return
+        }
+
+        // Anything valid from the camera, a keep-alive answer included, shows it is switched on
+        lastHeardAtMs = SystemClock.elapsedRealtime()
+        if (!_state.value.isCameraAwake) {
+            Log.i(TAG, "Camera is answering")
+            _state.update { it.copy(isCameraAwake = true) }
         }
 
         if (decoded.isSync) {
@@ -994,6 +1019,7 @@ class GpsRemoteBleManager(private val context: Context) {
         _state.update {
             it.copy(
                 connectionStatus = BleConnectionStatus.DISCONNECTED,
+                isCameraAwake = false,
                 isRecording = false,
                 isCaptureStarting = false,
                 isCaptureStopping = false,

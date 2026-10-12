@@ -194,6 +194,8 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
     fun wakeUpCamera(serialSuffix: String? = null) {
         val suffix = serialSuffix ?: "8JY3HF"
         bleManager.startWakeUpBroadcast(suffix)
+        // Already linked to the camera's Bluetooth: the beacon is all that is needed
+        if (bleManager.state.value.connectionStatus != BleConnectionStatus.DISCONNECTED) return
         viewModelScope.launch {
             delay(1500)
             bleManager.startScanAndConnect(suffix)
@@ -270,7 +272,9 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
 
         // Also trigger via Architecture B if connected
         val current = _uiState.value
-        if (current.bleState.connectionStatus == BleConnectionStatus.CONNECTED) {
+        // A camera that is switched off holds on to commands and acts on them when it next
+        // wakes, so nothing is sent until it is answering
+        if (current.bleState.connectionStatus == BleConnectionStatus.CONNECTED && current.bleState.isCameraAwake) {
             when (current.currentMode) {
                 CaptureMode.PHOTO -> bleManager.takePhoto()
                 CaptureMode.VIDEO -> {
