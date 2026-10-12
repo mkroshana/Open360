@@ -78,6 +78,6 @@ Insta360 cameras have two completely separate BLE architectures. Open360 uses Ar
 1. Wake the camera.
 2. Open Open360. It scans for the camera's `0xBE80` advertisement and connects on its own; tap Connect if it was opened before the camera woke.
 3. Wait for a GPS fix, then record from the app or with the camera's own button. The app sends GPS only while a recording is running and saves a GPX for it on the phone.
-4. Keep the app on screen. GPS stops when the app is in the background unless the foreground service is running, which today only starts once a recording is detected.
+4. Once the app shows the camera as connected, the display can be turned off. A foreground service and a wake lock run for as long as the camera stays connected (the Background GPS Tracking switch, on by default), so fixes keep arriving, the keep-alive keeps going and recordings started on the camera are still seen. Android only lets the service start while the app is on screen, so connect before locking the phone. If the link drops the app does not reconnect on its own. Not yet tested on a recording with the display off.
 
 The Bluetooth Remote menu on the camera is not used.

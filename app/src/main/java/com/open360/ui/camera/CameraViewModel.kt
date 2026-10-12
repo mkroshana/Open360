@@ -2,6 +2,7 @@ package com.open360.ui.camera
 
 import android.app.Application
 import android.os.SystemClock
+import android.util.Log
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.open360.core.ble.BleCameraState
@@ -45,6 +46,8 @@ data class RemoteUiState(
 class CameraViewModel(application: Application) : AndroidViewModel(application) {
 
     companion object {
+        private const val TAG = "CameraViewModel"
+
         // The camera reports "recording" about a second after the clip really starts: on three
         // GO 3S clips the time between its start and stop reports was 0.85 to 1.06 s shorter
         // than the clip. The timer starts from this value to make up for it.
@@ -71,6 +74,7 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
     private var recordingTimerJob: Job? = null
     private var gpsStreamJob: Job? = null
     private var trackedFirstFrameAtMs: Long? = null
+    private var backgroundServiceRunning = false
 
     init {
         // The GO 3S has not connected to a phone advertising as the GPS Remote, so the GATT server
@@ -132,6 +136,7 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
                 } else if (!linked && gpsStreamJob != null) {
                     stopGpsTelemetryInjection()
                 }
+                updateBackgroundService()
 
                 // One GPX track per recording, from its first frame to its stop
                 val firstFrame = ble.recordingFirstFrameAtMs
@@ -223,6 +228,32 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
 
     fun toggleKeepGpsInBackground() {
         _uiState.update { it.copy(keepGpsActiveInBackground = !it.keepGpsActiveInBackground) }
+        updateBackgroundService()
+    }
+
+    /**
+     * Runs the foreground service for as long as the camera is connected, so that with the
+     * display off GPS fixes keep arriving and the link stays up. That covers recordings started
+     * on the camera too. Android only lets it start while the app is on screen.
+     */
+    private fun updateBackgroundService() {
+        val state = _uiState.value
+        val wanted = state.keepGpsActiveInBackground &&
+            state.bleState.connectionStatus == BleConnectionStatus.CONNECTED
+        if (wanted == backgroundServiceRunning) return
+
+        try {
+            if (wanted) {
+                // Android refuses a location service to an app without the permission
+                if (!gpsEngine.hasLocationPermission()) return
+                GpsTrackerService.start(getApplication())
+            } else {
+                GpsTrackerService.stop(getApplication())
+            }
+            backgroundServiceRunning = wanted
+        } catch (e: Exception) {
+            Log.w(TAG, "Could not ${if (wanted) "start" else "stop"} the background service", e)
+        }
     }
 
     fun onShutterClicked() {
@@ -286,20 +317,12 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
                 }
             }
         }
-
-        if (_uiState.value.keepGpsActiveInBackground) {
-            GpsTrackerService.start(getApplication())
-        }
     }
 
     private fun stopRecordingTimer() {
         recordingTimerJob?.cancel()
         recordingTimerJob = null
         _uiState.update { it.copy(recordingDurationSeconds = 0L) }
-
-        if (_uiState.value.keepGpsActiveInBackground) {
-            GpsTrackerService.stop(getApplication())
-        }
     }
 
     private fun startGpsTelemetryInjection() {
@@ -358,5 +381,13 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
         bleManager.disconnect()
         recordingTimerJob?.cancel()
         gpsStreamJob?.cancel()
+        if (backgroundServiceRunning) {
+            try {
+                GpsTrackerService.stop(getApplication())
+            } catch (e: Exception) {
+                Log.w(TAG, "Could not stop the background service", e)
+            }
+            backgroundServiceRunning = false
+        }
     }
 }

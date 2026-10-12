@@ -44,7 +44,7 @@ class GpsTrackerEngine(private val context: Context) {
     private var locationThread: HandlerThread? = null
     private var altitudeSourceLogged = false
 
-    private fun hasLocationPermission(): Boolean {
+    fun hasLocationPermission(): Boolean {
         val fine = ContextCompat.checkSelfPermission(context, Manifest.permission.ACCESS_FINE_LOCATION)
         val coarse = ContextCompat.checkSelfPermission(context, Manifest.permission.ACCESS_COARSE_LOCATION)
         return fine == PackageManager.PERMISSION_GRANTED || coarse == PackageManager.PERMISSION_GRANTED
