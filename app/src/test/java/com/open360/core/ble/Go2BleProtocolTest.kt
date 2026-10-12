@@ -214,6 +214,19 @@ class Go2BleProtocolTest {
     }
 
     @Test
+    fun testWakeUpAcknowledgementIsToldApartFromACameraThatIsOn() {
+        // What a switched-off GO 3S sent back 0.2 s after the wake-up packet: the same bytes
+        val echoed = Go2BleProtocol.decodePacket(hex("ff0640080008000000b00000016d90"))
+        assertNotNull(echoed)
+        assertTrue(Go2BleProtocol.isWakeUpAcknowledgement(echoed!!.innerData))
+
+        // A keep-alive answer, which only a camera that is on sends
+        val keepAlive = Go2BleProtocol.decodePacket(hex("ff06400700070000000500006fba"))
+        assertNotNull(keepAlive)
+        assertEquals(false, Go2BleProtocol.isWakeUpAcknowledgement(keepAlive!!.innerData))
+    }
+
+    @Test
     fun testWakeUpOptionsRequestAndReply() {
         // Options 38 (authorization id) and 97 (wake-up switch) as a packed list
         assertTrue(hex("0a022661").contentEquals(Go2BleProtocol.buildWakeUpOptionsRequest()))

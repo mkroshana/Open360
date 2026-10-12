@@ -23,6 +23,14 @@ object Go2BleProtocol {
     const val SUBTYPE_MESSAGE: Byte = 0x40
     const val SUBTYPE_SYNC: Byte = 0x41
 
+    // Inner packet type of the wake-up packet. A camera that is switched off sends the packet
+    // straight back, from its Bluetooth chip, without switching on.
+    const val WAKE_UP_INNER_TYPE: Byte = 0xB0.toByte()
+
+    /** Whether an inner packet from the camera is its acknowledgement of the wake-up packet. */
+    fun isWakeUpAcknowledgement(innerData: ByteArray): Boolean =
+        innerData.size >= 5 && innerData[4] == WAKE_UP_INNER_TYPE
+
     const val INNER_HEADER_SIZE = 16
     const val ENVELOPE_HEADER_SIZE = 5
     const val CRC_SIZE = 2
@@ -471,11 +479,13 @@ object Go2BleProtocol {
      * keep-alive), next to a routine that logs "send notify to wake up go2". That it is the
      * wake-up packet is inferred from that, not seen in the app's code, which is hidden.
      */
-    fun buildWakeUpPacket(): ByteArray {
-        val inner = byteArrayOf(0x08, 0x00, 0x00, 0x00, 0xB0.toByte(), 0x00, 0x00, 0x01)
+    fun buildWakeUpPacket(asRequest: Boolean = false): ByteArray {
+        val inner = byteArrayOf(0x08, 0x00, 0x00, 0x00, WAKE_UP_INNER_TYPE, 0x00, 0x00, 0x01)
         val buf = ByteBuffer.allocate(ENVELOPE_HEADER_SIZE + inner.size + CRC_SIZE).order(ByteOrder.LITTLE_ENDIAN)
         buf.put(MARKER)
-        buf.put(TYPE_RESPONSE)
+        // The Insta360 app's copy carries the type the camera's own packets have; the other
+        // form is the type this app's requests have
+        buf.put(if (asRequest) TYPE_MESSAGE else TYPE_RESPONSE)
         buf.put(SUBTYPE_MESSAGE)
         buf.putShort(inner.size.toShort())
         buf.put(inner)

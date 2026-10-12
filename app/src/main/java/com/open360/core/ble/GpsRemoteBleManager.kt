@@ -646,20 +646,29 @@ class GpsRemoteBleManager(private val context: Context) {
                     return@launch
                 }
 
-                Log.i(TAG, "Wake step 2: wake-up packet on the second service")
-                pendingSecondServiceWrites.add(packet)
-                writeChannel.trySend(secondServiceWriteReady)
+                // The Insta360 app's handshake sends a sync packet of its own after the wake-up
+                Log.i(TAG, "Wake step 2: sync packet from the phone")
+                queuePacket(Go2BleProtocol.buildSyncResponsePacket())
                 if (answersWithin(WAKE_STEP_MS)) {
                     Log.i(TAG, "Wake: the camera answered after step 2")
                     return@launch
                 }
 
-                Log.i(TAG, "Wake step 3: subscribing to the second service")
-                subscribeSecondService()
+                Log.i(TAG, "Wake step 3: wake-up packet sent as a request")
+                queuePacket(Go2BleProtocol.buildWakeUpPacket(asRequest = true))
                 if (answersWithin(WAKE_STEP_MS)) {
                     Log.i(TAG, "Wake: the camera answered after step 3")
+                    return@launch
+                }
+
+                Log.i(TAG, "Wake step 4: wake-up packet on the second service, then subscribing to it")
+                pendingSecondServiceWrites.add(packet)
+                writeChannel.trySend(secondServiceWriteReady)
+                subscribeSecondService()
+                if (answersWithin(WAKE_STEP_MS)) {
+                    Log.i(TAG, "Wake: the camera answered after step 4")
                 } else {
-                    Log.w(TAG, "Wake: the camera did not answer")
+                    Log.w(TAG, "Wake: the camera did not switch on")
                 }
             } finally {
                 wakeInProgress = false
@@ -755,7 +764,13 @@ class GpsRemoteBleManager(private val context: Context) {
             return
         }
 
-        // Anything valid from the camera, a keep-alive answer included, shows it is switched on
+        // The camera's Bluetooth chip answers the wake-up packet even while the camera is off
+        if (decoded.isMessage && Go2BleProtocol.isWakeUpAcknowledgement(decoded.innerData)) {
+            Log.i(TAG, "The camera's Bluetooth acknowledged the wake-up packet: ${raw.toHex()}")
+            return
+        }
+
+        // Anything else valid from the camera, a keep-alive answer included, shows it is switched on
         lastHeardAtMs = SystemClock.elapsedRealtime()
         if (!_state.value.isCameraAwake) {
             Log.i(TAG, "Camera is answering")
