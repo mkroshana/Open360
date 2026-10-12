@@ -209,9 +209,37 @@ class Go2BleProtocolTest {
     }
 
     @Test
+    fun testStatusOptionsRequestAndReply() {
+        // The request asks for options 9, 11, 20 and 85 as a packed list
+        assertTrue(hex("0a04090b1455").contentEquals(Go2BleProtocol.buildStatusOptionsRequest()))
+
+        // The reply captured from a GO 3S in its Action Pod, idle in Video mode
+        val reply = Go2BleProtocol.parseStatusOptionsReply(
+            hex(
+                "0809080b08140855123648942c5a0608001064282fa20117080010808098b3f80118808094ebdc03" +
+                    "28808094ebdc03aa050e0801120408001059180120022802"
+            )
+        )
+        assertNotNull(reply)
+        assertEquals(100, reply!!.battery?.levelPercent)
+        assertEquals(false, reply.battery?.onExternalPower)
+        assertEquals(5652, reply.captureSecondsLeft)
+        assertEquals(Go2BleProtocol.CardState.OK, reply.cardState)
+        assertEquals(true, reply.pod?.connected)
+        assertEquals(89, reply.pod?.battery?.levelPercent)
+
+        // An OK with nothing in it, such as the one that answers a GPS upload
+        assertNull(Go2BleProtocol.parseStatusOptionsReply(ByteArray(0)))
+    }
+
+    @Test
     fun testCaptureStatusReply() {
-        // Built from the published definitions; not captured from a camera.
-        // PRO Video (17) that has been recording for 75 s
+        // The reply captured from an idle GO 3S; it carries more fields than the published ones
+        val captured = Go2BleProtocol.parseCaptureStatusReply(hex("0a17080010003000380040880e480a5000600068ff0170ff01"))
+        assertEquals(0, captured?.captureState)
+        assertEquals(0, captured?.captureSeconds)
+
+        // Built from the published definitions: PRO Video (17) that has been recording for 75 s
         val recording = Go2BleProtocol.parseCaptureStatusReply(hex("0a040811104b"))
         assertEquals(17, recording?.captureState)
         assertEquals(75, recording?.captureSeconds)

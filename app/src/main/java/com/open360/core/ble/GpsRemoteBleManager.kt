@@ -170,6 +170,8 @@ class GpsRemoteBleManager(private val context: Context) {
     @Volatile
     private var captureStatusQuerySeq = -1
     @Volatile
+    private var statusOptionsQuerySeq = -1
+    @Volatile
     private var startCommandAtMs: Long? = null
     private val gpsQueue = ConcurrentLinkedQueue<ByteArray>()
 
@@ -510,9 +512,9 @@ class GpsRemoteBleManager(private val context: Context) {
         override fun onDescriptorWrite(gatt: BluetoothGatt, descriptor: BluetoothGattDescriptor, status: Int) {
             Log.i(TAG, "Descriptor write finished on ${descriptor.uuid}, status=$status")
             if (status == BluetoothGatt.GATT_SUCCESS) {
-                // Subscription complete: channel is open for writes. The battery level is not
-                // asked for: the camera sends it in its own battery updates.
+                // Subscription complete: channel is open for writes
                 queryCaptureStatus()
+                queryStatusOptions()
             }
         }
 
@@ -642,6 +644,10 @@ class GpsRemoteBleManager(private val context: Context) {
                         captureStatusQuerySeq = -1
                         Go2BleProtocol.parseCaptureStatusReply(inner.payload)?.let { onCaptureStatusReply(it) }
                     }
+                    if (inner.sequence == statusOptionsQuerySeq) {
+                        statusOptionsQuerySeq = -1
+                        Go2BleProtocol.parseStatusOptionsReply(inner.payload)?.let { onStatusOptionsReply(it) }
+                    }
                     if (inner.sequence == stopCaptureSeq) {
                         stopCaptureSeq = -1
                         Go2BleProtocol.parseCapturedFilePath(inner.payload)?.let { path ->
@@ -662,6 +668,26 @@ class GpsRemoteBleManager(private val context: Context) {
 
     private fun updateDetails(change: (CameraDetails) -> CameraDetails) {
         _state.update { it.copy(details = change(it.details)) }
+    }
+
+    /**
+     * The camera's answer to the status request sent on connecting. It fills in what the camera
+     * would otherwise only send when something next changes.
+     */
+    private fun onStatusOptionsReply(reply: Go2BleProtocol.StatusOptions) {
+        Log.i(TAG, "Status on connecting: battery=${reply.battery}, time left=${reply.captureSecondsLeft} s, " +
+            "storage=${reply.cardState}, pod=${reply.pod}")
+        _state.update { state ->
+            state.copy(
+                batteryPercent = reply.battery?.levelPercent ?: state.batteryPercent,
+                isCharging = reply.battery?.onExternalPower ?: state.isCharging,
+                details = state.details.copy(
+                    captureSecondsLeft = reply.captureSecondsLeft ?: state.details.captureSecondsLeft,
+                    cardState = reply.cardState ?: state.details.cardState,
+                    pod = reply.pod ?: state.details.pod
+                )
+            )
+        }
     }
 
     /**
@@ -851,6 +877,21 @@ class GpsRemoteBleManager(private val context: Context) {
         val seq = nextSeq()
         captureStatusQuerySeq = seq
         val inner = Go2BleProtocol.encodeInnerMessage(Go2BleProtocol.CMD_GET_CURRENT_CAPTURE_STATUS, seq)
+        queuePacket(Go2BleProtocol.encodeMessagePacket(inner))
+    }
+
+    /**
+     * Asks the camera for its battery, recording time left, storage state and Action Pod. Sent
+     * on connecting, because the camera otherwise reports these only when they next change.
+     */
+    private fun queryStatusOptions() {
+        val seq = nextSeq()
+        statusOptionsQuerySeq = seq
+        val inner = Go2BleProtocol.encodeInnerMessage(
+            Go2BleProtocol.CMD_GET_OPTIONS,
+            seq,
+            Go2BleProtocol.buildStatusOptionsRequest()
+        )
         queuePacket(Go2BleProtocol.encodeMessagePacket(inner))
     }
 

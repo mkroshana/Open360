@@ -31,6 +31,7 @@ object Go2BleProtocol {
     const val CMD_TAKE_PICTURE = 0x03
     const val CMD_START_CAPTURE = 0x04
     const val CMD_STOP_CAPTURE = 0x05
+    const val CMD_GET_OPTIONS = 0x08
     const val CMD_GET_CURRENT_CAPTURE_STATUS = 0x0F
     // 0x19 is CALIBRATE_GYRO in the published definitions and must not be sent. Earlier
     // versions sent it on every connect as a "battery query": the reply was always 100, even
@@ -222,9 +223,10 @@ object Go2BleProtocol {
 
     /**
      * Reads the recording time left on the storage, in seconds, from notification 0x2021
-     * (field 1). The code is not in the published definitions. On a GO 3S the value falls while
-     * a clip records and differs between capture modes on the same storage (6552 in Video, 4796
-     * in PRO Video), which is how the time left at the mode's bitrate would behave.
+     * (field 1). The code is not in the published definitions, but its value tracks the
+     * REMAINING_CAPTURE_TIME option: on a GO 3S the notification read 5668 and the option read
+     * 5652 after two more short clips. It falls while a clip records and differs between
+     * capture modes on the same storage (6552 in Video, 4796 in PRO Video).
      */
     fun parseCaptureTimeLeft(payload: ByteArray): Int? =
         (readProtoFields(payload)[1] as? Long)?.takeIf { it in 0..Int.MAX_VALUE }?.toInt()
@@ -245,6 +247,53 @@ object Go2BleProtocol {
             4L -> CardState.WRITE_PROTECTED
             else -> CardState.ERROR
         }
+
+    // OptionType values in the published definitions. In a reply each option sits in the
+    // Options field with the same number.
+    private const val OPTION_REMAINING_CAPTURE_TIME = 9
+    private const val OPTION_BATTERY_STATUS = 11
+    private const val OPTION_STORAGE_STATE = 20
+    private const val OPTION_CHARGEBOX_CONNECTED_STATUS = 85
+
+    /**
+     * Builds the payload of a GetOptions request for the status the app shows: battery,
+     * recording time left, storage state and the Action Pod. Field 1 is the packed list of
+     * OptionType values.
+     */
+    fun buildStatusOptionsRequest(): ByteArray {
+        val types = byteArrayOf(
+            OPTION_REMAINING_CAPTURE_TIME.toByte(),
+            OPTION_BATTERY_STATUS.toByte(),
+            OPTION_STORAGE_STATE.toByte(),
+            OPTION_CHARGEBOX_CONNECTED_STATUS.toByte()
+        )
+        return byteArrayOf(0x0A, types.size.toByte()) + types
+    }
+
+    /** The camera's answer to [buildStatusOptionsRequest]. A value it left out is null. */
+    data class StatusOptions(
+        val battery: BatteryStatus?,
+        val captureSecondsLeft: Int?,
+        val cardState: CardState?,
+        val pod: ChargeBoxStatus?
+    )
+
+    /**
+     * Decodes the reply to a GetOptions request (GetOptionsResp): field 2 is an Options message
+     * holding the values asked for. Returns null when the reply has no Options in it.
+     */
+    fun parseStatusOptionsReply(payload: ByteArray): StatusOptions? {
+        val options = readProtoFields(payload)[2] as? ByteArray ?: return null
+        val fields = readProtoFields(options)
+        return StatusOptions(
+            battery = (fields[OPTION_BATTERY_STATUS] as? ByteArray)?.let { readBatteryStatus(it) },
+            captureSecondsLeft = (fields[OPTION_REMAINING_CAPTURE_TIME] as? Long)
+                ?.takeIf { it in 0..Int.MAX_VALUE }?.toInt(),
+            // StorageState starts with the same CardState as the storage update notification
+            cardState = (fields[OPTION_STORAGE_STATE] as? ByteArray)?.let { parseStorageUpdate(it) },
+            pod = (fields[OPTION_CHARGEBOX_CONNECTED_STATUS] as? ByteArray)?.let { parseChargeBoxStatus(it) }
+        )
+    }
 
     /** What the camera is doing: its CameraCaptureState and how long it has been recording. */
     data class CaptureStatusReply(val captureState: Int, val captureSeconds: Int)
