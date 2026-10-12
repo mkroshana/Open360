@@ -38,16 +38,14 @@ import androidx.compose.material.icons.filled.GpsNotFixed
 import androidx.compose.material.icons.filled.Height
 import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.LocationOn
-import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.Power
 import androidx.compose.material.icons.filled.PowerSettingsNew
+import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Speed
 import androidx.compose.material.icons.filled.Stop
 import androidx.compose.material.icons.filled.Sync
 import androidx.compose.material.icons.filled.Tv
 import androidx.compose.material.icons.filled.Videocam
-import androidx.compose.material3.DropdownMenu
-import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ElevatedCard
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilledTonalButton
@@ -65,9 +63,6 @@ import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.remember
-import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -89,14 +84,14 @@ import java.util.Locale
 @Composable
 fun CameraScreen(
     viewModel: CameraViewModel,
-    onWakeUpClick: () -> Unit = {}
+    onWakeUpClick: () -> Unit = {},
+    onOpenSettings: () -> Unit = {}
 ) {
     val uiState by viewModel.uiState.collectAsState()
     val ble = uiState.bleState
     val server = uiState.serverState
     val gps = uiState.gpsState
     val haptic = LocalHapticFeedback.current
-    var menuOpen by remember { mutableStateOf(false) }
 
     val deviceTitle = when {
         server.isCameraConnected -> {
@@ -151,27 +146,8 @@ fun CameraScreen(
                         }
                         Icon(icon, contentDescription = "Bluetooth Status")
                     }
-                    // Where the set-up and the ID behind it stay within reach once the card is gone
-                    Box {
-                        IconButton(onClick = { menuOpen = true }) {
-                            Icon(Icons.Default.MoreVert, contentDescription = "More")
-                        }
-                        DropdownMenu(expanded = menuOpen, onDismissRequest = { menuOpen = false }) {
-                            DropdownMenuItem(
-                                text = { Text("Set Up Wake Up") },
-                                onClick = {
-                                    menuOpen = false
-                                    viewModel.openWakeUpSetup()
-                                }
-                            )
-                            DropdownMenuItem(
-                                text = { Text("Wake-Up ID") },
-                                onClick = {
-                                    menuOpen = false
-                                    viewModel.openWakeUpId()
-                                }
-                            )
-                        }
+                    IconButton(onClick = onOpenSettings) {
+                        Icon(Icons.Default.Settings, contentDescription = "Settings")
                     }
                 },
                 colors = TopAppBarDefaults.topAppBarColors(
@@ -255,25 +231,6 @@ fun CameraScreen(
 
             Spacer(modifier = Modifier.height(16.dp))
         }
-    }
-
-    if (uiState.wakeUpIdOpen) {
-        WakeUpIdDialog(
-            id = uiState.wakeUpId,
-            registration = ble.wakeUpRegistration,
-            onSave = { viewModel.saveWakeUpId(it) },
-            onClose = { viewModel.closeWakeUpId() }
-        )
-    }
-
-    if (uiState.wakeUpSetupOpen) {
-        WakeUpSetupDialog(
-            connectionStatus = ble.connectionStatus,
-            cameraOn = ble.connectionStatus == BleConnectionStatus.CONNECTED && ble.isCameraAwake,
-            registration = ble.wakeUpRegistration,
-            onStart = { viewModel.startWakeUpSetup() },
-            onClose = { viewModel.closeWakeUpSetup() }
-        )
     }
 }
 

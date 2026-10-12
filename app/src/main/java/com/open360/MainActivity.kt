@@ -12,7 +12,7 @@ import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.viewModels
 import androidx.core.content.ContextCompat
-import com.open360.ui.camera.CameraScreen
+import com.open360.ui.Open360App
 import com.open360.ui.camera.CameraViewModel
 import com.open360.ui.theme.Open360Theme
 
@@ -47,7 +47,7 @@ class MainActivity : ComponentActivity() {
 
         setContent {
             Open360Theme {
-                CameraScreen(
+                Open360App(
                     viewModel = cameraViewModel,
                     onWakeUpClick = { onWakeUpRequested() }
                 )

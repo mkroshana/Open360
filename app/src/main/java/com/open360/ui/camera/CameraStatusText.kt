@@ -98,5 +98,16 @@ object CameraStatusText {
         WakeUpRegistration.NO_ANSWER -> true
     }
 
+    /**
+     * Where the set-up for Wake Up stands, in a word or two for a settings row. Null when there
+     * is an ID the camera has not been asked about yet, as when it is off: nothing is known then.
+     */
+    fun wakeUpSetupStatus(hasId: Boolean, registration: WakeUpRegistration): String? = when {
+        !hasId -> "Not Set Up"
+        registration == WakeUpRegistration.AUTHORIZED -> "Ready"
+        registration == WakeUpRegistration.NONE -> null
+        else -> wakeUpRegistration(registration)
+    }
+
     const val LOW_BATTERY_PERCENT = 20
 }

@@ -99,4 +99,22 @@ class CameraStatusTextTest {
             assertTrue(it.name, CameraStatusText.wakeUpRegistrationIsProblem(it))
         }
     }
+
+    @Test
+    fun testWakeUpSetupStatus() {
+        // Without an ID it is not set up, whatever the camera last said
+        assertEquals("Not Set Up", CameraStatusText.wakeUpSetupStatus(hasId = false, WakeUpRegistration.NONE))
+        assertEquals("Not Set Up", CameraStatusText.wakeUpSetupStatus(hasId = false, WakeUpRegistration.AUTHORIZED))
+
+        assertEquals("Ready", CameraStatusText.wakeUpSetupStatus(hasId = true, WakeUpRegistration.AUTHORIZED))
+        // An ID the camera has not been asked about: nothing is claimed
+        assertNull(CameraStatusText.wakeUpSetupStatus(hasId = true, WakeUpRegistration.NONE))
+
+        // Otherwise what the camera is doing about it, or how the last try ended
+        assertEquals(
+            "Allow Open360 on the Camera",
+            CameraStatusText.wakeUpSetupStatus(hasId = true, WakeUpRegistration.CONFIRM_ON_CAMERA)
+        )
+        assertEquals("Declined on the Camera", CameraStatusText.wakeUpSetupStatus(hasId = true, WakeUpRegistration.REJECTED))
+    }
 }
