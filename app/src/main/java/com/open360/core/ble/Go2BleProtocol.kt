@@ -117,6 +117,17 @@ object Go2BleProtocol {
         return buf.array()
     }
 
+    // CameraCaptureState values that are single shots, not an ongoing recording:
+    // SINGLE_SHOOTING, HDR_SHOOTING, SELF_TIMER_SHOOTING, SETTINGS_NEW_VALUE, BURST_SHOOTING,
+    // AEB_NIGHT_SHOOTING, SINGLE_POWER_PANO_SHOOTING, HDR_POWER_PANO_SHOOTING
+    private val PHOTO_CAPTURE_STATES = setOf(4, 5, 6, 8, 10, 14, 15, 16)
+
+    /**
+     * Whether a CameraCaptureState from the capture status notification means the camera is
+     * recording. 0 is NOT_CAPTURE and 1 is NORMAL_CAPTURE (video).
+     */
+    fun isRecordingCaptureState(state: Int): Boolean = state != 0 && state !in PHOTO_CAPTURE_STATES
+
     const val GPS_RECORD_SIZE = 53
 
     /**

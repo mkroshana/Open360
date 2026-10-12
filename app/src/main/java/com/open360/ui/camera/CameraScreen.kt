@@ -198,6 +198,8 @@ fun CameraScreen(
             CameraControlCard(
                 currentMode = uiState.currentMode,
                 isRecording = uiState.isRecording,
+                isStarting = uiState.bleState.isCaptureStarting,
+                isStopping = uiState.bleState.isCaptureStopping,
                 durationSeconds = uiState.recordingDurationSeconds,
                 isConnected = uiState.isConnected,
                 onModeSelected = { viewModel.setMode(it) },
@@ -667,6 +669,8 @@ fun TelemetryMetricItem(
 fun CameraControlCard(
     currentMode: CaptureMode,
     isRecording: Boolean,
+    isStarting: Boolean = false,
+    isStopping: Boolean = false,
     durationSeconds: Long,
     isConnected: Boolean,
     onModeSelected: (CaptureMode) -> Unit,
@@ -816,8 +820,12 @@ fun CameraControlCard(
 
             Spacer(modifier = Modifier.height(10.dp))
 
-            val actionLabel = if (isRecording) {
+            val actionLabel = if (isStopping) {
+                "Stopping..."
+            } else if (isRecording) {
                 "Stop Recording"
+            } else if (isStarting) {
+                "Starting..."
             } else if (currentMode == CaptureMode.PHOTO) {
                 "Take Photo"
             } else {

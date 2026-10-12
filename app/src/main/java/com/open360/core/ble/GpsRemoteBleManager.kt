@@ -50,6 +50,8 @@ enum class BleConnectionStatus {
 data class BleCameraState(
     val connectionStatus: BleConnectionStatus = BleConnectionStatus.DISCONNECTED,
     val isRecording: Boolean = false,
+    val isCaptureStarting: Boolean = false,
+    val isCaptureStopping: Boolean = false,
     val batteryPercent: Int? = null,
     val isCharging: Boolean = false,
     val deviceName: String? = null,
@@ -72,6 +74,7 @@ class GpsRemoteBleManager(private val context: Context) {
     companion object {
         private const val TAG = "GpsRemoteBleManager"
         private const val KEEP_ALIVE_INTERVAL_MS = 2000L
+        private const val CAPTURE_CHANGE_TIMEOUT_MS = 10_000L
 
         val SERVICE_BE80: UUID = UUID.fromString("0000be80-0000-1000-8000-00805f9b34fb")
         val WRITE_BE81: UUID = UUID.fromString("0000be81-0000-1000-8000-00805f9b34fb")
@@ -101,6 +104,7 @@ class GpsRemoteBleManager(private val context: Context) {
     private var attMtu = 23
     private var activeScanCallback: ScanCallback? = null
     private var keepAliveJob: Job? = null
+    private var captureChangeTimeoutJob: Job? = null
     private val gpsBatch = mutableListOf<ByteArray>()
 
     init {
@@ -360,7 +364,9 @@ class GpsRemoteBleManager(private val context: Context) {
                 _state.update {
                     it.copy(
                         connectionStatus = BleConnectionStatus.DISCONNECTED,
-                        isRecording = false
+                        isRecording = false,
+                        isCaptureStarting = false,
+                        isCaptureStopping = false
                     )
                 }
             }
@@ -533,12 +539,13 @@ class GpsRemoteBleManager(private val context: Context) {
     }
 
     private fun parseCaptureStatus(payload: ByteArray) {
-        // In notification 0x2010, capture state varint: 0=idle, 1=post-recording, 4=recording
+        // Notification 0x2010 is CaptureStatus; field 1 (tag 0x08) is the CameraCaptureState.
         if (payload.isEmpty()) return
         try {
-            val captureState = payload[1].toInt() and 0xFF
-            val isRecording = (captureState == 4)
-            _state.update { it.copy(isRecording = isRecording) }
+            val captureState = if (payload.size >= 2 && payload[0] == 0x08.toByte()) payload[1].toInt() and 0xFF else 0
+            val isRecording = Go2BleProtocol.isRecordingCaptureState(captureState)
+            captureChangeTimeoutJob?.cancel()
+            _state.update { it.copy(isRecording = isRecording, isCaptureStarting = false, isCaptureStopping = false) }
             Log.i(TAG, "Parsed capture status: isRecording=$isRecording (state=$captureState)")
         } catch (_: Exception) {}
     }
@@ -609,7 +616,15 @@ class GpsRemoteBleManager(private val context: Context) {
         if (writeCharacteristic?.uuid == WRITE_CE81) {
             queuePacket(Go2BleProtocol.REMOTE_CMD_SHUTTER)
         }
-        _state.update { it.copy(isRecording = true) }
+
+        // The camera takes a few seconds to start. isRecording is set when its capture status
+        // notification arrives, so the timer lines up with the clip.
+        _state.update { it.copy(isCaptureStarting = true) }
+        captureChangeTimeoutJob?.cancel()
+        captureChangeTimeoutJob = scope.launch {
+            delay(CAPTURE_CHANGE_TIMEOUT_MS)
+            _state.update { it.copy(isCaptureStarting = false) }
+        }
     }
 
     /**
@@ -623,7 +638,15 @@ class GpsRemoteBleManager(private val context: Context) {
         if (writeCharacteristic?.uuid == WRITE_CE81) {
             queuePacket(Go2BleProtocol.REMOTE_CMD_SHUTTER)
         }
-        _state.update { it.copy(isRecording = false) }
+
+        // As with start, the camera's capture status ends the recording state. If it never
+        // arrives, the timeout clears it.
+        _state.update { it.copy(isCaptureStopping = true) }
+        captureChangeTimeoutJob?.cancel()
+        captureChangeTimeoutJob = scope.launch {
+            delay(CAPTURE_CHANGE_TIMEOUT_MS)
+            _state.update { it.copy(isRecording = false, isCaptureStopping = false) }
+        }
     }
 
     /**
@@ -701,7 +724,9 @@ class GpsRemoteBleManager(private val context: Context) {
         _state.update {
             it.copy(
                 connectionStatus = BleConnectionStatus.DISCONNECTED,
-                isRecording = false
+                isRecording = false,
+                isCaptureStarting = false,
+                isCaptureStopping = false
             )
         }
     }

@@ -125,6 +125,16 @@ class Go2BleProtocolTest {
     }
 
     @Test
+    fun testRecordingCaptureStates() {
+        // Seen on a GO 3S: 1 when a video starts, 0 when it stops
+        assertTrue(Go2BleProtocol.isRecordingCaptureState(1))
+        assertEquals(false, Go2BleProtocol.isRecordingCaptureState(0))
+        // TIMELAPSE_CAPTURE is a recording, SINGLE_SHOOTING is a photo
+        assertTrue(Go2BleProtocol.isRecordingCaptureState(2))
+        assertEquals(false, Go2BleProtocol.isRecordingCaptureState(4))
+    }
+
+    @Test
     fun testKeepAlivePacketCarriesWifiKeepAliveBytes() {
         val decoded = Go2BleProtocol.decodePacket(Go2BleProtocol.buildKeepAlivePacket())
         assertNotNull(decoded)

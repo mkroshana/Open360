@@ -39,6 +39,13 @@ data class RemoteUiState(
 
 class CameraViewModel(application: Application) : AndroidViewModel(application) {
 
+    companion object {
+        // The camera reports "recording" about a second after the clip really starts: on three
+        // GO 3S clips the time between its start and stop reports was 0.85 to 1.06 s shorter
+        // than the clip. The timer starts from this value to make up for it.
+        private const val CAPTURE_STATUS_LAG_SECONDS = 1L
+    }
+
     val bleManager = GpsRemoteBleManager(application)
     val gattServer = InstaGpsRemoteGattServer(application)
     val gpsEngine = GpsTrackerEngine(application)
@@ -196,7 +203,10 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
             when (current.currentMode) {
                 CaptureMode.PHOTO -> bleManager.takePhoto()
                 CaptureMode.VIDEO -> {
-                    if (current.bleState.isRecording) {
+                    val ble = current.bleState
+                    if (ble.isCaptureStarting || ble.isCaptureStopping) {
+                        // Waiting for the camera to confirm the last tap
+                    } else if (ble.isRecording) {
                         bleManager.stopRecording()
                     } else {
                         bleManager.startRecording()
@@ -231,7 +241,7 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
 
     private fun startRecordingTimer() {
         recordingTimerJob?.cancel()
-        _uiState.update { it.copy(recordingDurationSeconds = 0L) }
+        _uiState.update { it.copy(recordingDurationSeconds = CAPTURE_STATUS_LAG_SECONDS) }
         recordingTimerJob = viewModelScope.launch {
             while (isActive) {
                 delay(1000)
