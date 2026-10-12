@@ -209,6 +209,22 @@ class Go2BleProtocolTest {
     }
 
     @Test
+    fun testShutdownAndTemperatureWarnings() {
+        // Built from the published definitions; not captured from a camera
+        assertEquals(Go2BleProtocol.ShutdownReason.BATTERY_EMPTY, Go2BleProtocol.parseShutdown(hex("0800")))
+        assertEquals(Go2BleProtocol.ShutdownReason.OVERHEATED, Go2BleProtocol.parseShutdown(hex("0801")))
+        // The battery reason is the default, so it may be left out
+        assertEquals(Go2BleProtocol.ShutdownReason.BATTERY_EMPTY, Go2BleProtocol.parseShutdown(ByteArray(0)))
+
+        // TempState: low, alert, middle, high, each with a temperature value in field 2
+        assertEquals(false, Go2BleProtocol.parseTemperatureIsHigh(hex("08001028")))
+        assertEquals(true, Go2BleProtocol.parseTemperatureIsHigh(hex("08011046")))
+        assertEquals(false, Go2BleProtocol.parseTemperatureIsHigh(hex("08021032")))
+        assertEquals(true, Go2BleProtocol.parseTemperatureIsHigh(hex("0803103c")))
+        assertEquals(false, Go2BleProtocol.parseTemperatureIsHigh(ByteArray(0)))
+    }
+
+    @Test
     fun testChargeBoxStatusReadsThePodBattery() {
         // Captured from a GO 3S in its Action Pod: pod at 69% on its own battery
         val onBattery = Go2BleProtocol.parseChargeBoxStatus(hex("0801120408001045180120022802"))

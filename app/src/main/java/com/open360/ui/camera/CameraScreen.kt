@@ -458,6 +458,14 @@ private fun CameraDetailRows(ble: BleCameraState) {
     val details = ble.details
     val rows = ArrayList<StatusLine>()
 
+    // Warnings the camera raises come first
+    if (details.temperatureHigh) {
+        rows.add(StatusLine("Temperature", "High", isProblem = true))
+    }
+    if (details.batteryLow) {
+        rows.add(StatusLine("Camera Battery", "Low", isProblem = true))
+    }
+
     CameraStatusText.recordingMode(details.recordingState)?.let { mode ->
         rows.add(StatusLine("Recording Mode", mode))
     }

@@ -60,7 +60,10 @@ data class CameraDetails(
     val cardState: Go2BleProtocol.CardState? = null,
     val pod: Go2BleProtocol.ChargeBoxStatus? = null,
     // CameraCaptureState of the recording in progress (1 Video, 17 PRO Video), null when idle
-    val recordingState: Int? = null
+    val recordingState: Int? = null,
+    // Warnings the camera raises itself
+    val batteryLow: Boolean = false,
+    val temperatureHigh: Boolean = false
 )
 
 data class BleCameraState(
@@ -98,6 +101,7 @@ class GpsRemoteBleManager(private val context: Context) {
     companion object {
         private const val TAG = "GpsRemoteBleManager"
         private const val KEEP_ALIVE_INTERVAL_MS = 2000L
+        private const val LOW_BATTERY_CLEARED_PERCENT = 20
         private const val CAPTURE_CHANGE_TIMEOUT_MS = 10_000L
 
         // 10 s of samples. Beyond this the link is not keeping up and the oldest are dropped.
@@ -555,8 +559,38 @@ class GpsRemoteBleManager(private val context: Context) {
                         _state.update {
                             it.copy(batteryPercent = battery.levelPercent, isCharging = battery.onExternalPower)
                         }
+                        // The low battery warning ends once the camera is charging or has charge again
+                        if (battery.onExternalPower || battery.levelPercent > LOW_BATTERY_CLEARED_PERCENT) {
+                            updateDetails { it.copy(batteryLow = false) }
+                        }
                         Log.i(TAG, "Battery update: ${battery.levelPercent}%, external power=${battery.onExternalPower}")
                     }
+                }
+
+                Go2BleProtocol.NOTIF_BATTERY_LOW -> {
+                    Log.w(TAG, "Camera reports its battery is low")
+                    updateDetails { it.copy(batteryLow = true) }
+                }
+
+                Go2BleProtocol.NOTIF_STORAGE_FULL -> {
+                    Log.w(TAG, "Camera reports its storage is full")
+                    updateDetails { it.copy(cardState = Go2BleProtocol.CardState.FULL) }
+                }
+
+                Go2BleProtocol.NOTIF_TEMPERATURE -> {
+                    val high = Go2BleProtocol.parseTemperatureIsHigh(inner.payload)
+                    if (high) Log.w(TAG, "Camera reports it is hot")
+                    updateDetails { it.copy(temperatureHigh = high) }
+                }
+
+                Go2BleProtocol.NOTIF_SHUTDOWN -> {
+                    // Kept as the error line, which stays on screen after the link drops
+                    val reason = when (Go2BleProtocol.parseShutdown(inner.payload)) {
+                        Go2BleProtocol.ShutdownReason.OVERHEATED -> "Camera shut down: too hot"
+                        Go2BleProtocol.ShutdownReason.BATTERY_EMPTY -> "Camera shut down: battery empty"
+                    }
+                    Log.w(TAG, reason)
+                    _state.update { it.copy(lastError = reason) }
                 }
 
                 Go2BleProtocol.NOTIF_CURRENT_CAPTURE_STATUS -> {

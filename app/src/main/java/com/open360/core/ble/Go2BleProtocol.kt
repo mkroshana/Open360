@@ -37,8 +37,12 @@ object Go2BleProtocol {
 
     // Camera notification codes
     const val NOTIF_BATTERY_UPDATE = 0x2003
+    const val NOTIF_BATTERY_LOW = 0x2004
+    const val NOTIF_SHUTDOWN = 0x2005
     const val NOTIF_STORAGE_UPDATE = 0x2006
+    const val NOTIF_STORAGE_FULL = 0x2007
     const val NOTIF_CURRENT_CAPTURE_STATUS = 0x2010
+    const val NOTIF_TEMPERATURE = 0x2016
     const val NOTIF_CHARGE_BOX_STATUS = 0x201E
     const val NOTIF_CAPTURE_TIME_LEFT = 0x2021
     const val NOTIF_PERIODIC_STATUS = 0x2026
@@ -237,6 +241,28 @@ object Go2BleProtocol {
             3L -> CardState.INVALID_FORMAT
             4L -> CardState.WRITE_PROTECTED
             else -> CardState.ERROR
+        }
+
+    /** Why the camera says it is shutting down, ErrorCode in NotificationShutdown. */
+    enum class ShutdownReason { BATTERY_EMPTY, OVERHEATED }
+
+    /**
+     * Decodes the shutdown notification (0x2005, NotificationShutdown). Field 1 is 0 for the
+     * battery running out and 1 for the temperature going over its limit. Taken from the
+     * published definitions; a GO 3S has not been seen sending it.
+     */
+    fun parseShutdown(payload: ByteArray): ShutdownReason =
+        if (readProtoFields(payload)[1] as? Long == 1L) ShutdownReason.OVERHEATED else ShutdownReason.BATTERY_EMPTY
+
+    /**
+     * Whether the temperature notification (0x2016, TempState) reports the camera as hot.
+     * Field 1 is the state: 0 low, 1 alert, 2 middle, 3 high. Alert and high both count.
+     * Taken from the published definitions; a GO 3S has not been seen sending it.
+     */
+    fun parseTemperatureIsHigh(payload: ByteArray): Boolean =
+        when (readProtoFields(payload)[1] as? Long ?: 0L) {
+            1L, 3L -> true
+            else -> false
         }
 
     /**
