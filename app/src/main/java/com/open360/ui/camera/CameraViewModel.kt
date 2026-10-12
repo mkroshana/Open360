@@ -59,6 +59,14 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
         // A sample is sent once the fix after its moment has arrived, normally within two
         // seconds. If no fix comes in this long the sample goes out as void instead.
         private const val MAX_WAIT_FOR_NEXT_FIX_MS = 4000L
+
+        // Measured on a ride against the camera's own motion sensors: turns and speed changes
+        // showed in the GPS, as placed on the video, 0.55 s after they showed in the camera
+        // (0.55 s on one clip, about 0.8 s on a second one started with the camera's button,
+        // which has its own allowance). Each video moment is therefore given the GPS from this
+        // much later. Whether the phone's GPS reports late or the video starts later than
+        // worked out is not known; the effect on the video is the same.
+        private const val GPS_BEHIND_PICTURE_MS = 550L
     }
 
     val bleManager = GpsRemoteBleManager(application)
@@ -335,8 +343,11 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
             // They go out in a batch each time a new fix makes the next ones known.
             runAtFixedRate(GPS_SAMPLE_INTERVAL_MS, MAX_CATCH_UP_MS, SystemClock::elapsedRealtime) { scheduledMs ->
                 gpsSchedule.setFirstFrame(bleManager.state.value.recordingFirstFrameAtMs)
-                for (moment in gpsSchedule.due(scheduledMs, gpsTimeline.newestFixMs())) {
-                    val sample = gpsTimeline.sampleAt(moment)
+                // A video moment uses the GPS from GPS_BEHIND_PICTURE_MS later, so it is ready
+                // once a fix that late has arrived
+                val coveredUpTo = gpsTimeline.newestFixMs()?.let { it - GPS_BEHIND_PICTURE_MS }
+                for (moment in gpsSchedule.due(scheduledMs, coveredUpTo)) {
+                    val sample = gpsTimeline.sampleAt(moment + GPS_BEHIND_PICTURE_MS)
                     bleManager.addGpsFix(
                         // With no fix at all the sample still carries the time of its moment
                         timestampMs = sample?.utcMs
