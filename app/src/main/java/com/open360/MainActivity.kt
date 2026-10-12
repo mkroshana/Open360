@@ -80,7 +80,7 @@ class MainActivity : ComponentActivity() {
         }
 
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-            permissions.add(Manifest.permission.NEARBY_WIFI_DEVICES)
+            permissions.add(Manifest.permission.POST_NOTIFICATIONS)
         }
 
         return permissions
@@ -107,10 +107,7 @@ class MainActivity : ComponentActivity() {
 
     private fun wakeUpAndConnect() {
         Toast.makeText(this, "Broadcasting wake-up beacon to GO 3S...", Toast.LENGTH_SHORT).show()
-        // Broadcast BLE wake-up packet to wake the camera up
-        bleManager.startWakeUpBroadcast(serialSuffix = "8JY3HF")
-        bleManager.scanAndWakeCamera()
-        cameraViewModel.connect()
+        cameraViewModel.wakeUpCamera(serialSuffix = "8JY3HF")
     }
 
     override fun onDestroy() {

@@ -1,50 +1,190 @@
 package com.open360.ui.camera
 
-import androidx.lifecycle.ViewModel
+import android.app.Application
+import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
-import com.open360.core.model.CameraState
+import com.open360.core.ble.BleCameraState
+import com.open360.core.ble.BleConnectionStatus
+import com.open360.core.ble.GpsRemoteBleManager
+import com.open360.core.gps.GpsTelemetry
+import com.open360.core.gps.GpsTrackerEngine
+import com.open360.core.gps.GpsTrackerService
 import com.open360.core.model.CaptureMode
-import com.open360.core.repository.CameraRepository
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.update
+import kotlinx.coroutines.isActive
+import kotlinx.coroutines.launch
 
-class CameraViewModel(
-    private val repository: CameraRepository = CameraRepository(kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.Dispatchers.Main))
-) : ViewModel() {
+data class RemoteUiState(
+    val bleState: BleCameraState = BleCameraState(),
+    val gpsState: GpsTelemetry = GpsTelemetry(),
+    val currentMode: CaptureMode = CaptureMode.VIDEO,
+    val isSpeedMph: Boolean = false,
+    val recordingDurationSeconds: Long = 0L,
+    val keepGpsActiveInBackground: Boolean = true
+)
 
-    val uiState: StateFlow<CameraState> = repository.cameraState
+class CameraViewModel(application: Application) : AndroidViewModel(application) {
+
+    val bleManager = GpsRemoteBleManager(application)
+    val gpsEngine = GpsTrackerEngine(application)
+
+    private val _uiState = MutableStateFlow(RemoteUiState())
+    val uiState: StateFlow<RemoteUiState> = _uiState.asStateFlow()
+
+    private var recordingTimerJob: Job? = null
+    private var gpsStreamJob: Job? = null
 
     init {
-        // Attempt initial connection on viewmodel start
-        connect()
+        // Collect BLE state updates
+        viewModelScope.launch {
+            bleManager.state.collect { ble ->
+                _uiState.update { it.copy(bleState = ble) }
+
+                // Automatically manage timer and GPS stream on recording state change
+                if (ble.isRecording && recordingTimerJob == null) {
+                    startRecordingTimer()
+                    startGpsTelemetryInjection()
+                } else if (!ble.isRecording && recordingTimerJob != null) {
+                    stopRecordingTimer()
+                    stopGpsTelemetryInjection()
+                }
+            }
+        }
+
+        // Collect GPS updates
+        viewModelScope.launch {
+            gpsEngine.telemetry.collect { gps ->
+                _uiState.update { it.copy(gpsState = gps) }
+            }
+        }
+
+        // Start GPS tracking immediately so speed and location are available on screen
+        gpsEngine.startTracking()
+    }
+
+    fun wakeUpCamera(serialSuffix: String = "8JY3HF") {
+        bleManager.startWakeUpBroadcast(serialSuffix)
+        // Also initiate scan after broadcasting wake beacon
+        viewModelScope.launch {
+            delay(1500)
+            bleManager.startScanAndConnect(serialSuffix)
+        }
+    }
+
+    fun connectBle() {
+        bleManager.startScanAndConnect()
     }
 
     fun connect() {
-        repository.connect()
+        connectBle()
+    }
+
+    fun disconnectBle() {
+        bleManager.disconnect()
+        stopRecordingTimer()
+        stopGpsTelemetryInjection()
     }
 
     fun disconnect() {
-        repository.disconnect()
+        disconnectBle()
     }
 
     fun setMode(mode: CaptureMode) {
-        repository.setCaptureMode(mode)
+        _uiState.update { it.copy(currentMode = mode) }
+    }
+
+    fun toggleSpeedUnit() {
+        _uiState.update { it.copy(isSpeedMph = !it.isSpeedMph) }
+    }
+
+    fun toggleKeepGpsInBackground() {
+        _uiState.update { it.copy(keepGpsActiveInBackground = !it.keepGpsActiveInBackground) }
     }
 
     fun onShutterClicked() {
-        val state = uiState.value
-        if (!state.isConnected) return
-
-        when (state.currentMode) {
-            CaptureMode.PHOTO -> repository.takePicture()
+        val current = _uiState.value
+        when (current.currentMode) {
+            CaptureMode.PHOTO -> {
+                bleManager.takePhoto()
+            }
             CaptureMode.VIDEO,
             CaptureMode.FREE_FRAME,
             CaptureMode.TIMELAPSE,
-            CaptureMode.SLOW_MOTION -> repository.toggleRecording()
+            CaptureMode.SLOW_MOTION -> {
+                if (current.bleState.isRecording) {
+                    bleManager.stopRecording()
+                } else {
+                    bleManager.startRecording()
+                }
+            }
         }
+    }
+
+    fun wakeScreen() {
+        bleManager.wakeScreen()
+    }
+
+    fun powerOff() {
+        bleManager.powerOff()
+    }
+
+    fun queryBattery() {
+        bleManager.queryBattery()
+    }
+
+    private fun startRecordingTimer() {
+        recordingTimerJob?.cancel()
+        _uiState.update { it.copy(recordingDurationSeconds = 0L) }
+        recordingTimerJob = viewModelScope.launch {
+            while (isActive) {
+                delay(1000)
+                _uiState.update { it.copy(recordingDurationSeconds = it.recordingDurationSeconds + 1) }
+            }
+        }
+
+        if (_uiState.value.keepGpsActiveInBackground) {
+            GpsTrackerService.start(getApplication())
+        }
+    }
+
+    private fun stopRecordingTimer() {
+        recordingTimerJob?.cancel()
+        recordingTimerJob = null
+        _uiState.update { it.copy(recordingDurationSeconds = 0L) }
+
+        if (_uiState.value.keepGpsActiveInBackground) {
+            GpsTrackerService.stop(getApplication())
+        }
+    }
+
+    private fun startGpsTelemetryInjection() {
+        gpsStreamJob?.cancel()
+        gpsStreamJob = viewModelScope.launch {
+            while (isActive) {
+                val gps = _uiState.value.gpsState
+                if (gps.hasFix) {
+                    bleManager.injectGps(gps.latitude, gps.longitude, gps.altitudeMeters)
+                }
+                delay(1000) // 1 Hz injection
+            }
+        }
+    }
+
+    private fun stopGpsTelemetryInjection() {
+        gpsStreamJob?.cancel()
+        gpsStreamJob = null
     }
 
     override fun onCleared() {
         super.onCleared()
-        repository.disconnect()
+        gpsEngine.stopTracking()
+        bleManager.disconnect()
+        recordingTimerJob?.cancel()
+        gpsStreamJob?.cancel()
     }
 }
