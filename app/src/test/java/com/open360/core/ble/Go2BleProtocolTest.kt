@@ -158,6 +158,17 @@ class Go2BleProtocolTest {
     }
 
     @Test
+    fun testVideoFilePathFromStopCaptureReply() {
+        // Captured from a GO 3S after a 41 s clip
+        val reply = "0a360a2d2f4443494d2f43616d65726130312f5649445f32303236313031325f3136333034395f30305f3036362e6d7034108080800a1829"
+            .chunked(2).map { it.toInt(16).toByte() }.toByteArray()
+        assertEquals("/DCIM/Camera01/VID_20261012_163049_00_066.mp4", Go2BleProtocol.parseCapturedFilePath(reply))
+
+        // The battery query reply has no file in it
+        assertNull(Go2BleProtocol.parseCapturedFilePath(byteArrayOf(0x08, 0x64, 0x10, 0x01)))
+    }
+
+    @Test
     fun testKeepAlivePacketCarriesWifiKeepAliveBytes() {
         val decoded = Go2BleProtocol.decodePacket(Go2BleProtocol.buildKeepAlivePacket())
         assertNotNull(decoded)

@@ -14,9 +14,19 @@ object GpxWriter {
 
     const val FOOTER = "</trkseg></trk></gpx>\n"
 
-    fun header(trackName: String): String {
+    /**
+     * [trackName] is the video file the track belongs to, or a stand-in when that is not known.
+     * [description] and [startUtcMs] go into the metadata block when given.
+     */
+    fun header(trackName: String, description: String? = null, startUtcMs: Long? = null): String {
+        val metadata = StringBuilder("<metadata><name>${escape(trackName)}</name>")
+        if (description != null) metadata.append("<desc>${escape(description)}</desc>")
+        if (startUtcMs != null) metadata.append("<time>${utcTime(startUtcMs)}</time>")
+        metadata.append("</metadata>\n")
+
         return "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n" +
             "<gpx version=\"1.1\" creator=\"Open360\" xmlns=\"http://www.topografix.com/GPX/1/1\">\n" +
+            metadata +
             "<trk><name>${escape(trackName)}</name><trkseg>\n"
     }
 

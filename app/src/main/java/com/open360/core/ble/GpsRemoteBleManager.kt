@@ -56,6 +56,9 @@ data class BleCameraState(
     val isCaptureStopping: Boolean = false,
     // SystemClock.elapsedRealtime() of the current recording's first video frame, null when idle
     val recordingFirstFrameAtMs: Long? = null,
+    // File name of the last video the camera reported saving, e.g. VID_20261012_163049_00_066.mp4.
+    // Only known for recordings stopped from the app. Cleared when the next recording starts.
+    val lastVideoFile: String? = null,
     val batteryPercent: Int? = null,
     val isCharging: Boolean = false,
     val deviceName: String? = null,
@@ -121,6 +124,8 @@ class GpsRemoteBleManager(private val context: Context) {
     private var activeScanCallback: ScanCallback? = null
     private var keepAliveJob: Job? = null
     private var captureChangeTimeoutJob: Job? = null
+    @Volatile
+    private var stopCaptureSeq = -1
     private val gpsQueue = ConcurrentLinkedQueue<ByteArray>()
 
     // Placed on the write queue to tell the worker that gpsQueue has records to send
@@ -529,6 +534,14 @@ class GpsRemoteBleManager(private val context: Context) {
                     if (inner.payload.size == 4) {
                         parseBatteryUpdate(inner.payload)
                     }
+                    if (inner.sequence == stopCaptureSeq) {
+                        stopCaptureSeq = -1
+                        Go2BleProtocol.parseCapturedFilePath(inner.payload)?.let { path ->
+                            val name = path.substringAfterLast('/')
+                            Log.i(TAG, "Camera saved $name")
+                            _state.update { it.copy(lastVideoFile = name) }
+                        }
+                    }
                 }
 
                 in 100..599 -> {
@@ -607,7 +620,7 @@ class GpsRemoteBleManager(private val context: Context) {
      */
     private fun markRecordingStart(firstFrameInMs: Long) {
         val firstFrameAt = SystemClock.elapsedRealtime() + firstFrameInMs
-        _state.update { it.copy(recordingFirstFrameAtMs = firstFrameAt) }
+        _state.update { it.copy(recordingFirstFrameAtMs = firstFrameAt, lastVideoFile = null) }
         Log.i(TAG, "Recording start, first frame in $firstFrameInMs ms")
     }
 
@@ -700,7 +713,10 @@ class GpsRemoteBleManager(private val context: Context) {
      * Stops video recording.
      */
     fun stopRecording() {
-        val inner = Go2BleProtocol.encodeInnerMessage(Go2BleProtocol.CMD_STOP_CAPTURE, nextSeq())
+        // The camera's reply to this command carries the name of the video file
+        val seq = nextSeq()
+        stopCaptureSeq = seq
+        val inner = Go2BleProtocol.encodeInnerMessage(Go2BleProtocol.CMD_STOP_CAPTURE, seq)
         val packet = Go2BleProtocol.encodeMessagePacket(inner)
         queuePacket(packet)
 

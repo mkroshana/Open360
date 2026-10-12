@@ -140,6 +140,17 @@ object Go2BleProtocol {
      */
     fun parseCaptureStep(payload: ByteArray): Int? = (readProtoFields(payload)[1] as? Long)?.toInt()
 
+    /**
+     * Reads the file path from the camera's reply to a stop capture command, for example
+     * "/DCIM/Camera01/VID_20261012_163049_00_066.mp4". The reply holds a video message in
+     * field 1 whose own field 1 is the path.
+     */
+    fun parseCapturedFilePath(payload: ByteArray): String? {
+        val video = readProtoFields(payload)[1] as? ByteArray ?: return null
+        val path = readProtoFields(video)[1] as? ByteArray ?: return null
+        return String(path, Charsets.UTF_8).takeIf { it.isNotBlank() }
+    }
+
     data class BatteryStatus(val levelPercent: Int, val onExternalPower: Boolean)
 
     /**

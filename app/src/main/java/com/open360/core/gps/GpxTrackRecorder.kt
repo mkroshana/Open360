@@ -2,6 +2,7 @@ package com.open360.core.gps
 
 import android.content.ContentValues
 import android.content.Context
+import android.net.Uri
 import android.os.Build
 import android.os.Environment
 import android.os.ParcelFileDescriptor
@@ -11,6 +12,7 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -24,26 +26,53 @@ import java.nio.channels.FileChannel
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
+import kotlin.math.abs
 
 data class GpxTrackState(
     val fileName: String? = null,
     val folder: String? = null,
     val pointCount: Int = 0,
+    val isRecording: Boolean = false,
     val lastError: String? = null
 )
 
 /**
- * Logs GPS fixes to a GPX file that Insta360 Studio can import, as a fallback for when the
- * camera does not store the GPS itself.
+ * Saves the GPS fixes of each recording to its own GPX file on the phone.
  *
- * The file is created on the first fix and the closing tags are rewritten after every point,
- * so it stays a valid GPX file even if the app is killed mid-track.
+ * A track covers one recording: it takes the fixes measured between the first video frame and
+ * the stop, and nothing outside them. While the recording runs the file has a name made from the
+ * start time and is kept valid after every point, so it survives the app being killed. When the
+ * recording ends the file is rewritten with the video's file name and its start and end times,
+ * and renamed to match the video.
  */
 class GpxTrackRecorder(private val context: Context) {
 
     companion object {
         private const val TAG = "GpxTrackRecorder"
         private const val FOLDER = "Open360"
+
+        // A fix reaches the app a little after it was taken, so one from just before the stop
+        // can still arrive after it. The camera's reply with the video file name also comes
+        // about a second after the stop.
+        private const val FINALIZE_AFTER_STOP_MS = 2500L
+
+        // A first-frame time this close to the current one is a correction, not a new recording
+        private const val SAME_RECORDING_MS = 500L
+    }
+
+    private class Session(var startElapsedMs: Long) {
+        var stopElapsedMs = Long.MAX_VALUE
+        var startWallMs = System.currentTimeMillis()
+        var videoFileName: String? = null
+        val fixes = ArrayList<GpsFix>()
+        var uri: Uri? = null
+        var file: File? = null
+        var descriptor: ParcelFileDescriptor? = null
+        var channel: FileChannel? = null
+        var footerPosition = 0L
+        var fileName: String? = null
+        var folder: String? = null
+        var finalized = false
     }
 
     @OptIn(ExperimentalCoroutinesApi::class)
@@ -52,52 +81,106 @@ class GpxTrackRecorder(private val context: Context) {
     private val _state = MutableStateFlow(GpxTrackState())
     val state: StateFlow<GpxTrackState> = _state.asStateFlow()
 
-    private var descriptor: ParcelFileDescriptor? = null
-    private var channel: FileChannel? = null
-    private var footerPosition = 0L
-    private var lastTimestampMs = 0L
-    private var failed = false
+    private var session: Session? = null
 
     /**
-     * Appends a fix. Fixes that are not newer than the last one written are skipped.
+     * A recording has started, with its first video frame at [firstFrameElapsedMs] on the
+     * monotonic clock. Called again with a slightly different time, it corrects the start.
      */
-    fun addPoint(latitude: Double, longitude: Double, altitudeMeters: Double, timestampMs: Long) {
+    fun start(firstFrameElapsedMs: Long) {
         scope.launch {
-            if (failed || timestampMs <= lastTimestampMs) return@launch
+            val current = session
+            if (current != null && !current.finalized && current.stopElapsedMs == Long.MAX_VALUE &&
+                abs(firstFrameElapsedMs - current.startElapsedMs) <= SAME_RECORDING_MS
+            ) {
+                if (current.fixes.isEmpty()) current.startElapsedMs = firstFrameElapsedMs
+                return@launch
+            }
+            if (current != null && !current.finalized) finalize(current)
+            session = Session(firstFrameElapsedMs)
+            _state.value = GpxTrackState(isRecording = true)
+        }
+    }
+
+    /**
+     * Offers a fix to the current track. It is kept only if it was taken while recording.
+     */
+    fun addFix(fix: GpsFix) {
+        scope.launch {
+            val s = session ?: return@launch
+            if (s.finalized || fix.elapsedMs < s.startElapsedMs || fix.elapsedMs > s.stopElapsedMs) return@launch
+            if (s.fixes.isNotEmpty() && fix.elapsedMs <= s.fixes.last().elapsedMs) return@launch
             try {
-                val out = channel ?: open(timestampMs)
-                out.position(footerPosition)
-                out.write(bytes(GpxWriter.trackPoint(latitude, longitude, altitudeMeters, timestampMs)))
-                footerPosition = out.position()
+                val out = s.channel ?: open(s)
+                out.position(s.footerPosition)
+                out.write(bytes(GpxWriter.trackPoint(fix.latitude, fix.longitude, fix.altitudeMeters, fix.utcMs)))
+                s.footerPosition = out.position()
                 out.write(bytes(GpxWriter.FOOTER))
-                lastTimestampMs = timestampMs
-                _state.update { it.copy(pointCount = it.pointCount + 1, lastError = null) }
+                s.fixes.add(fix)
+                _state.update { it.copy(pointCount = s.fixes.size, lastError = null) }
             } catch (e: Exception) {
                 Log.e(TAG, "Could not write GPX track", e)
-                failed = true
-                close()
                 _state.update { it.copy(lastError = "Could not write GPX track: ${e.message}") }
             }
         }
     }
 
     /**
-     * Closes the current file. The next fix starts a new one.
+     * The recording stopped at [stopElapsedMs]. The file is completed shortly afterwards.
      */
-    fun stop() {
+    fun stop(stopElapsedMs: Long) {
         scope.launch {
-            close()
-            failed = false
-            lastTimestampMs = 0L
+            val s = session ?: return@launch
+            if (s.finalized || s.stopElapsedMs != Long.MAX_VALUE) return@launch
+            s.stopElapsedMs = stopElapsedMs
+            _state.update { it.copy(isRecording = false) }
+            delay(FINALIZE_AFTER_STOP_MS)
+            if (!s.finalized) finalize(s)
         }
     }
 
-    private fun open(timestampMs: Long): FileChannel {
-        val stamp = SimpleDateFormat("yyyyMMdd_HHmmss", Locale.US).format(Date(timestampMs))
-        val name = "Open360_$stamp.gpx"
-        val folder: String
-        val out: FileChannel
+    /**
+     * Names the track of the recording that is stopping, or has just stopped, after its video.
+     */
+    fun setVideoFileName(videoFileName: String) {
+        scope.launch {
+            val s = session ?: return@launch
+            if (s.videoFileName == videoFileName) return@launch
+            s.videoFileName = videoFileName
+            if (s.finalized && s.fixes.isNotEmpty()) {
+                // The name arrived after the file was completed
+                try {
+                    rewrite(s)
+                } catch (e: Exception) {
+                    Log.e(TAG, "Could not rename GPX track", e)
+                } finally {
+                    closeFile(s)
+                }
+            }
+        }
+    }
 
+    private fun closeFile(s: Session) {
+        try {
+            s.channel?.close()
+            s.descriptor?.close()
+        } catch (_: Exception) {}
+        s.channel = null
+        s.descriptor = null
+    }
+
+    private fun open(s: Session): FileChannel {
+        val name = "Open360_${stamp(s.startWallMs)}.gpx"
+        create(s, name)
+        val out = s.channel!!
+        out.write(bytes(GpxWriter.header("Open360 ${stamp(s.startWallMs)}")))
+        s.footerPosition = out.position()
+        _state.update { it.copy(fileName = s.fileName, folder = s.folder) }
+        Log.i(TAG, "GPX track started: ${s.folder}/${s.fileName}")
+        return out
+    }
+
+    private fun create(s: Session, name: String) {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
             val values = ContentValues().apply {
                 put(MediaStore.Downloads.DISPLAY_NAME, name)
@@ -109,34 +192,98 @@ class GpxTrackRecorder(private val context: Context) {
                 ?: throw IllegalStateException("MediaStore refused the new file")
             val pfd = resolver.openFileDescriptor(uri, "rw")
                 ?: throw IllegalStateException("Could not open $name")
-            descriptor = pfd
-            out = FileOutputStream(pfd.fileDescriptor).channel
-            folder = "Download/$FOLDER"
+            s.uri = uri
+            s.descriptor = pfd
+            s.channel = FileOutputStream(pfd.fileDescriptor).channel
+            s.folder = "Download/$FOLDER"
         } else {
             // Before Android 10 the shared Download folder needs a storage permission.
             val dir = File(context.getExternalFilesDir(null), "tracks").apply { mkdirs() }
-            out = RandomAccessFile(File(dir, name), "rw").channel
-            folder = dir.absolutePath
+            val file = File(dir, name)
+            s.file = file
+            s.channel = RandomAccessFile(file, "rw").channel
+            s.folder = dir.absolutePath
         }
+        s.fileName = name
+    }
 
-        channel = out
-        out.write(bytes(GpxWriter.header("Open360 $stamp")))
-        footerPosition = out.position()
-        _state.value = GpxTrackState(fileName = name, folder = folder)
-        Log.i(TAG, "GPX track started: $folder/$name")
+    /** Completes the file: final name, video name and times inside, then closes it. */
+    private fun finalize(s: Session) {
+        s.finalized = true
+        if (s.fixes.isEmpty()) {
+            Log.i(TAG, "Recording ended with no GPS fixes, no track saved")
+            _state.value = GpxTrackState(lastError = "No GPS fixes during the last recording, no track saved")
+            return
+        }
+        try {
+            rewrite(s)
+        } catch (e: Exception) {
+            Log.e(TAG, "Could not complete GPX track", e)
+            _state.update { it.copy(lastError = "Could not complete GPX track: ${e.message}") }
+        } finally {
+            closeFile(s)
+        }
+    }
+
+    /** Writes the whole file again with what is now known, and renames it after the video. */
+    private fun rewrite(s: Session) {
+        val video = s.videoFileName
+        val first = s.fixes.first()
+        val last = s.fixes.last()
+        val local = SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.US)
+        val description = "GPS for ${video ?: "a recording"}, ${local.format(Date(first.utcMs))} to ${local.format(Date(last.utcMs))} local time"
+
+        val content = StringBuilder(GpxWriter.header(video ?: "Open360 ${stamp(s.startWallMs)}", description, first.utcMs))
+        for (fix in s.fixes) {
+            content.append(GpxWriter.trackPoint(fix.latitude, fix.longitude, fix.altitudeMeters, fix.utcMs))
+        }
+        content.append(GpxWriter.FOOTER)
+
+        val out = s.channel ?: reopen(s)
+        out.truncate(0)
+        out.position(0)
+        out.write(bytes(content.toString()))
+        out.force(true)
+
+        val finalName = if (video != null) video.substringBeforeLast('.') + ".gpx" else s.fileName ?: return
+        if (finalName != s.fileName) {
+            rename(s, finalName)
+        }
+        _state.update { it.copy(fileName = s.fileName, folder = s.folder, pointCount = s.fixes.size, isRecording = false) }
+        Log.i(TAG, "GPX track saved: ${s.folder}/${s.fileName} (${s.fixes.size} points)")
+    }
+
+    private fun reopen(s: Session): FileChannel {
+        val uri = s.uri
+        val out = if (uri != null) {
+            val pfd = context.contentResolver.openFileDescriptor(uri, "rw")
+                ?: throw IllegalStateException("Could not reopen ${s.fileName}")
+            s.descriptor = pfd
+            FileOutputStream(pfd.fileDescriptor).channel
+        } else {
+            RandomAccessFile(s.file ?: throw IllegalStateException("No track file"), "rw").channel
+        }
+        s.channel = out
         return out
     }
 
-    private fun close() {
-        try {
-            channel?.close()
-            descriptor?.close()
-        } catch (e: Exception) {
-            Log.w(TAG, "Error closing GPX track: ${e.message}")
+    private fun rename(s: Session, newName: String) {
+        val uri = s.uri
+        if (uri != null) {
+            val values = ContentValues().apply { put(MediaStore.Downloads.DISPLAY_NAME, newName) }
+            context.contentResolver.update(uri, values, null, null)
+            s.fileName = newName
+        } else {
+            val file = s.file ?: return
+            val target = File(file.parentFile, newName)
+            if (file.renameTo(target)) {
+                s.file = target
+                s.fileName = newName
+            }
         }
-        channel = null
-        descriptor = null
     }
+
+    private fun stamp(wallMs: Long): String = SimpleDateFormat("yyyyMMdd_HHmmss", Locale.US).format(Date(wallMs))
 
     private fun bytes(text: String): ByteBuffer = ByteBuffer.wrap(text.toByteArray(Charsets.UTF_8))
 }

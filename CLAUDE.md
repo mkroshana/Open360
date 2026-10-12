@@ -26,7 +26,7 @@ Insta360 cameras have two completely separate BLE architectures. Open360 uses Ar
 - **Session.** The camera sends a sync packet right after notifications are enabled on `0xBE82`; if it sends nothing it is asleep. A keep-alive (`07 00 00 00 05 00 00` in the BLE envelope) every 2 s keeps the link up; without it the camera dropped the link at about 90 s.
 - **Capture status.** Notification `0x2010` carries `CameraCaptureState` in field 1: `1` when a video starts, `0` when it stops. It arrives about 1 s after the clip really starts.
 - **Architecture A.** The phone-side server was verified end to end with a PC as the central, but the GO 3S never connected to it. Android advertises from a private address that changes; the real remote and working clones use a fixed one. That is the suspected cause, not a proven one.
-- **Fallback.** The app also writes a GPX track to `Download/Open360` on the phone for import into Insta360 Studio.
+- **Local GPX.** Each recording gets its own GPX file in `Download/Open360` on the phone, holding the real fixes taken between its first frame and its stop. The camera's reply to the stop command carries the video path (field 1, then field 1), so a recording stopped from the app is saved as the video's name with `.gpx`, for example `VID_20261012_163049_00_066.gpx`, with the video name and the start and end times inside. A recording stopped on the camera has no reply to read, so its file keeps the name `Open360_<date>_<time>.gpx`.
 
 ## 3. Architecture A GATT Layout & Wire Protocol
 

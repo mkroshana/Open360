@@ -70,6 +70,7 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
 
     private var recordingTimerJob: Job? = null
     private var gpsStreamJob: Job? = null
+    private var trackedFirstFrameAtMs: Long? = null
 
     init {
         // The GO 3S has not connected to a phone advertising as the GPS Remote, so the GATT server
@@ -131,6 +132,18 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
                 } else if (!linked && gpsStreamJob != null) {
                     stopGpsTelemetryInjection()
                 }
+
+                // One GPX track per recording, from its first frame to its stop
+                val firstFrame = ble.recordingFirstFrameAtMs
+                if (firstFrame != trackedFirstFrameAtMs) {
+                    trackedFirstFrameAtMs = firstFrame
+                    if (firstFrame != null) {
+                        trackRecorder.start(firstFrame)
+                    } else {
+                        trackRecorder.stop(SystemClock.elapsedRealtime())
+                    }
+                }
+                ble.lastVideoFile?.let { trackRecorder.setVideoFileName(it) }
             }
         }
 
@@ -139,10 +152,8 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
             gpsEngine.telemetry.collect { gps ->
                 _uiState.update { it.copy(gpsState = gps) }
                 gattServer.updateGpsTelemetry(gps)
-                // hasFix can turn true from satellite counts before the first position arrives
-                if (gps.hasFix && gps.timestampEpochMs > 0) {
-                    trackRecorder.addPoint(gps.latitude, gps.longitude, gps.altitudeMeters, gps.timestampEpochMs)
-                }
+                // The track keeps only the fixes taken while a recording is running
+                gps.toFix()?.let { trackRecorder.addFix(it) }
             }
         }
 
@@ -342,7 +353,7 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
     override fun onCleared() {
         super.onCleared()
         gpsEngine.stopTracking()
-        trackRecorder.stop()
+        trackRecorder.stop(SystemClock.elapsedRealtime())
         gattServer.stopServer()
         bleManager.disconnect()
         recordingTimerJob?.cancel()
