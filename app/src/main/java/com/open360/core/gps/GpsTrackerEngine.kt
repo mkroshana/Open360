@@ -160,16 +160,8 @@ class GpsTrackerEngine(private val context: Context) {
                 )
             }
 
-            // Also request network provider for immediate coarse fix while satellites lock
-            if (lm.isProviderEnabled(LocationManager.NETWORK_PROVIDER)) {
-                lm.requestLocationUpdates(
-                    LocationManager.NETWORK_PROVIDER,
-                    UPDATE_INTERVAL_MS,
-                    MIN_DISTANCE_METERS,
-                    locationListener,
-                    thread.looper
-                )
-            }
+            // The network provider is left out on purpose: its Wi-Fi and cell positions can be
+            // tens of metres off and would be written into the video as if they were GPS.
 
             // Track satellite counts and GNSS fix
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
