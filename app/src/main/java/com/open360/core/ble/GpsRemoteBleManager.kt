@@ -202,6 +202,18 @@ class GpsRemoteBleManager(private val context: Context) {
     @Volatile
     private var statusOptionsQuerySeq = -1
     @Volatile
+    private var wakeUpOptionsQuerySeq = -1
+
+    // Whether the status requests have gone out on this connection
+    @Volatile
+    private var statusRequested = false
+
+    // Set by Wake Up: the next connection sends the wake-up packet before anything else
+    @Volatile
+    private var wakeOnNextConnect = false
+    @Volatile
+    private var wakeInProgress = false
+    @Volatile
     private var startCommandAtMs: Long? = null
     private val gpsQueue = ConcurrentLinkedQueue<ByteArray>()
     private val pendingSubscriptions = ConcurrentLinkedQueue<BluetoothGattCharacteristic>()
@@ -435,6 +447,8 @@ class GpsRemoteBleManager(private val context: Context) {
         keepAliveJob = scope.launch {
             while (isActive) {
                 delay(KEEP_ALIVE_INTERVAL_MS)
+                // Nothing else is sent while a wake-up attempt is under way
+                if (wakeInProgress) continue
                 queuePacket(Go2BleProtocol.buildKeepAlivePacket())
                 if (_state.value.isCameraAwake && SystemClock.elapsedRealtime() - lastHeardAtMs > CAMERA_SILENT_MS) {
                     Log.w(TAG, "Camera has stopped answering")
@@ -521,6 +535,7 @@ class GpsRemoteBleManager(private val context: Context) {
             }
 
             Log.i(TAG, "Discovered ${gatt.services.size} services")
+            statusRequested = false
             for (service in gatt.services) {
                 Log.d(TAG, "Service ${service.uuid}")
                 for (characteristic in service.characteristics) {
@@ -572,8 +587,12 @@ class GpsRemoteBleManager(private val context: Context) {
             Log.i(TAG, "Subscription to $channel finished, status=$status")
             if (status == BluetoothGatt.GATT_SUCCESS && (channel == NOTIFY_BE82 || channel == NOTIFY_CE82)) {
                 // Subscription complete: channel is open for writes
-                queryCaptureStatus()
-                queryStatusOptions()
+                if (wakeOnNextConnect) {
+                    wakeOnNextConnect = false
+                    wakeCamera()
+                } else {
+                    requestStatusOnce()
+                }
             }
             pendingSubscribeAck?.complete(status == BluetoothGatt.GATT_SUCCESS)
         }
@@ -607,39 +626,68 @@ class GpsRemoteBleManager(private val context: Context) {
      * soon as the camera answers: the wake-up packet on the command channel, the same packet on
      * the second service's write channel, and subscribing to the second service.
      */
-    fun wakeCamera() {
+    private fun wakeCamera() {
         if (writeCharacteristic == null) return
         wakeJob?.cancel()
         wakeJob = scope.launch {
-            if (_state.value.isCameraAwake) {
-                Log.i(TAG, "Wake: the camera is already answering")
-                return@launch
-            }
-            val packet = Go2BleProtocol.buildWakeUpPacket()
+            wakeInProgress = true
+            try {
+                // A camera that is on says so within a second of the link opening
+                if (answersWithin(1000)) {
+                    Log.i(TAG, "Wake: the camera is already answering")
+                    return@launch
+                }
+                val packet = Go2BleProtocol.buildWakeUpPacket()
 
-            Log.i(TAG, "Wake step 1: wake-up packet on the command channel")
-            queuePacket(packet)
-            if (answersWithin(WAKE_STEP_MS)) {
-                Log.i(TAG, "Wake: the camera answered after step 1")
-                return@launch
-            }
+                Log.i(TAG, "Wake step 1: wake-up packet, the first thing sent on this link")
+                queuePacket(packet)
+                if (answersWithin(WAKE_STEP_MS)) {
+                    Log.i(TAG, "Wake: the camera answered after step 1")
+                    return@launch
+                }
 
-            Log.i(TAG, "Wake step 2: wake-up packet on the second service")
-            pendingSecondServiceWrites.add(packet)
-            writeChannel.trySend(secondServiceWriteReady)
-            if (answersWithin(WAKE_STEP_MS)) {
-                Log.i(TAG, "Wake: the camera answered after step 2")
-                return@launch
-            }
+                Log.i(TAG, "Wake step 2: wake-up packet on the second service")
+                pendingSecondServiceWrites.add(packet)
+                writeChannel.trySend(secondServiceWriteReady)
+                if (answersWithin(WAKE_STEP_MS)) {
+                    Log.i(TAG, "Wake: the camera answered after step 2")
+                    return@launch
+                }
 
-            Log.i(TAG, "Wake step 3: subscribing to the second service")
-            subscribeSecondService()
-            if (answersWithin(WAKE_STEP_MS)) {
-                Log.i(TAG, "Wake: the camera answered after step 3")
-            } else {
-                Log.w(TAG, "Wake: the camera did not answer")
+                Log.i(TAG, "Wake step 3: subscribing to the second service")
+                subscribeSecondService()
+                if (answersWithin(WAKE_STEP_MS)) {
+                    Log.i(TAG, "Wake: the camera answered after step 3")
+                } else {
+                    Log.w(TAG, "Wake: the camera did not answer")
+                }
+            } finally {
+                wakeInProgress = false
+                // Carry on as after any connection; a camera that is off answers once it is on
+                requestStatusOnce()
             }
         }
+    }
+
+    /**
+     * Wakes a camera that is off by opening a fresh link to it and sending the wake-up packet
+     * before anything else, which is the order the Insta360 app's routine works in.
+     */
+    fun wakeByConnecting() {
+        wakeOnNextConnect = true
+        if (_state.value.connectionStatus != BleConnectionStatus.DISCONNECTED) {
+            disconnect()
+        }
+        startScanAndConnect()
+    }
+
+    /** Sends the status requests once per connection. */
+    private fun requestStatusOnce() {
+        if (statusRequested) return
+        statusRequested = true
+        queryCaptureStatus()
+        queryStatusOptions()
+        queryWakeUpOptions()
     }
 
     private suspend fun answersWithin(timeoutMs: Long): Boolean =
@@ -712,6 +760,7 @@ class GpsRemoteBleManager(private val context: Context) {
         if (!_state.value.isCameraAwake) {
             Log.i(TAG, "Camera is answering")
             _state.update { it.copy(isCameraAwake = true) }
+            requestStatusOnce()
         }
 
         if (decoded.isSync) {
@@ -817,6 +866,13 @@ class GpsRemoteBleManager(private val context: Context) {
                     if (inner.sequence == statusOptionsQuerySeq) {
                         statusOptionsQuerySeq = -1
                         Go2BleProtocol.parseStatusOptionsReply(inner.payload)?.let { onStatusOptionsReply(it) }
+                    }
+                    if (inner.sequence == wakeUpOptionsQuerySeq) {
+                        wakeUpOptionsQuerySeq = -1
+                        Go2BleProtocol.parseWakeUpOptionsReply(inner.payload)?.let { options ->
+                            Log.i(TAG, "Wake-up settings: authorization id=${options.authorizationId}, " +
+                                "switch=${options.wakeUpSwitch}, raw=$hexPayload")
+                        }
                     }
                     if (inner.sequence == stopCaptureSeq) {
                         stopCaptureSeq = -1
@@ -1049,6 +1105,18 @@ class GpsRemoteBleManager(private val context: Context) {
         val seq = nextSeq()
         captureStatusQuerySeq = seq
         val inner = Go2BleProtocol.encodeInnerMessage(Go2BleProtocol.CMD_GET_CURRENT_CAPTURE_STATUS, seq)
+        queuePacket(Go2BleProtocol.encodeMessagePacket(inner))
+    }
+
+    /** Asks the camera for its Bluetooth wake-up settings, which are logged. */
+    private fun queryWakeUpOptions() {
+        val seq = nextSeq()
+        wakeUpOptionsQuerySeq = seq
+        val inner = Go2BleProtocol.encodeInnerMessage(
+            Go2BleProtocol.CMD_GET_OPTIONS,
+            seq,
+            Go2BleProtocol.buildWakeUpOptionsRequest()
+        )
         queuePacket(Go2BleProtocol.encodeMessagePacket(inner))
     }
 

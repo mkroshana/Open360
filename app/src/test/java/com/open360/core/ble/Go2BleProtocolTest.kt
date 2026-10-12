@@ -214,6 +214,19 @@ class Go2BleProtocolTest {
     }
 
     @Test
+    fun testWakeUpOptionsRequestAndReply() {
+        // Options 38 (authorization id) and 97 (wake-up switch) as a packed list
+        assertTrue(hex("0a022661").contentEquals(Go2BleProtocol.buildWakeUpOptionsRequest()))
+
+        // Built from the published definitions; not captured from a camera.
+        // Options { authorization_id (38) = "abc", bt_wakeup_sw (97) = 1 }
+        val reply = Go2BleProtocol.parseWakeUpOptionsReply(hex("0826086112" + "09" + "b20203616263" + "880601"))
+        assertEquals("abc", reply?.authorizationId)
+        assertEquals(1, reply?.wakeUpSwitch)
+        assertNull(Go2BleProtocol.parseWakeUpOptionsReply(ByteArray(0)))
+    }
+
+    @Test
     fun testStatusOptionsRequestAndReply() {
         // The request asks for options 9, 11, 20 and 85 as a packed list
         assertTrue(hex("0a04090b1455").contentEquals(Go2BleProtocol.buildStatusOptionsRequest()))

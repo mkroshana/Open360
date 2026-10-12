@@ -92,9 +92,6 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
     private var trackedFirstFrameAtMs: Long? = null
     private var backgroundServiceRunning = false
 
-    // Set by Wake Up while the camera was not connected: wake it as soon as the link is up
-    private var wakeOnceConnected = false
-
     init {
         // The GO 3S has not connected to a phone advertising as the GPS Remote, so the GATT server
         // is not started here. The app connects out to the camera and uploads GPS over that link.
@@ -150,14 +147,6 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
                 // GPS is sampled for as long as the camera is connected. The BLE manager passes the
                 // samples on only while a recording is running, whoever started it.
                 val linked = ble.connectionStatus == BleConnectionStatus.CONNECTED
-                if (linked && wakeOnceConnected) {
-                    wakeOnceConnected = false
-                    viewModelScope.launch {
-                        // A camera that is on answers within a second of connecting
-                        delay(1500)
-                        bleManager.wakeCamera()
-                    }
-                }
                 if (linked && gpsStreamJob == null) {
                     startGpsTelemetryInjection()
                 } else if (!linked && gpsStreamJob != null) {
@@ -214,21 +203,15 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
     }
 
     fun wakeUpCamera(serialSuffix: String? = null) {
+        val ble = bleManager.state.value
+        // Nothing to wake when the camera is already on
+        if (ble.connectionStatus == BleConnectionStatus.CONNECTED && ble.isCameraAwake) return
+
+        // A GO camera that is off still accepts a connection and is woken over a fresh one.
+        // The beacon is for cameras that sleep without advertising.
         val suffix = serialSuffix ?: "8JY3HF"
-        // A GO camera that is off still accepts a connection and is woken over it. The beacon
-        // is for cameras that sleep without advertising.
-        if (bleManager.state.value.connectionStatus == BleConnectionStatus.CONNECTED) {
-            bleManager.wakeCamera()
-            return
-        }
         bleManager.startWakeUpBroadcast(suffix)
-        wakeOnceConnected = true
-        if (bleManager.state.value.connectionStatus == BleConnectionStatus.DISCONNECTED) {
-            viewModelScope.launch {
-                delay(1500)
-                bleManager.startScanAndConnect(suffix)
-            }
-        }
+        bleManager.wakeByConnecting()
     }
 
     fun startGpsRemoteServer() {

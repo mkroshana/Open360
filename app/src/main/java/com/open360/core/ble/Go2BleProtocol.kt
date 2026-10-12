@@ -295,6 +295,29 @@ object Go2BleProtocol {
         )
     }
 
+    private const val OPTION_AUTHORIZATION_ID = 38
+    private const val OPTION_BT_WAKEUP_SW = 97
+
+    /**
+     * Builds the payload of a GetOptions request for the camera's Bluetooth wake-up settings:
+     * the authorization id it holds and its wake-up switch.
+     */
+    fun buildWakeUpOptionsRequest(): ByteArray =
+        byteArrayOf(0x0A, 0x02, OPTION_AUTHORIZATION_ID.toByte(), OPTION_BT_WAKEUP_SW.toByte())
+
+    /** The camera's Bluetooth wake-up settings. A value it left out is null. */
+    data class WakeUpOptions(val authorizationId: String?, val wakeUpSwitch: Int?)
+
+    /** Decodes the reply to [buildWakeUpOptionsRequest]. */
+    fun parseWakeUpOptionsReply(payload: ByteArray): WakeUpOptions? {
+        val options = readProtoFields(payload)[2] as? ByteArray ?: return null
+        val fields = readProtoFields(options)
+        return WakeUpOptions(
+            authorizationId = (fields[OPTION_AUTHORIZATION_ID] as? ByteArray)?.let { String(it, Charsets.UTF_8) },
+            wakeUpSwitch = (fields[OPTION_BT_WAKEUP_SW] as? Long)?.toInt()
+        )
+    }
+
     /** What the camera is doing: its CameraCaptureState and how long it has been recording. */
     data class CaptureStatusReply(val captureState: Int, val captureSeconds: Int)
 
