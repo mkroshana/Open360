@@ -441,6 +441,26 @@ object Go2BleProtocol {
         return encodeMessagePacket(byteArrayOf(0x07, 0x00, 0x00, 0x00, 0x05, 0x00, 0x00))
     }
 
+    /**
+     * Builds the packet meant to switch on a GO camera that is powered off but still connected
+     * over Bluetooth: FF 06 40, an 8-byte inner message of type 0xB0 with the value 1, and the
+     * checksum. It is one of only two fixed packets in the Insta360 app (the other is the
+     * keep-alive), next to a routine that logs "send notify to wake up go2". That it is the
+     * wake-up packet is inferred from that, not seen in the app's code, which is hidden.
+     */
+    fun buildWakeUpPacket(): ByteArray {
+        val inner = byteArrayOf(0x08, 0x00, 0x00, 0x00, 0xB0.toByte(), 0x00, 0x00, 0x01)
+        val buf = ByteBuffer.allocate(ENVELOPE_HEADER_SIZE + inner.size + CRC_SIZE).order(ByteOrder.LITTLE_ENDIAN)
+        buf.put(MARKER)
+        buf.put(TYPE_RESPONSE)
+        buf.put(SUBTYPE_MESSAGE)
+        buf.putShort(inner.size.toShort())
+        buf.put(inner)
+        val crc = BleCrc16.compute(buf.array(), 0, ENVELOPE_HEADER_SIZE + inner.size)
+        buf.putShort(crc.toShort())
+        return buf.array()
+    }
+
     const val REMOTE_BTN_POWER = 0x00
     const val REMOTE_BTN_MODE = 0x01
     const val REMOTE_BTN_SHUTTER = 0x02

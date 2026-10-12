@@ -209,6 +209,11 @@ class Go2BleProtocolTest {
     }
 
     @Test
+    fun testWakeUpPacketMatchesTheOneInTheInsta360App() {
+        assertTrue(hex("ff0640080008000000b00000016d90").contentEquals(Go2BleProtocol.buildWakeUpPacket()))
+    }
+
+    @Test
     fun testStatusOptionsRequestAndReply() {
         // The request asks for options 9, 11, 20 and 85 as a packed list
         assertTrue(hex("0a04090b1455").contentEquals(Go2BleProtocol.buildStatusOptionsRequest()))

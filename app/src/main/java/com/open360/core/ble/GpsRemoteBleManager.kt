@@ -36,6 +36,7 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
@@ -154,6 +155,17 @@ class GpsRemoteBleManager(private val context: Context) {
         val WRITE_CE81: UUID = UUID.fromString("0000ce81-0000-1000-8000-00805f9b34fb")
         val NOTIFY_CE82: UUID = UUID.fromString("0000ce82-0000-1000-8000-00805f9b34fb")
 
+        // How long each wake-up attempt is given before the next is tried
+        private const val WAKE_STEP_MS = 4000L
+
+        val SERVICE_B000: UUID = UUID.fromString("0000b000-0000-1000-8000-00805f9b34fb")
+        val WRITE_B001: UUID = UUID.fromString("0000b001-0000-1000-8000-00805f9b34fb")
+        val B000_NOTIFY_CHANNELS: List<UUID> = listOf(
+            UUID.fromString("0000b002-0000-1000-8000-00805f9b34fb"),
+            UUID.fromString("0000b003-0000-1000-8000-00805f9b34fb"),
+            UUID.fromString("0000b004-0000-1000-8000-00805f9b34fb")
+        )
+
         val CCCD_UUID: UUID = UUID.fromString("00002902-0000-1000-8000-00805f9b34fb")
     }
 
@@ -186,6 +198,16 @@ class GpsRemoteBleManager(private val context: Context) {
     @Volatile
     private var startCommandAtMs: Long? = null
     private val gpsQueue = ConcurrentLinkedQueue<ByteArray>()
+    private val pendingSubscriptions = ConcurrentLinkedQueue<BluetoothGattCharacteristic>()
+    private var pendingSubscribeAck: CompletableDeferred<Boolean>? = null
+
+    // Placed on the write queue to tell the worker that a subscription is waiting
+    private val subscribeReady = ByteArray(0)
+
+    // The same for a packet that goes to the second service's write channel
+    private val pendingSecondServiceWrites = ConcurrentLinkedQueue<ByteArray>()
+    private val secondServiceWriteReady = ByteArray(0)
+    private var wakeJob: Job? = null
 
     // Both are used only by the write queue worker
     private val gpsPacer = GpsSendPacer(GPS_SEND_RECORDS_PER_SECOND, GPS_SEND_MAX_BURST)
@@ -200,6 +222,12 @@ class GpsRemoteBleManager(private val context: Context) {
             for (packet in writeChannel) {
                 if (packet === gpsReady) {
                     flushGps()
+                } else if (packet === subscribeReady) {
+                    performSubscribe()
+                } else if (packet === secondServiceWriteReady) {
+                    val waiting = pendingSecondServiceWrites.poll()
+                    val target = activeGatt?.getService(SERVICE_B000)?.getCharacteristic(WRITE_B001)
+                    if (waiting != null && target != null) performGattWrite(waiting, target)
                 } else {
                     performGattWrite(packet)
                 }
@@ -487,6 +515,12 @@ class GpsRemoteBleManager(private val context: Context) {
             }
 
             Log.i(TAG, "Discovered ${gatt.services.size} services")
+            for (service in gatt.services) {
+                Log.d(TAG, "Service ${service.uuid}")
+                for (characteristic in service.characteristics) {
+                    Log.d(TAG, "  characteristic ${characteristic.uuid} properties=0x${Integer.toHexString(characteristic.properties)}")
+                }
+            }
             val be80 = gatt.getService(SERVICE_BE80)
             val ce80 = gatt.getService(SERVICE_CE80)
 
@@ -528,17 +562,19 @@ class GpsRemoteBleManager(private val context: Context) {
         }
 
         override fun onDescriptorWrite(gatt: BluetoothGatt, descriptor: BluetoothGattDescriptor, status: Int) {
-            Log.i(TAG, "Descriptor write finished on ${descriptor.uuid}, status=$status")
-            if (status == BluetoothGatt.GATT_SUCCESS) {
+            val channel = descriptor.characteristic?.uuid
+            Log.i(TAG, "Subscription to $channel finished, status=$status")
+            if (status == BluetoothGatt.GATT_SUCCESS && (channel == NOTIFY_BE82 || channel == NOTIFY_CE82)) {
                 // Subscription complete: channel is open for writes
                 queryCaptureStatus()
                 queryStatusOptions()
             }
+            pendingSubscribeAck?.complete(status == BluetoothGatt.GATT_SUCCESS)
         }
 
         @Deprecated("Deprecated in Java")
         override fun onCharacteristicChanged(gatt: BluetoothGatt, characteristic: BluetoothGattCharacteristic) {
-            characteristic.value?.let { handleIncomingNotification(it) }
+            characteristic.value?.let { onNotification(characteristic, it) }
         }
 
         override fun onCharacteristicChanged(
@@ -546,8 +582,111 @@ class GpsRemoteBleManager(private val context: Context) {
             characteristic: BluetoothGattCharacteristic,
             value: ByteArray
         ) {
-            handleIncomingNotification(value)
+            onNotification(characteristic, value)
         }
+    }
+
+    private fun onNotification(characteristic: BluetoothGattCharacteristic, value: ByteArray) {
+        if (characteristic.uuid == NOTIFY_BE82 || characteristic.uuid == NOTIFY_CE82) {
+            handleIncomingNotification(value)
+        } else {
+            // The second service's channels: what they carry is still being worked out
+            Log.i(TAG, "Notification on ${characteristic.uuid}: ${value.toHex(96)}")
+        }
+    }
+
+    /**
+     * Tries to switch on a camera that is connected but powered off. How the Insta360 app does
+     * it is not known for certain, so three things are tried in turn, each logged, stopping as
+     * soon as the camera answers: the wake-up packet on the command channel, the same packet on
+     * the second service's write channel, and subscribing to the second service.
+     */
+    fun wakeCamera() {
+        if (writeCharacteristic == null) return
+        wakeJob?.cancel()
+        wakeJob = scope.launch {
+            if (_state.value.isCameraAwake) {
+                Log.i(TAG, "Wake: the camera is already answering")
+                return@launch
+            }
+            val packet = Go2BleProtocol.buildWakeUpPacket()
+
+            Log.i(TAG, "Wake step 1: wake-up packet on the command channel")
+            queuePacket(packet)
+            if (answersWithin(WAKE_STEP_MS)) {
+                Log.i(TAG, "Wake: the camera answered after step 1")
+                return@launch
+            }
+
+            Log.i(TAG, "Wake step 2: wake-up packet on the second service")
+            pendingSecondServiceWrites.add(packet)
+            writeChannel.trySend(secondServiceWriteReady)
+            if (answersWithin(WAKE_STEP_MS)) {
+                Log.i(TAG, "Wake: the camera answered after step 2")
+                return@launch
+            }
+
+            Log.i(TAG, "Wake step 3: subscribing to the second service")
+            subscribeSecondService()
+            if (answersWithin(WAKE_STEP_MS)) {
+                Log.i(TAG, "Wake: the camera answered after step 3")
+            } else {
+                Log.w(TAG, "Wake: the camera did not answer")
+            }
+        }
+    }
+
+    private suspend fun answersWithin(timeoutMs: Long): Boolean =
+        withTimeoutOrNull(timeoutMs) { state.first { it.isCameraAwake } } != null
+
+    /**
+     * Subscribes to the notify channels of the camera's second service (0xB000), one after the
+     * other. The Insta360 app's strings name this service; what it is for is not known.
+     */
+    @SuppressLint("MissingPermission")
+    private fun subscribeSecondService() {
+        val gatt = activeGatt ?: return
+        val service = gatt.getService(SERVICE_B000) ?: run {
+            Log.w(TAG, "Camera has no 0xB000 service")
+            return
+        }
+        for (uuid in B000_NOTIFY_CHANNELS) {
+            val characteristic = service.getCharacteristic(uuid) ?: continue
+            pendingSubscriptions.add(characteristic)
+            // Bluetooth allows one request at a time, so these take their turn on the write queue
+            writeChannel.trySend(subscribeReady)
+        }
+    }
+
+    @SuppressLint("MissingPermission")
+    private suspend fun performSubscribe() {
+        val gatt = activeGatt ?: return
+        val characteristic = pendingSubscriptions.poll() ?: return
+        val descriptor = characteristic.getDescriptor(CCCD_UUID) ?: return
+        gatt.setCharacteristicNotification(characteristic, true)
+
+        var retries = 5
+        while (retries > 0) {
+            val ack = CompletableDeferred<Boolean>()
+            pendingSubscribeAck = ack
+            val initiated = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                gatt.writeDescriptor(descriptor, BluetoothGattDescriptor.ENABLE_NOTIFICATION_VALUE) ==
+                    BluetoothStatusCodes.SUCCESS
+            } else {
+                @Suppress("DEPRECATION")
+                descriptor.value = BluetoothGattDescriptor.ENABLE_NOTIFICATION_VALUE
+                @Suppress("DEPRECATION")
+                gatt.writeDescriptor(descriptor)
+            }
+            if (initiated) {
+                Log.i(TAG, "Subscribing to ${characteristic.uuid}")
+                withTimeoutOrNull(2000) { ack.await() }
+                return
+            }
+            retries--
+            delay(100)
+        }
+        Log.w(TAG, "Could not subscribe to ${characteristic.uuid}")
     }
 
     private fun handleIncomingNotification(raw: ByteArray) {
@@ -792,10 +931,10 @@ class GpsRemoteBleManager(private val context: Context) {
     }
 
     @SuppressLint("MissingPermission")
-    private suspend fun performGattWrite(packet: ByteArray) {
+    private suspend fun performGattWrite(packet: ByteArray, target: BluetoothGattCharacteristic? = null) {
         val gatt = activeGatt ?: return
-        val char = writeCharacteristic ?: return
-        Log.v(TAG, "TX ${packet.toHex()}")
+        val char = target ?: writeCharacteristic ?: return
+        Log.v(TAG, if (target == null) "TX ${packet.toHex()}" else "TX to ${target.uuid}: ${packet.toHex()}")
 
         var retries = 3
         while (retries > 0) {
