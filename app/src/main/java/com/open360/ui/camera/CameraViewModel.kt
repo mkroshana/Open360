@@ -60,6 +60,14 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
         // seconds. If no fix comes in this long the sample goes out as void instead.
         private const val MAX_WAIT_FOR_NEXT_FIX_MS = 4000L
 
+        // Fixes are remembered this long, so a recording that was already running when the app
+        // connected can be given the positions from its missed part, where there were any
+        private const val GPS_HISTORY_MS = 10 * 60_000L
+
+        // Samples are only made as fast as they can be sent. When a recording is joined late
+        // its whole missed part is due at once, and no sample may be dropped.
+        private const val MAX_GPS_BACKLOG = 40
+
         // Measured on a ride against the camera's own motion sensors: turns and speed changes
         // showed in the GPS, as placed on the video, 0.55 s after they showed in the camera
         // (0.55 s on one clip, about 0.8 s on a second one started with the camera's button,
@@ -73,7 +81,7 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
     val gattServer = InstaGpsRemoteGattServer(application)
     val gpsEngine = GpsTrackerEngine(application)
     private val trackRecorder = GpxTrackRecorder(application)
-    private val gpsTimeline = GpsTimeline()
+    private val gpsTimeline = GpsTimeline(keepMs = GPS_HISTORY_MS)
     private val gpsSchedule = GpsStreamSchedule(GPS_SAMPLE_INTERVAL_MS, MAX_WAIT_FOR_NEXT_FIX_MS)
 
     private val _uiState = MutableStateFlow(RemoteUiState())
@@ -163,6 +171,9 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
                     trackedFirstFrameAtMs = firstFrame
                     if (firstFrame != null) {
                         trackRecorder.start(firstFrame)
+                        // A recording joined late began in the past: its track takes the fixes
+                        // already remembered from then
+                        gpsTimeline.fixesFrom(firstFrame).forEach { trackRecorder.addFix(it) }
                     } else {
                         trackRecorder.stop(SystemClock.elapsedRealtime())
                     }
@@ -366,7 +377,9 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
                 // A video moment uses the GPS from GPS_BEHIND_PICTURE_MS later, so it is ready
                 // once a fix that late has arrived
                 val coveredUpTo = gpsTimeline.newestFixMs()?.let { it - GPS_BEHIND_PICTURE_MS }
-                for (moment in gpsSchedule.due(scheduledMs, coveredUpTo)) {
+                val room = MAX_GPS_BACKLOG - bleManager.gpsBacklog()
+                if (room <= 0) return@runAtFixedRate
+                for (moment in gpsSchedule.due(scheduledMs, coveredUpTo, max = room)) {
                     val sample = gpsTimeline.sampleAt(moment + GPS_BEHIND_PICTURE_MS)
                     bleManager.addGpsFix(
                         // With no fix at all the sample still carries the time of its moment

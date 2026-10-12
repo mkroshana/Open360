@@ -83,7 +83,7 @@ data class BleCameraState(
     // Its length in whole seconds, from the same reply
     val lastVideoSeconds: Int? = null,
     // Set when the camera was already recording as the app connected: how long it had been
-    // recording. Where that clip's first frame fell is not known, so it gets no GPS.
+    // recording. The clip's first frame is worked back from this, to within about half a second.
     val joinedRecordingSeconds: Int? = null,
     val batteryPercent: Int? = null,
     val isCharging: Boolean = false,
@@ -154,6 +154,12 @@ class GpsRemoteBleManager(private val context: Context) {
         val SERVICE_CE80: UUID = UUID.fromString("0000ce80-0000-1000-8000-00805f9b34fb")
         val WRITE_CE81: UUID = UUID.fromString("0000ce81-0000-1000-8000-00805f9b34fb")
         val NOTIFY_CE82: UUID = UUID.fromString("0000ce82-0000-1000-8000-00805f9b34fb")
+
+        // The camera gives the time recorded so far in whole seconds. Half a second is added,
+        // the middle of what that leaves open, so a recording joined late is placed to within
+        // about half a second. On the one clip checked, a reply of 5 s came between 5.4 and
+        // 6.4 s after the first frame.
+        private const val JOINED_RECORDING_ROUNDING_MS = 500L
 
         // How long each wake-up attempt is given before the next is tried
         private const val WAKE_STEP_MS = 4000L
@@ -856,8 +862,9 @@ class GpsRemoteBleManager(private val context: Context) {
 
     /**
      * The camera's answer to the capture status request sent on connecting. If it is already
-     * recording, the app shows that, but sends the clip no GPS: the camera's software places GPS
-     * by counting from the first frame, and the app did not see this clip start.
+     * recording, the clip's first frame is worked back from the time recorded so far, and the
+     * GPS stream starts from there: the camera's software places GPS by counting from the first
+     * frame, so the part that was missed has to be sent too, as records without a fix.
      */
     private fun onCaptureStatusReply(reply: Go2BleProtocol.CaptureStatusReply) {
         Log.i(TAG, "Capture status on connecting: state=${reply.captureState}, recorded ${reply.captureSeconds} s")
@@ -865,6 +872,7 @@ class GpsRemoteBleManager(private val context: Context) {
         // A start notice may have arrived in the meantime; then the start was seen after all
         if (_state.value.recordingFirstFrameAtMs != null) return
 
+        markRecordingStart(-(reply.captureSeconds * 1000L + JOINED_RECORDING_ROUNDING_MS))
         _state.update {
             it.copy(
                 isRecording = true,
@@ -1086,6 +1094,9 @@ class GpsRemoteBleManager(private val context: Context) {
         }
         writeChannel.trySend(gpsReady)
     }
+
+    /** How many GPS samples are waiting to be sent. */
+    fun gpsBacklog(): Int = gpsQueue.size
 
     private suspend fun flushGps() {
         val waiting = gpsQueue.size

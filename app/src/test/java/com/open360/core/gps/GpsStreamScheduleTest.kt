@@ -33,6 +33,30 @@ class GpsStreamScheduleTest {
     }
 
     @Test
+    fun aRecordingJoinedLateIsFilledInFromItsFirstFrame() {
+        // The app connects 12 s into a recording: the first frame was at 88 s, it is now 100 s
+        val s = schedule()
+        s.setFirstFrame(88_000)
+
+        // Only as many as there is room to send are handed out at a time, oldest first
+        val first = s.due(nowMs = 100_000, newestFixMs = 99_900, max = 30)
+        assertEquals(30, first.size)
+        assertEquals(88_000L, first.first())
+        assertEquals(90_900L, first.last())
+
+        // The rest follow in order with none skipped, until the stream has caught up
+        val all = ArrayList(first)
+        var now = 100_100L
+        while (now <= 129_100L) {
+            all.addAll(s.due(nowMs = now, newestFixMs = now - 100, max = 20))
+            now += 1000
+        }
+        for (i in all.indices) assertEquals(88_000L + 100L * i, all[i])
+        // By then every moment up to the newest fix, taken at 129 s, has gone out
+        assertEquals(129_000L, all.last())
+    }
+
+    @Test
     fun everySampleIsHandedOutOnceAndInOrderOverALongRecording() {
         val s = schedule()
         s.setFirstFrame(10_000)

@@ -55,6 +55,10 @@ class GpsTimeline(
     @Synchronized
     fun newestFixMs(): Long? = fixes.lastOrNull()?.elapsedMs
 
+    /** The remembered fixes taken at or after [elapsedMs], oldest first. */
+    @Synchronized
+    fun fixesFrom(elapsedMs: Long): List<GpsFix> = fixes.filter { it.elapsedMs >= elapsedMs }
+
     /**
      * The position at [elapsedMs]. It is valid only when a fix on each side is known and they
      * are no more than [maxGapMs] apart. Otherwise the nearest fix's position is returned marked

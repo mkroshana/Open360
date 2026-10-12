@@ -8,6 +8,17 @@ import org.junit.Test
 
 class GpsTimelineTest {
 
+    @Test
+    fun fixesFromReturnsTheRememberedFixesSinceAMoment() {
+        val timeline = GpsTimeline(keepMs = 60_000L)
+        for (second in 0..9) {
+            timeline.add(GpsFix(1000L * second, 5_000_000L + 1000L * second, 6.0, 79.0, 10.0, 5.0, 90.0))
+        }
+        assertEquals(listOf(7000L, 8000L, 9000L), timeline.fixesFrom(6500L).map { it.elapsedMs })
+        assertEquals(10, timeline.fixesFrom(-5000L).size)
+        assertTrue(timeline.fixesFrom(9001L).isEmpty())
+    }
+
     private fun fix(elapsedMs: Long, lat: Double, lon: Double, speed: Double = 0.0, bearing: Double = 0.0, alt: Double = 0.0) =
         GpsFix(elapsedMs, utcMs = 1_767_268_800_000L + elapsedMs, lat, lon, alt, speed, bearing)
 
