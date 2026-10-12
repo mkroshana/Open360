@@ -1,5 +1,6 @@
 package com.open360.core.ble
 
+import java.io.ByteArrayOutputStream
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
 import java.util.Calendar
@@ -116,15 +117,70 @@ object Go2BleProtocol {
         return buf.array()
     }
 
+    const val GPS_RECORD_SIZE = 53
+
     /**
-     * Encodes latitude, longitude, and altitude into a 24-byte payload of little-endian doubles.
+     * Encodes one GPS fix as the 53-byte little-endian record Insta360 cameras store in the
+     * video file: unix seconds (8), milliseconds (2), status 'A'/'V' (1), latitude (8),
+     * 'N'/'S' (1), longitude (8), 'E'/'W' (1), speed in m/s (8), track in degrees (8),
+     * altitude in metres (8).
      */
-    fun buildGpsPayload(latitude: Double, longitude: Double, altitude: Double): ByteArray {
-        val buf = ByteBuffer.allocate(24).order(ByteOrder.LITTLE_ENDIAN)
-        buf.putDouble(latitude)
-        buf.putDouble(longitude)
-        buf.putDouble(altitude)
+    fun buildGpsRecord(
+        timestampMs: Long,
+        latitude: Double,
+        longitude: Double,
+        speedMps: Double,
+        bearingDegrees: Double,
+        altitudeMeters: Double,
+        hasFix: Boolean = true
+    ): ByteArray {
+        val buf = ByteBuffer.allocate(GPS_RECORD_SIZE).order(ByteOrder.LITTLE_ENDIAN)
+        buf.putLong(timestampMs / 1000)
+        buf.putShort((timestampMs % 1000).toShort())
+        buf.put((if (hasFix) 'A' else 'V').code.toByte())
+        buf.putDouble(abs(latitude))
+        buf.put((if (latitude >= 0.0) 'N' else 'S').code.toByte())
+        buf.putDouble(abs(longitude))
+        buf.put((if (longitude >= 0.0) 'E' else 'W').code.toByte())
+        buf.putDouble(speedMps)
+        buf.putDouble(bearingDegrees)
+        buf.putDouble(altitudeMeters)
         return buf.array()
+    }
+
+    /**
+     * Wraps GPS records in the UploadGps protobuf message (field 1, bytes) sent with CMD_UPLOAD_GPS.
+     */
+    fun buildUploadGpsPayload(records: List<ByteArray>): ByteArray {
+        val total = records.sumOf { it.size }
+        val out = ByteArrayOutputStream(total + 4)
+        out.write(0x0A)
+        var length = total
+        while (length >= 0x80) {
+            out.write((length and 0x7F) or 0x80)
+            length = length ushr 7
+        }
+        out.write(length)
+        records.forEach { out.write(it) }
+        return out.toByteArray()
+    }
+
+    /**
+     * Number of GPS records that fit in one UploadGps packet at the given ATT MTU, so the packet
+     * goes out as a single write.
+     */
+    fun gpsRecordsPerPacket(mtu: Int): Int {
+        // ATT write header (3) and protobuf tag + length (3) around the envelope and inner header.
+        val room = mtu - 3 - ENVELOPE_HEADER_SIZE - INNER_HEADER_SIZE - 3 - CRC_SIZE
+        return (room / GPS_RECORD_SIZE).coerceAtLeast(1)
+    }
+
+    /**
+     * Builds the keep-alive packet: the camera's Wi-Fi keep-alive (length prefix + 05 00 00)
+     * carried in the BLE envelope.
+     */
+    fun buildKeepAlivePacket(): ByteArray {
+        return encodeMessagePacket(byteArrayOf(0x07, 0x00, 0x00, 0x00, 0x05, 0x00, 0x00))
     }
 
     const val REMOTE_BTN_POWER = 0x00

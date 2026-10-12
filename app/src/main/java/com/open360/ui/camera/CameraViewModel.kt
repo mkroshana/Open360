@@ -47,8 +47,9 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
     private var gpsStreamJob: Job? = null
 
     init {
-        // Start the GPS Remote GATT Server immediately so the camera can discover it under Bluetooth Remote
-        gattServer.startServer()
+        // The GO 3S has not connected to a phone advertising as the GPS Remote, so the GATT server
+        // is not started here. The app connects out to the camera and uploads GPS over that link.
+        // The two cannot run together: there is only one LE link between phone and camera.
 
         // Collect GATT server state updates (Architecture A: GPS Remote)
         viewModelScope.launch {
@@ -78,7 +79,7 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
             }
         }
 
-        // Collect BLE state updates (Architecture B fallback)
+        // Collect BLE state updates (Architecture B: direct connection)
         viewModelScope.launch {
             bleManager.state.collect { ble ->
                 _uiState.update { current ->
@@ -93,9 +94,16 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
 
                 if (ble.isRecording && recordingTimerJob == null) {
                     startRecordingTimer()
-                    startGpsTelemetryInjection()
                 } else if (!ble.isRecording && recordingTimerJob != null && !_uiState.value.serverState.isRecording) {
                     stopRecordingTimer()
+                }
+
+                // GPS is uploaded for as long as the camera is connected, so a recording started
+                // on the camera itself gets it too.
+                val linked = ble.connectionStatus == BleConnectionStatus.CONNECTED
+                if (linked && gpsStreamJob == null) {
+                    startGpsTelemetryInjection()
+                } else if (!linked && gpsStreamJob != null) {
                     stopGpsTelemetryInjection()
                 }
             }
@@ -111,6 +119,9 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
 
         // Start GPS tracking immediately so speed and location are available
         gpsEngine.startTracking()
+
+        // Look for the camera straight away
+        bleManager.startScanAndConnect()
     }
 
     fun wakeUpCamera(serialSuffix: String? = null) {
@@ -131,7 +142,6 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
     }
 
     fun connectBle() {
-        gattServer.startAdvertising()
         bleManager.startScanAndConnect()
     }
 
@@ -140,7 +150,6 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
     }
 
     fun disconnectBle() {
-        gattServer.stopAdvertising()
         bleManager.disconnect()
         stopRecordingTimer()
         stopGpsTelemetryInjection()
@@ -241,10 +250,18 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
         gpsStreamJob = viewModelScope.launch {
             while (isActive) {
                 val gps = _uiState.value.gpsState
-                if (gps.hasFix) {
-                    bleManager.injectGps(gps.latitude, gps.longitude, gps.altitudeMeters)
+                if (gps.hasFix && gps.timestampEpochMs > 0) {
+                    bleManager.addGpsFix(
+                        timestampMs = gps.timestampEpochMs,
+                        latitude = gps.latitude,
+                        longitude = gps.longitude,
+                        speedMps = gps.speedKmh / 3.6,
+                        bearingDegrees = gps.bearingDegrees.toDouble(),
+                        altitudeMeters = gps.altitudeMeters
+                    )
                 }
-                delay(1000)
+                // 10 Hz, the rate the camera gets from the GPS Remote and the official SDK sample
+                delay(100)
             }
         }
     }

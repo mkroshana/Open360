@@ -105,13 +105,9 @@ class GpsTrackerService : Service() {
             startForeground(NOTIFICATION_ID, notification)
         }
 
-        gpsEngine.startTracking { lat, lon, alt ->
-            bleManager?.let { ble ->
-                if (ble.state.value.isRecording) {
-                    ble.injectGps(lat, lon, alt)
-                }
-            }
-        }
+        // Keeps location updates and the process alive in the background. The fixes themselves
+        // are sent to the camera by CameraViewModel.
+        gpsEngine.startTracking()
         Log.i(TAG, "GpsTrackerService started foreground tracking")
     }
 

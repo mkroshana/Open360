@@ -301,6 +301,7 @@ fun CameraStatusCard(
                 ble.connectionStatus == BleConnectionStatus.CONNECTED -> "Connected"
                 server.isAdvertising -> "Broadcasting as Insta360 GPS Remote"
                 ble.connectionStatus == BleConnectionStatus.SCANNING -> "Scanning for Camera..."
+                ble.connectionStatus == BleConnectionStatus.CONNECTING -> "Connecting to Camera..."
                 else -> "Disconnected"
             }
 
@@ -352,7 +353,7 @@ fun CameraStatusCard(
                         modifier = Modifier.size(16.dp)
                     )
                     Text(
-                        text = "On camera: Settings > Bluetooth Remote > select 'Insta360 GPS Remote'",
+                        text = "Turn the camera on and keep it nearby. Open360 connects to it directly.",
                         style = MaterialTheme.typography.labelSmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
@@ -398,7 +399,7 @@ fun CameraStatusCard(
                         modifier = Modifier.size(18.dp)
                     )
                     Spacer(modifier = Modifier.width(6.dp))
-                    Text(text = if (uiState.isConnected) "Disconnect" else "Broadcast")
+                    Text(text = if (uiState.isConnected) "Disconnect" else "Connect")
                 }
             }
 
@@ -561,9 +562,9 @@ fun GpsTelemetryCard(
             val badgeColor = if (streamActive) Color(0xFF2E7D32) else MaterialTheme.colorScheme.onSurfaceVariant
 
             val streamText = when {
-                streamActive && isRecording -> "Multiplexing Telemetry to Video (10 Hz NMEA)"
-                streamActive -> "GPS Remote Streaming (10 Hz NMEA)"
-                isCameraConnected && !gps.hasFix -> "Waiting for GPS Fix (Liveness Active)"
+                streamActive && isRecording -> "Sending GPS to Camera While Recording (10 Hz)"
+                streamActive -> "Sending GPS to Camera (10 Hz)"
+                isCameraConnected && !gps.hasFix -> "Waiting for GPS Fix"
                 else -> "Telemetry Stream Ready"
             }
 

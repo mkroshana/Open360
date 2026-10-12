@@ -54,33 +54,81 @@ class Go2BleProtocolTest {
     }
 
     @Test
-    fun testGpsPayloadEncodingAndDecoding() {
-        val lat = 37.774929
-        val lon = -122.419416
-        val alt = 15.5
+    fun testGpsRecordLayout() {
+        // 2026-01-01 12:00:00.250 UTC, 37.774929 N, 122.419416 W
+        val record = Go2BleProtocol.buildGpsRecord(
+            timestampMs = 1767268800250L,
+            latitude = 37.774929,
+            longitude = -122.419416,
+            speedMps = 4.5,
+            bearingDegrees = 271.0,
+            altitudeMeters = 15.5
+        )
+        assertEquals(53, record.size)
 
-        val payload = Go2BleProtocol.buildGpsPayload(lat, lon, alt)
-        assertEquals(24, payload.size)
+        val buf = ByteBuffer.wrap(record).order(ByteOrder.LITTLE_ENDIAN)
+        assertEquals(1767268800L, buf.long)
+        assertEquals(250, buf.short.toInt())
+        assertEquals('A'.code.toByte(), buf.get())
+        assertEquals(37.774929, buf.double, 0.0)
+        assertEquals('N'.code.toByte(), buf.get())
+        assertEquals(122.419416, buf.double, 0.0)
+        assertEquals('W'.code.toByte(), buf.get())
+        assertEquals(4.5, buf.double, 0.0)
+        assertEquals(271.0, buf.double, 0.0)
+        assertEquals(15.5, buf.double, 0.0)
+    }
 
+    @Test
+    fun testGpsRecordWithoutFixIsVoid() {
+        val record = Go2BleProtocol.buildGpsRecord(0L, -6.5, 79.9, 0.0, 0.0, 0.0, hasFix = false)
+        assertEquals('V'.code.toByte(), record[10])
+        assertEquals('S'.code.toByte(), record[19])
+        assertEquals('E'.code.toByte(), record[28])
+    }
+
+    @Test
+    fun testUploadGpsPayloadWrapsRecordsAsProtobufBytesField() {
+        val record = Go2BleProtocol.buildGpsRecord(1767268800000L, 6.5, 79.9, 1.0, 90.0, 12.0)
+
+        // One record: tag 0x0A, single-byte length 53
+        val single = Go2BleProtocol.buildUploadGpsPayload(listOf(record))
+        assertEquals(2 + 53, single.size)
+        assertEquals(0x0A.toByte(), single[0])
+        assertEquals(53.toByte(), single[1])
+        assertTrue(single.copyOfRange(2, single.size).contentEquals(record))
+
+        // Four records: 212 bytes needs a two-byte varint length (D4 01)
+        val four = Go2BleProtocol.buildUploadGpsPayload(List(4) { record })
+        assertEquals(3 + 212, four.size)
+        assertEquals(0x0A.toByte(), four[0])
+        assertEquals(0xD4.toByte(), four[1])
+        assertEquals(0x01.toByte(), four[2])
+    }
+
+    @Test
+    fun testUploadGpsPacketFitsOneWriteAtNegotiatedMtu() {
+        assertEquals(4, Go2BleProtocol.gpsRecordsPerPacket(247))
+        assertEquals(1, Go2BleProtocol.gpsRecordsPerPacket(23))
+
+        val record = Go2BleProtocol.buildGpsRecord(1767268800000L, 6.5, 79.9, 1.0, 90.0, 12.0)
+        val payload = Go2BleProtocol.buildUploadGpsPayload(List(4) { record })
         val inner = Go2BleProtocol.encodeInnerMessage(Go2BleProtocol.CMD_UPLOAD_GPS, sequence = 42, payload = payload)
-        assertEquals(16 + 24, inner.size)
-
         val packet = Go2BleProtocol.encodeMessagePacket(inner)
-        assertEquals(5 + 40 + 2, packet.size)
+        assertTrue(packet.size <= 247 - 3)
 
-        val decodedEnvelope = Go2BleProtocol.decodePacket(packet)
-        assertNotNull(decodedEnvelope)
-
-        val decodedInner = Go2BleProtocol.decodeInnerMessage(decodedEnvelope!!.innerData)
+        val decodedInner = Go2BleProtocol.decodeInnerMessage(Go2BleProtocol.decodePacket(packet)!!.innerData)
         assertNotNull(decodedInner)
         assertEquals(Go2BleProtocol.CMD_UPLOAD_GPS, decodedInner!!.commandCode)
         assertEquals(42, decodedInner.sequence)
-        assertEquals(24, decodedInner.payload.size)
+        assertTrue(decodedInner.payload.contentEquals(payload))
+    }
 
-        val buf = ByteBuffer.wrap(decodedInner.payload).order(ByteOrder.LITTLE_ENDIAN)
-        assertEquals(lat, buf.double, 0.000001)
-        assertEquals(lon, buf.double, 0.000001)
-        assertEquals(alt, buf.double, 0.01)
+    @Test
+    fun testKeepAlivePacketCarriesWifiKeepAliveBytes() {
+        val decoded = Go2BleProtocol.decodePacket(Go2BleProtocol.buildKeepAlivePacket())
+        assertNotNull(decoded)
+        assertEquals("07000000050000", decoded!!.innerData.joinToString("") { "%02x".format(it) })
     }
 
     @Test

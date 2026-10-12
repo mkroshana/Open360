@@ -27,12 +27,15 @@ import androidx.core.content.ContextCompat
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.channels.Channel
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withTimeoutOrNull
 import java.util.UUID
@@ -68,6 +71,7 @@ class GpsRemoteBleManager(private val context: Context) {
 
     companion object {
         private const val TAG = "GpsRemoteBleManager"
+        private const val KEEP_ALIVE_INTERVAL_MS = 2000L
 
         val SERVICE_BE80: UUID = UUID.fromString("0000be80-0000-1000-8000-00805f9b34fb")
         val WRITE_BE81: UUID = UUID.fromString("0000be81-0000-1000-8000-00805f9b34fb")
@@ -93,6 +97,11 @@ class GpsRemoteBleManager(private val context: Context) {
 
     private val writeChannel = Channel<ByteArray>(Channel.UNLIMITED)
     private var pendingWriteAck: CompletableDeferred<Boolean>? = null
+
+    private var attMtu = 23
+    private var activeScanCallback: ScanCallback? = null
+    private var keepAliveJob: Job? = null
+    private val gpsBatch = mutableListOf<ByteArray>()
 
     init {
         // Start write queue worker loop
@@ -218,6 +227,10 @@ class GpsRemoteBleManager(private val context: Context) {
             return
         }
 
+        val status = _state.value.connectionStatus
+        if (status == BleConnectionStatus.CONNECTING || status == BleConnectionStatus.CONNECTED) return
+        stopScan()
+
         _state.update { it.copy(connectionStatus = BleConnectionStatus.SCANNING, lastError = null) }
 
         val filters = mutableListOf<ScanFilter>()
@@ -231,6 +244,7 @@ class GpsRemoteBleManager(private val context: Context) {
 
         val scanCallback = object : ScanCallback() {
             override fun onScanResult(callbackType: Int, result: ScanResult?) {
+                if (activeScanCallback !== this) return
                 val device = result?.device ?: return
                 val name = device.name ?: result.scanRecord?.deviceName ?: ""
 
@@ -245,9 +259,7 @@ class GpsRemoteBleManager(private val context: Context) {
 
                 if (isInsta360) {
                     Log.i(TAG, "Found target camera: $name (${device.address})")
-                    try {
-                        scanner.stopScan(this)
-                    } catch (_: Exception) {}
+                    stopScan()
 
                     connectGatt(device, name)
                 }
@@ -266,11 +278,45 @@ class GpsRemoteBleManager(private val context: Context) {
 
         try {
             // Also add broad scan if filters are empty
+            activeScanCallback = scanCallback
             scanner.startScan(filters, settings, scanCallback)
         } catch (e: Exception) {
             Log.e(TAG, "Exception starting BLE scan", e)
+            activeScanCallback = null
             _state.update { it.copy(connectionStatus = BleConnectionStatus.DISCONNECTED, lastError = e.message) }
         }
+    }
+
+    @SuppressLint("MissingPermission")
+    private fun stopScan() {
+        val callback = activeScanCallback ?: return
+        activeScanCallback = null
+        try {
+            bluetoothAdapter?.bluetoothLeScanner?.stopScan(callback)
+        } catch (_: Exception) {}
+    }
+
+    /**
+     * Sends the keep-alive packet on a timer while connected.
+     */
+    private fun startKeepAlive() {
+        keepAliveJob?.cancel()
+        keepAliveJob = scope.launch {
+            while (isActive) {
+                delay(KEEP_ALIVE_INTERVAL_MS)
+                queuePacket(Go2BleProtocol.buildKeepAlivePacket())
+            }
+        }
+    }
+
+    private fun stopKeepAlive() {
+        keepAliveJob?.cancel()
+        keepAliveJob = null
+    }
+
+    private fun ByteArray.toHex(max: Int = 48): String {
+        val shown = take(max).joinToString("") { "%02x".format(it) }
+        return if (size > max) "$shown... ($size bytes)" else shown
     }
 
     @SuppressLint("MissingPermission")
@@ -307,8 +353,10 @@ class GpsRemoteBleManager(private val context: Context) {
                 // Request MTU to support full GPS and protobuf packets
                 gatt.requestMtu(247)
             } else if (newState == BluetoothProfile.STATE_DISCONNECTED) {
-                Log.w(TAG, "GATT disconnected")
+                Log.w(TAG, "GATT disconnected, status=$status")
                 writeCharacteristic = null
+                stopKeepAlive()
+                synchronized(gpsBatch) { gpsBatch.clear() }
                 _state.update {
                     it.copy(
                         connectionStatus = BleConnectionStatus.DISCONNECTED,
@@ -321,6 +369,7 @@ class GpsRemoteBleManager(private val context: Context) {
         @SuppressLint("MissingPermission")
         override fun onMtuChanged(gatt: BluetoothGatt, mtu: Int, status: Int) {
             Log.i(TAG, "MTU changed to $mtu, status: $status. Discovering services...")
+            if (status == BluetoothGatt.GATT_SUCCESS) attMtu = mtu
             gatt.discoverServices()
         }
 
@@ -361,6 +410,7 @@ class GpsRemoteBleManager(private val context: Context) {
             }
 
             _state.update { it.copy(connectionStatus = BleConnectionStatus.CONNECTED) }
+            startKeepAlive()
             Log.i(TAG, "Camera BLE successfully connected. Ready for commands.")
         }
 
@@ -395,6 +445,7 @@ class GpsRemoteBleManager(private val context: Context) {
     }
 
     private fun handleIncomingNotification(raw: ByteArray) {
+        Log.d(TAG, "RX ${raw.toHex()}")
         val decoded = Go2BleProtocol.decodePacket(raw)
         if (decoded == null) {
             // Check for raw sync pattern: "AB BA"
@@ -432,6 +483,10 @@ class GpsRemoteBleManager(private val context: Context) {
                     if (inner.payload.size == 4) {
                         parseBatteryUpdate(inner.payload)
                     }
+                }
+
+                in 100..599 -> {
+                    Log.w(TAG, "Camera returned status ${inner.commandCode} for seq ${inner.sequence}")
                 }
             }
         }
@@ -496,6 +551,7 @@ class GpsRemoteBleManager(private val context: Context) {
     private suspend fun performGattWrite(packet: ByteArray) {
         val gatt = activeGatt ?: return
         val char = writeCharacteristic ?: return
+        Log.d(TAG, "TX ${packet.toHex()}")
 
         var retries = 3
         while (retries > 0) {
@@ -580,13 +636,32 @@ class GpsRemoteBleManager(private val context: Context) {
     }
 
     /**
-     * Injects live GPS telemetry coordinates (decimal degrees, altitude meters) into camera stream.
+     * Queues one GPS fix for the camera. Fixes go out as UploadGps batches sized to fit one write.
      */
-    fun injectGps(latitude: Double, longitude: Double, altitude: Double) {
-        val gpsPayload = Go2BleProtocol.buildGpsPayload(latitude, longitude, altitude)
-        val inner = Go2BleProtocol.encodeInnerMessage(Go2BleProtocol.CMD_UPLOAD_GPS, nextSeq(), gpsPayload)
-        val packet = Go2BleProtocol.encodeMessagePacket(inner)
-        queuePacket(packet)
+    fun addGpsFix(
+        timestampMs: Long,
+        latitude: Double,
+        longitude: Double,
+        speedMps: Double,
+        bearingDegrees: Double,
+        altitudeMeters: Double
+    ) {
+        if (writeCharacteristic == null) return
+        val record = Go2BleProtocol.buildGpsRecord(timestampMs, latitude, longitude, speedMps, bearingDegrees, altitudeMeters)
+        val batch = synchronized(gpsBatch) {
+            gpsBatch.add(record)
+            if (gpsBatch.size < Go2BleProtocol.gpsRecordsPerPacket(attMtu)) return
+            gpsBatch.toList().also { gpsBatch.clear() }
+        }
+
+        val seq = nextSeq()
+        val inner = Go2BleProtocol.encodeInnerMessage(
+            Go2BleProtocol.CMD_UPLOAD_GPS,
+            seq,
+            Go2BleProtocol.buildUploadGpsPayload(batch)
+        )
+        Log.d(TAG, "UploadGps seq=$seq records=${batch.size}")
+        queuePacket(Go2BleProtocol.encodeMessagePacket(inner))
         _state.update { it.copy(lastGpsSentTimeMs = System.currentTimeMillis()) }
     }
 
@@ -616,6 +691,9 @@ class GpsRemoteBleManager(private val context: Context) {
      */
     @SuppressLint("MissingPermission")
     fun disconnect() {
+        stopScan()
+        stopKeepAlive()
+        synchronized(gpsBatch) { gpsBatch.clear() }
         activeGatt?.disconnect()
         activeGatt?.close()
         activeGatt = null
