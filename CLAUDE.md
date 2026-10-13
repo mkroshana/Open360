@@ -103,11 +103,23 @@ Insta360 cameras have two completely separate BLE architectures. Open360 uses Ar
 - `CameraStatusText.kt`: Plain-English formatters for storage, battery, runtime, Action Pod, and warning conditions.
 - `CameraViewModel.kt`: Central state orchestrator connecting BLE, GPS, settings, and UI flows.
 
+### Media Browser, Wi-Fi Transfer & Player
+- `FootageRepository.kt`: Manages media discovery, downloading, and importing across three sources:
+  1. Camera Wi-Fi via Google OSC v2 `camera.listFiles` and HTTP streaming on port 80.
+  2. Local storage (`Download/Open360` and `DCIM/Insta360Download`) via `MediaStore.Downloads` and `MediaStore.Video.Media`.
+  3. Wired USB-C OTG / Storage Access Framework (SAF) folder tree (`DCIM/Camera01`).
+- `FootageViewModel.kt`: State management for camera Wi-Fi, downloaded, and USB footage tabs, tracking download progress percentages.
+- `FootageScreen.kt`: Material 3 UI with TabRow for "Camera Wi-Fi", "Downloaded", and "USB / Folder", clip metadata cards, download/stream buttons, and USB directory picker.
+- `FootagePlayerDialog.kt`: In-app media player powered by AndroidX Media3 (ExoPlayer) with full playback controls, photo viewer, system share action, and companion GPX telemetry overlay.
+- `GpxParser.kt`: Universal XML parser extracting point count, total distance, duration, elevation gain, and max speed from companion `.gpx` files.
+- `OscClient.kt`: OSC v2 client supporting `/osc/info`, `/osc/state`, and `camera.listFiles` with pagination and thumbnails.
+- `CameraMediaFile.kt`: Unified data model for camera clips across remote HTTP, local storage, and SAF content URIs.
+
 ### Testing & Debugging
 - `MainActivity.kt`: Supports debug intent triggers in debug builds:
   - `adb shell am start -n com.open360/.MainActivity --ez debug_wake true` (triggers Wake Up)
   - `adb shell am start -n com.open360/.MainActivity --ei debug_command <code> [--es debug_payload <hex>]` (sends test command to camera)
-- Unit test suite: `Go2BleProtocolTest.kt`, `GpsTimelineTest.kt`, `GpsStreamScheduleTest.kt`, `GpsSendPacerTest.kt`, `FixedRateLoopTest.kt`, `GpxWriterTest.kt`, `CameraStatusTextTest.kt`, `WakeUpSetupTest.kt`.
+- Unit test suite: `Go2BleProtocolTest.kt`, `GpsTimelineTest.kt`, `GpsStreamScheduleTest.kt`, `GpsSendPacerTest.kt`, `FixedRateLoopTest.kt`, `GpxWriterTest.kt`, `GpxParserTest.kt`, `OscClientTest.kt`, `CameraStatusTextTest.kt`, `WakeUpSetupTest.kt`.
 
 ## 5. Connection Workflow
 
