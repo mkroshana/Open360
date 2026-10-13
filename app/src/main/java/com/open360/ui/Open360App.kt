@@ -1,6 +1,17 @@
 package com.open360.ui
 
 import androidx.activity.compose.BackHandler
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.padding
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.VideoLibrary
+import androidx.compose.material.icons.filled.Videocam
+import androidx.compose.material3.Icon
+import androidx.compose.material3.NavigationBar
+import androidx.compose.material3.NavigationBarItem
+import androidx.compose.material3.Scaffold
+import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -8,26 +19,36 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.saveable.rememberSaveableStateHolder
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.Modifier
 import com.open360.core.ble.BleConnectionStatus
 import com.open360.ui.camera.CameraScreen
 import com.open360.ui.camera.CameraViewModel
 import com.open360.ui.camera.WakeUpIdDialog
 import com.open360.ui.camera.WakeUpSetupDialog
+import com.open360.ui.footage.FootageScreen
+import com.open360.ui.footage.FootageViewModel
 import com.open360.ui.settings.SettingsScreen
 
+enum class MainNavTab(val title: String) {
+    REMOTE("Remote"),
+    FOOTAGE("Footage")
+}
+
 /**
- * The app's screens: the camera screen and, from its settings button, the settings. The set-up
- * for Wake Up and the wake-up ID are dialogs, shown over whichever screen is up.
+ * The app's main screens: the camera remote screen and the footage viewer/importer screen.
+ * The set-up for Wake Up and the wake-up ID are dialogs shown over whichever screen is active.
  */
 @Composable
 fun Open360App(
-    viewModel: CameraViewModel,
+    cameraViewModel: CameraViewModel,
+    footageViewModel: FootageViewModel,
     onWakeUpClick: () -> Unit = {}
 ) {
-    val uiState by viewModel.uiState.collectAsState()
+    val uiState by cameraViewModel.uiState.collectAsState()
     val ble = uiState.bleState
+    var currentTab by rememberSaveable { mutableStateOf(MainNavTab.REMOTE) }
     var settingsOpen by rememberSaveable { mutableStateOf(false) }
-    // Keeps the camera screen where it was scrolled to while the settings are up
+    // Keeps the screen scroll positions and state intact while switching
     val screens = rememberSaveableStateHolder()
 
     if (settingsOpen) {
@@ -36,18 +57,64 @@ fun Open360App(
             hasWakeUpId = uiState.wakeUpId != null,
             wakeUpRegistration = ble.wakeUpRegistration,
             keepGpsActiveInBackground = uiState.keepGpsActiveInBackground,
-            onSetUpWakeUp = { viewModel.openWakeUpSetup() },
-            onWakeUpId = { viewModel.openWakeUpId() },
-            onToggleBackgroundGps = { viewModel.toggleKeepGpsInBackground() },
+            onSetUpWakeUp = { cameraViewModel.openWakeUpSetup() },
+            onWakeUpId = { cameraViewModel.openWakeUpId() },
+            onToggleBackgroundGps = { cameraViewModel.toggleKeepGpsInBackground() },
             onBack = { settingsOpen = false }
         )
     } else {
-        screens.SaveableStateProvider("camera") {
-            CameraScreen(
-                viewModel = viewModel,
-                onWakeUpClick = onWakeUpClick,
-                onOpenSettings = { settingsOpen = true }
-            )
+        Scaffold(
+            bottomBar = {
+                NavigationBar {
+                    NavigationBarItem(
+                        icon = {
+                            Icon(
+                                imageVector = Icons.Default.Videocam,
+                                contentDescription = "Remote"
+                            )
+                        },
+                        label = { Text("Remote") },
+                        selected = currentTab == MainNavTab.REMOTE,
+                        onClick = { currentTab = MainNavTab.REMOTE }
+                    )
+                    NavigationBarItem(
+                        icon = {
+                            Icon(
+                                imageVector = Icons.Default.VideoLibrary,
+                                contentDescription = "Footage"
+                            )
+                        },
+                        label = { Text("Footage") },
+                        selected = currentTab == MainNavTab.FOOTAGE,
+                        onClick = { currentTab = MainNavTab.FOOTAGE }
+                    )
+                }
+            }
+        ) { paddingValues ->
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(paddingValues)
+            ) {
+                when (currentTab) {
+                    MainNavTab.REMOTE -> {
+                        screens.SaveableStateProvider("camera") {
+                            CameraScreen(
+                                viewModel = cameraViewModel,
+                                onWakeUpClick = onWakeUpClick,
+                                onOpenSettings = { settingsOpen = true }
+                            )
+                        }
+                    }
+                    MainNavTab.FOOTAGE -> {
+                        screens.SaveableStateProvider("footage") {
+                            FootageScreen(
+                                viewModel = footageViewModel
+                            )
+                        }
+                    }
+                }
+            }
         }
     }
 
@@ -55,8 +122,8 @@ fun Open360App(
         WakeUpIdDialog(
             id = uiState.wakeUpId,
             registration = ble.wakeUpRegistration,
-            onSave = { viewModel.saveWakeUpId(it) },
-            onClose = { viewModel.closeWakeUpId() }
+            onSave = { cameraViewModel.saveWakeUpId(it) },
+            onClose = { cameraViewModel.closeWakeUpId() }
         )
     }
 
@@ -65,8 +132,8 @@ fun Open360App(
             connectionStatus = ble.connectionStatus,
             cameraOn = ble.connectionStatus == BleConnectionStatus.CONNECTED && ble.isCameraAwake,
             registration = ble.wakeUpRegistration,
-            onStart = { viewModel.startWakeUpSetup() },
-            onClose = { viewModel.closeWakeUpSetup() }
+            onStart = { cameraViewModel.startWakeUpSetup() },
+            onClose = { cameraViewModel.closeWakeUpSetup() }
         )
     }
 }

@@ -1,0 +1,199 @@
+package com.open360.ui.footage
+
+import android.app.Application
+import android.net.Uri
+import androidx.lifecycle.AndroidViewModel
+import androidx.lifecycle.viewModelScope
+import com.open360.core.model.CameraMediaFile
+import com.open360.core.repository.FootageRepository
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.update
+import kotlinx.coroutines.launch
+
+enum class FootageTab(val title: String) {
+    CAMERA("Camera Wi-Fi"),
+    DOWNLOADED("Downloaded"),
+    USB("USB / Folder")
+}
+
+data class FootageUiState(
+    val currentTab: FootageTab = FootageTab.CAMERA,
+    val cameraFiles: List<CameraMediaFile> = emptyList(),
+    val downloadedFiles: List<CameraMediaFile> = emptyList(),
+    val usbFiles: List<CameraMediaFile> = emptyList(),
+    val usbTreeUri: Uri? = null,
+    val isLoading: Boolean = false,
+    val errorMessage: String? = null,
+    val downloadProgressMap: Map<String, Float> = emptyMap(),
+    val activePlayerFile: CameraMediaFile? = null
+)
+
+class FootageViewModel(application: Application) : AndroidViewModel(application) {
+
+    private val repository = FootageRepository(application)
+
+    private val _uiState = MutableStateFlow(FootageUiState())
+    val uiState: StateFlow<FootageUiState> = _uiState.asStateFlow()
+
+    private var downloadJobs = mutableMapOf<String, Job>()
+
+    init {
+        loadDownloadedFiles()
+    }
+
+    fun selectTab(tab: FootageTab) {
+        _uiState.update { it.copy(currentTab = tab) }
+        when (tab) {
+            FootageTab.CAMERA -> loadCameraFiles()
+            FootageTab.DOWNLOADED -> loadDownloadedFiles()
+            FootageTab.USB -> {
+                val tree = _uiState.value.usbTreeUri
+                if (tree != null) {
+                    loadUsbFiles(tree)
+                }
+            }
+        }
+    }
+
+    fun loadCameraFiles() {
+        viewModelScope.launch {
+            _uiState.update { it.copy(isLoading = true, errorMessage = null) }
+            val result = repository.fetchCameraFiles()
+            if (result.isSuccess) {
+                _uiState.update {
+                    it.copy(
+                        cameraFiles = result.getOrDefault(emptyList()),
+                        isLoading = false,
+                        errorMessage = null
+                    )
+                }
+            } else {
+                _uiState.update {
+                    it.copy(
+                        isLoading = false,
+                        errorMessage = "Could not reach camera. Connect Wi-Fi to camera AP (192.168.42.1)."
+                    )
+                }
+            }
+        }
+    }
+
+    fun loadDownloadedFiles() {
+        viewModelScope.launch {
+            val list = repository.getLocalFiles()
+            _uiState.update { it.copy(downloadedFiles = list) }
+        }
+    }
+
+    fun setUsbTree(uri: Uri) {
+        _uiState.update { it.copy(usbTreeUri = uri) }
+        loadUsbFiles(uri)
+    }
+
+    fun loadUsbFiles(uri: Uri) {
+        viewModelScope.launch {
+            _uiState.update { it.copy(isLoading = true, errorMessage = null) }
+            val list = repository.getUsbFiles(uri)
+            _uiState.update {
+                it.copy(
+                    usbFiles = list,
+                    isLoading = false
+                )
+            }
+        }
+    }
+
+    fun downloadCameraFile(file: CameraMediaFile) {
+        if (_uiState.value.downloadProgressMap.containsKey(file.name)) return
+
+        val job = viewModelScope.launch {
+            _uiState.update {
+                it.copy(downloadProgressMap = it.downloadProgressMap + (file.name to 0.0f))
+            }
+
+            val result = repository.downloadCameraFile(file) { bytesRead, totalBytes ->
+                if (totalBytes > 0) {
+                    val progress = (bytesRead.toFloat() / totalBytes.toFloat()).coerceIn(0f, 1f)
+                    _uiState.update {
+                        it.copy(downloadProgressMap = it.downloadProgressMap + (file.name to progress))
+                    }
+                }
+            }
+
+            _uiState.update {
+                it.copy(downloadProgressMap = it.downloadProgressMap - file.name)
+            }
+
+            if (result.isSuccess) {
+                loadDownloadedFiles()
+                loadCameraFiles()
+            } else {
+                _uiState.update {
+                    it.copy(errorMessage = "Download failed: ${result.exceptionOrNull()?.message}")
+                }
+            }
+        }
+        downloadJobs[file.name] = job
+    }
+
+    fun importUsbFile(file: CameraMediaFile) {
+        val uriStr = file.contentUri ?: return
+        if (_uiState.value.downloadProgressMap.containsKey(file.name)) return
+
+        viewModelScope.launch {
+            _uiState.update {
+                it.copy(downloadProgressMap = it.downloadProgressMap + (file.name to 0.0f))
+            }
+
+            val result = repository.importFromUsb(
+                sourceUri = Uri.parse(uriStr),
+                name = file.name,
+                sizeBytes = file.sizeBytes
+            ) { bytesRead, totalBytes ->
+                if (totalBytes > 0) {
+                    val progress = (bytesRead.toFloat() / totalBytes.toFloat()).coerceIn(0f, 1f)
+                    _uiState.update {
+                        it.copy(downloadProgressMap = it.downloadProgressMap + (file.name to progress))
+                    }
+                }
+            }
+
+            _uiState.update {
+                it.copy(downloadProgressMap = it.downloadProgressMap - file.name)
+            }
+
+            if (result.isSuccess) {
+                loadDownloadedFiles()
+                val tree = _uiState.value.usbTreeUri
+                if (tree != null) loadUsbFiles(tree)
+            } else {
+                _uiState.update {
+                    it.copy(errorMessage = "Import failed: ${result.exceptionOrNull()?.message}")
+                }
+            }
+        }
+    }
+
+    fun deleteDownloadedFile(file: CameraMediaFile) {
+        viewModelScope.launch {
+            repository.deleteLocalFile(file)
+            loadDownloadedFiles()
+            loadCameraFiles()
+        }
+    }
+
+    fun playFile(file: CameraMediaFile) {
+        _uiState.update { it.copy(activePlayerFile = file) }
+    }
+
+    fun closePlayer() {
+        _uiState.update { it.copy(activePlayerFile = null) }
+    }
+
+    fun clearError() {
+        _uiState.update { it.copy(errorMessage = null) }
+    }
+}

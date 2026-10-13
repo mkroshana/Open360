@@ -130,11 +130,62 @@ class FootageRepository(
             } catch (e: Exception) {
                 Log.e(TAG, "Error querying MediaStore for local files", e)
             }
+
+            // Also scan MediaStore.Video for clips downloaded by Insta360 or Open360
+            val videoProjection = arrayOf(
+                MediaStore.Video.Media._ID,
+                MediaStore.Video.Media.DISPLAY_NAME,
+                MediaStore.Video.Media.SIZE,
+                MediaStore.Video.Media.DATE_MODIFIED
+            )
+            val videoSelection = "${MediaStore.Video.Media.RELATIVE_PATH} LIKE ? OR ${MediaStore.Video.Media.RELATIVE_PATH} LIKE ?"
+            val videoSelectionArgs = arrayOf("%$FOLDER%", "%Insta360Download%")
+
+            try {
+                context.contentResolver.query(
+                    MediaStore.Video.Media.EXTERNAL_CONTENT_URI,
+                    videoProjection,
+                    videoSelection,
+                    videoSelectionArgs,
+                    "${MediaStore.Video.Media.DATE_MODIFIED} DESC"
+                )?.use { cursor ->
+                    val idCol = cursor.getColumnIndexOrThrow(MediaStore.Video.Media._ID)
+                    val nameCol = cursor.getColumnIndexOrThrow(MediaStore.Video.Media.DISPLAY_NAME)
+                    val sizeCol = cursor.getColumnIndexOrThrow(MediaStore.Video.Media.SIZE)
+                    val dateCol = cursor.getColumnIndexOrThrow(MediaStore.Video.Media.DATE_MODIFIED)
+
+                    while (cursor.moveToNext()) {
+                        val id = cursor.getLong(idCol)
+                        val name = cursor.getString(nameCol) ?: continue
+                        val size = cursor.getLong(sizeCol)
+                        val dateSec = cursor.getLong(dateCol)
+                        val uri = ContentUris.withAppendedId(MediaStore.Video.Media.EXTERNAL_CONTENT_URI, id)
+
+                        val base = name.substringBeforeLast(".")
+                        if (files.none { it.baseNameWithoutExtension == base }) {
+                            files.add(
+                                CameraMediaFile(
+                                    name = name,
+                                    fileUrl = uri.toString(),
+                                    contentUri = uri.toString(),
+                                    sizeBytes = size,
+                                    dateTime = dateSec.toString(),
+                                    isVideo = true,
+                                    isImported = true
+                                )
+                            )
+                        }
+                    }
+                }
+            } catch (e: Exception) {
+                Log.e(TAG, "Error querying MediaStore Video for local files", e)
+            }
         }
 
-        // Also check direct filesystem in Download/Open360 and external files directory
+        // Also check direct filesystem in Download/Open360, DCIM/Insta360Download, and external files directory
         val dirsToCheck = listOf(
             File(Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS), FOLDER),
+            File(Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DCIM), "Insta360Download"),
             File(context.getExternalFilesDir(null), "tracks")
         )
 

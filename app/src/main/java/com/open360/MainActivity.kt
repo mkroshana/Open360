@@ -15,6 +15,7 @@ import androidx.activity.viewModels
 import androidx.core.content.ContextCompat
 import com.open360.ui.Open360App
 import com.open360.ui.camera.CameraViewModel
+import com.open360.ui.footage.FootageViewModel
 import com.open360.ui.theme.Open360Theme
 
 class MainActivity : ComponentActivity() {
@@ -23,6 +24,7 @@ class MainActivity : ComponentActivity() {
     }
 
     private val cameraViewModel: CameraViewModel by viewModels()
+    private val footageViewModel: FootageViewModel by viewModels()
 
     private val permissionLauncher = registerForActivityResult(
         ActivityResultContracts.RequestMultiplePermissions()
@@ -50,7 +52,8 @@ class MainActivity : ComponentActivity() {
         setContent {
             Open360Theme {
                 Open360App(
-                    viewModel = cameraViewModel,
+                    cameraViewModel = cameraViewModel,
+                    footageViewModel = footageViewModel,
                     onWakeUpClick = { onWakeUpRequested() }
                 )
             }
@@ -106,6 +109,10 @@ class MainActivity : ComponentActivity() {
 
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
             permissions.add(Manifest.permission.POST_NOTIFICATIONS)
+            permissions.add(Manifest.permission.READ_MEDIA_VIDEO)
+            permissions.add(Manifest.permission.READ_MEDIA_IMAGES)
+        } else {
+            permissions.add(Manifest.permission.READ_EXTERNAL_STORAGE)
         }
 
         return permissions
