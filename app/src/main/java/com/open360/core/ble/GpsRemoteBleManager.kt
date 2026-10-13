@@ -777,6 +777,17 @@ class GpsRemoteBleManager(private val context: Context) {
             .edit().putBoolean(PREF_WAKE_SETUP_CARD_DISMISSED, dismissed).apply()
     }
 
+    /**
+     * Sends the camera a command by its code, with a payload given in hex, for trying out
+     * commands from a debug build. The camera's answer shows in the log under its sequence number.
+     */
+    fun sendCommandForTesting(commandCode: Int, payloadHex: String) {
+        val payload = payloadHex.chunked(2).map { it.toInt(16).toByte() }.toByteArray()
+        val seq = nextSeq()
+        Log.i(TAG, "Test command 0x${Integer.toHexString(commandCode)}, seq=$seq, payload=$payloadHex")
+        queuePacket(Go2BleProtocol.encodeMessagePacket(Go2BleProtocol.encodeInnerMessage(commandCode, seq, payload)))
+    }
+
     private fun cameraIsOn(): Boolean {
         val current = _state.value
         return current.connectionStatus == BleConnectionStatus.CONNECTED && current.isCameraAwake

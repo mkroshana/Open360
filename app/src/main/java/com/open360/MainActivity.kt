@@ -2,6 +2,7 @@ package com.open360
 
 import android.Manifest
 import android.content.Intent
+import android.content.pm.ApplicationInfo
 import android.content.pm.PackageManager
 import android.os.Build
 import android.os.Bundle
@@ -44,6 +45,7 @@ class MainActivity : ComponentActivity() {
 
         checkAndRequestPermissions()
         storeWakeAuthorizationId(intent)
+        runDebugRequest(intent)
 
         setContent {
             Open360Theme {
@@ -58,6 +60,21 @@ class MainActivity : ComponentActivity() {
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
         storeWakeAuthorizationId(intent)
+        runDebugRequest(intent)
+    }
+
+    /**
+     * Debug builds only, for trying things out from a PC: `--ez debug_wake true` presses Wake Up,
+     * and `--ei debug_command <code>` with an optional `--es debug_payload <hex>` sends the
+     * camera that command.
+     */
+    private fun runDebugRequest(intent: Intent?) {
+        if (intent == null || applicationInfo.flags and ApplicationInfo.FLAG_DEBUGGABLE == 0) return
+        if (intent.getBooleanExtra("debug_wake", false)) onWakeUpRequested()
+        val command = intent.getIntExtra("debug_command", -1)
+        if (command >= 0) {
+            cameraViewModel.bleManager.sendCommandForTesting(command, intent.getStringExtra("debug_payload").orEmpty())
+        }
     }
 
     /**
