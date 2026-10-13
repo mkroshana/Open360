@@ -62,6 +62,7 @@ dependencies {
     implementation(libs.coil.compose)
     implementation(libs.androidx.media3.exoplayer)
     implementation(libs.androidx.media3.ui)
+    implementation(libs.androidx.documentfile)
 
     testImplementation(libs.junit)
     testImplementation(libs.kotlinx.coroutines.test)
