@@ -41,6 +41,7 @@ data class RemoteUiState(
     val isSpeedMph: Boolean = false,
     val recordingDurationSeconds: Long = 0L,
     val keepGpsActiveInBackground: Boolean = true,
+    val isGpsCardMinimized: Boolean = false,
     // The ID a switched-off camera accepts a wake-up from, null when none is stored
     val wakeUpId: String? = null,
     // Whether the set-up that gets the camera to allow this app to wake it is on screen
@@ -61,6 +62,7 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
 
         // Whether GPS and the camera link are kept going with the display off; on unless turned off
         private const val PREF_KEEP_GPS_IN_BACKGROUND = "keep_gps_in_background"
+        private const val PREF_GPS_CARD_MINIMIZED = "gps_card_minimized"
 
         // The camera reports "recording" about a second after the clip really starts: on three
         // GO 3S clips the time between its start and stop reports was 0.85 to 1.06 s shorter
@@ -101,7 +103,10 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
     private val settings = application.getSharedPreferences("open360_settings", Context.MODE_PRIVATE)
 
     private val _uiState = MutableStateFlow(
-        RemoteUiState(keepGpsActiveInBackground = settings.getBoolean(PREF_KEEP_GPS_IN_BACKGROUND, true))
+        RemoteUiState(
+            keepGpsActiveInBackground = settings.getBoolean(PREF_KEEP_GPS_IN_BACKGROUND, true),
+            isGpsCardMinimized = settings.getBoolean(PREF_GPS_CARD_MINIMIZED, false)
+        )
     )
     val uiState: StateFlow<RemoteUiState> = _uiState.asStateFlow()
 
@@ -347,6 +352,12 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
         settings.edit().putBoolean(PREF_KEEP_GPS_IN_BACKGROUND, keep).apply()
         _uiState.update { it.copy(keepGpsActiveInBackground = keep) }
         updateBackgroundService()
+    }
+
+    fun toggleGpsCardMinimized() {
+        val minimized = !_uiState.value.isGpsCardMinimized
+        settings.edit().putBoolean(PREF_GPS_CARD_MINIMIZED, minimized).apply()
+        _uiState.update { it.copy(isGpsCardMinimized = minimized) }
     }
 
     /**

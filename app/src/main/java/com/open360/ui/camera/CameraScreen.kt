@@ -32,6 +32,8 @@ import androidx.compose.material.icons.filled.BluetoothConnected
 import androidx.compose.material.icons.filled.BluetoothDisabled
 import androidx.compose.material.icons.filled.CameraAlt
 import androidx.compose.material.icons.filled.CheckCircle
+import androidx.compose.material.icons.filled.ExpandLess
+import androidx.compose.material.icons.filled.ExpandMore
 import androidx.compose.material.icons.filled.FiberManualRecord
 import androidx.compose.material.icons.filled.GpsFixed
 import androidx.compose.material.icons.filled.GpsNotFixed
@@ -198,10 +200,12 @@ fun CameraScreen(
                 isSpeedMph = uiState.isSpeedMph,
                 isRecording = uiState.isRecording,
                 isCameraConnected = uiState.isConnected,
+                isMinimized = uiState.isGpsCardMinimized,
                 joinedLateSeconds = ble.joinedRecordingSeconds,
                 lastGpsSentTimeMs = lastGpsSentTime,
                 track = uiState.trackState,
-                onToggleSpeedUnit = { viewModel.toggleSpeedUnit() }
+                onToggleSpeedUnit = { viewModel.toggleSpeedUnit() },
+                onToggleMinimize = { viewModel.toggleGpsCardMinimized() }
             )
 
             // Primary Camera Shutter & Mode Controller
@@ -550,18 +554,24 @@ fun GpsTelemetryCard(
     isSpeedMph: Boolean,
     isRecording: Boolean,
     isCameraConnected: Boolean = false,
+    isMinimized: Boolean = false,
     joinedLateSeconds: Int? = null,
     lastGpsSentTimeMs: Long,
     track: GpxTrackState = GpxTrackState(),
-    onToggleSpeedUnit: () -> Unit
+    onToggleSpeedUnit: () -> Unit,
+    onToggleMinimize: () -> Unit = {}
 ) {
     ElevatedCard(
         modifier = Modifier.fillMaxWidth(),
         shape = RoundedCornerShape(16.dp)
     ) {
         Column(modifier = Modifier.padding(16.dp)) {
+            // Header Row (Clickable to toggle minimize/expand)
             Row(
-                modifier = Modifier.fillMaxWidth(),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clip(RoundedCornerShape(8.dp))
+                    .clickable { onToggleMinimize() },
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically
             ) {
@@ -571,162 +581,268 @@ fun GpsTelemetryCard(
                     fontWeight = FontWeight.SemiBold
                 )
 
-                // Satellite fix pill
                 Row(
                     verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(4.dp)
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
+                    // Satellite fix pill
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(4.dp)
+                    ) {
+                        Icon(
+                            imageVector = if (gps.hasFix) Icons.Default.GpsFixed else Icons.Default.GpsNotFixed,
+                            contentDescription = "GPS Signal",
+                            modifier = Modifier.size(16.dp),
+                            tint = if (gps.hasFix) Color(0xFF2E7D32) else MaterialTheme.colorScheme.error
+                        )
+                        Text(
+                            text = if (gps.hasFix) "${gps.satellitesInFix} Satellites" else "Finding Satellites...",
+                            style = MaterialTheme.typography.labelMedium,
+                            color = if (gps.hasFix) Color(0xFF2E7D32) else MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+
                     Icon(
-                        imageVector = if (gps.hasFix) Icons.Default.GpsFixed else Icons.Default.GpsNotFixed,
-                        contentDescription = "GPS Signal",
-                        modifier = Modifier.size(16.dp),
-                        tint = if (gps.hasFix) Color(0xFF2E7D32) else MaterialTheme.colorScheme.error
-                    )
-                    Text(
-                        text = if (gps.hasFix) "${gps.satellitesInFix} Satellites" else "Finding Satellites...",
-                        style = MaterialTheme.typography.labelMedium,
-                        color = if (gps.hasFix) Color(0xFF2E7D32) else MaterialTheme.colorScheme.onSurfaceVariant
+                        imageVector = if (isMinimized) Icons.Default.ExpandMore else Icons.Default.ExpandLess,
+                        contentDescription = if (isMinimized) "Expand GPS Card" else "Minimize GPS Card",
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.size(24.dp)
                     )
                 }
             }
 
-            Spacer(modifier = Modifier.height(16.dp))
+            AnimatedVisibility(visible = isMinimized) {
+                Column {
+                    Spacer(modifier = Modifier.height(10.dp))
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        // Compact speed readout with unit toggle
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(6.dp)
+                        ) {
+                            val speedDisplay = if (gps.hasFix) {
+                                val speedValue = if (isSpeedMph) gps.speedMph else gps.speedKmh
+                                String.format(Locale.US, "%.1f", speedValue)
+                            } else {
+                                "—"
+                            }
+                            val unitText = if (isSpeedMph) "mph" else "km/h"
 
-            // Primary Speed Gauge / Readout
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                verticalAlignment = Alignment.Bottom,
-                horizontalArrangement = Arrangement.Center
-            ) {
-                val speedDisplay = if (gps.hasFix) {
-                    val speedValue = if (isSpeedMph) gps.speedMph else gps.speedKmh
-                    String.format(Locale.US, "%.1f", speedValue)
-                } else {
-                    "—"
-                }
-                val unitText = if (isSpeedMph) "mph" else "km/h"
+                            Text(
+                                text = speedDisplay,
+                                style = MaterialTheme.typography.headlineSmall.copy(
+                                    fontWeight = FontWeight.Bold,
+                                    fontFamily = FontFamily.Monospace
+                                ),
+                                color = MaterialTheme.colorScheme.primary
+                            )
+                            Box(
+                                modifier = Modifier
+                                    .clip(RoundedCornerShape(6.dp))
+                                    .background(MaterialTheme.colorScheme.secondaryContainer)
+                                    .clickable { onToggleSpeedUnit() }
+                                    .padding(horizontal = 6.dp, vertical = 2.dp)
+                            ) {
+                                Text(
+                                    text = unitText,
+                                    style = MaterialTheme.typography.labelMedium,
+                                    fontWeight = FontWeight.Bold,
+                                    color = MaterialTheme.colorScheme.onSecondaryContainer
+                                )
+                            }
+                        }
 
-                Text(
-                    text = speedDisplay,
-                    style = MaterialTheme.typography.displayLarge.copy(
-                        fontSize = 64.sp,
-                        fontWeight = FontWeight.Bold,
-                        fontFamily = FontFamily.Monospace
-                    ),
-                    color = MaterialTheme.colorScheme.primary
-                )
-                Spacer(modifier = Modifier.width(8.dp))
-                Box(
-                    modifier = Modifier
-                        .padding(bottom = 12.dp)
-                        .clip(RoundedCornerShape(8.dp))
-                        .background(MaterialTheme.colorScheme.secondaryContainer)
-                        .clickable { onToggleSpeedUnit() }
-                        .padding(horizontal = 8.dp, vertical = 4.dp)
-                ) {
-                    Text(
-                        text = unitText,
-                        style = MaterialTheme.typography.labelLarge,
-                        fontWeight = FontWeight.Bold,
-                        color = MaterialTheme.colorScheme.onSecondaryContainer
-                    )
-                }
-            }
+                        // Compact streaming status badge
+                        val streamActive = isCameraConnected && gps.hasFix
+                        val badgeBg = if (streamActive) Color(0xFF2E7D32).copy(alpha = 0.12f) else MaterialTheme.colorScheme.surfaceVariant
+                        val badgeColor = if (streamActive) Color(0xFF2E7D32) else MaterialTheme.colorScheme.onSurfaceVariant
+                        val compactStreamText = when {
+                            streamActive && isRecording -> if (track.pointCount > 0) "Sending (${track.pointCount})" else "Sending GPS"
+                            streamActive -> "GPS Ready"
+                            isCameraConnected && !gps.hasFix -> "Waiting for GPS"
+                            else -> "No Camera"
+                        }
 
-            Spacer(modifier = Modifier.height(16.dp))
+                        Row(
+                            modifier = Modifier
+                                .clip(RoundedCornerShape(6.dp))
+                                .background(badgeBg)
+                                .padding(horizontal = 8.dp, vertical = 4.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(4.dp)
+                        ) {
+                            Icon(
+                                imageVector = if (streamActive) Icons.Default.CheckCircle else Icons.Default.Sync,
+                                contentDescription = "GPS Status",
+                                modifier = Modifier.size(14.dp),
+                                tint = badgeColor
+                            )
+                            Text(
+                                text = compactStreamText,
+                                style = MaterialTheme.typography.labelSmall,
+                                fontWeight = FontWeight.Medium,
+                                color = badgeColor
+                            )
+                        }
+                    }
 
-            // Detailed telemetry grid
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween
-            ) {
-                TelemetryMetricItem(
-                    icon = Icons.Default.Height,
-                    label = "Altitude",
-                    value = if (gps.hasFix) String.format(Locale.US, "%.1f m", gps.altitudeMeters) else "—",
-                    modifier = Modifier.weight(1f)
-                )
-                TelemetryMetricItem(
-                    icon = Icons.Default.Speed,
-                    label = "Accuracy",
-                    value = if (gps.hasFix) String.format(Locale.US, "±%.1f m", gps.accuracyMeters) else "—",
-                    modifier = Modifier.weight(1f)
-                )
-                TelemetryMetricItem(
-                    icon = Icons.Default.LocationOn,
-                    label = "Heading",
-                    value = if (gps.hasFix) String.format(Locale.US, "%.0f°", gps.bearingDegrees) else "—",
-                    modifier = Modifier.weight(1f)
-                )
-            }
-
-            Spacer(modifier = Modifier.height(12.dp))
-
-            // Live stream injection badge
-            val streamActive = isCameraConnected && gps.hasFix
-            val badgeBg = if (streamActive) Color(0xFF2E7D32).copy(alpha = 0.12f) else MaterialTheme.colorScheme.surfaceVariant
-            val badgeColor = if (streamActive) Color(0xFF2E7D32) else MaterialTheme.colorScheme.onSurfaceVariant
-
-            val streamText = when {
-                streamActive && isRecording && joinedLateSeconds != null ->
-                    "Sending GPS, Joined $joinedLateSeconds s After the Start"
-                streamActive && isRecording -> "Sending GPS to the Camera"
-                streamActive -> "GPS Ready, Sent While Recording"
-                isCameraConnected && !gps.hasFix -> "Waiting for GPS"
-                else -> "No Camera Connected"
-            }
-
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .clip(RoundedCornerShape(8.dp))
-                    .background(badgeBg)
-                    .padding(horizontal = 12.dp, vertical = 8.dp),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.SpaceBetween
-            ) {
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(6.dp)
-                ) {
-                    Icon(
-                        imageVector = if (streamActive) Icons.Default.CheckCircle else Icons.Default.Sync,
-                        contentDescription = "GPS Sending Status",
-                        modifier = Modifier.size(16.dp),
-                        tint = badgeColor
-                    )
-                    Text(
-                        text = streamText,
-                        style = MaterialTheme.typography.bodySmall,
-                        fontWeight = FontWeight.Medium,
-                        color = badgeColor
-                    )
-                }
-
-                if (lastGpsSentTimeMs > 0) {
-                    Text(
-                        text = "Active",
-                        style = MaterialTheme.typography.labelSmall,
-                        color = badgeColor
-                    )
+                    if (track.lastError != null) {
+                        Spacer(modifier = Modifier.height(4.dp))
+                        Text(
+                            text = track.lastError,
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.error
+                        )
+                    }
                 }
             }
 
-            if (track.fileName != null) {
-                Spacer(modifier = Modifier.height(8.dp))
-                Text(
-                    text = "Route file: ${track.folder}/${track.fileName} (${track.pointCount} points)",
-                    style = MaterialTheme.typography.labelSmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-            }
-            if (track.lastError != null) {
-                Spacer(modifier = Modifier.height(8.dp))
-                Text(
-                    text = track.lastError,
-                    style = MaterialTheme.typography.labelSmall,
-                    color = MaterialTheme.colorScheme.error
-                )
+            AnimatedVisibility(visible = !isMinimized) {
+                Column {
+                    Spacer(modifier = Modifier.height(16.dp))
+
+                    // Primary Speed Gauge / Readout
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.Bottom,
+                        horizontalArrangement = Arrangement.Center
+                    ) {
+                        val speedDisplay = if (gps.hasFix) {
+                            val speedValue = if (isSpeedMph) gps.speedMph else gps.speedKmh
+                            String.format(Locale.US, "%.1f", speedValue)
+                        } else {
+                            "—"
+                        }
+                        val unitText = if (isSpeedMph) "mph" else "km/h"
+
+                        Text(
+                            text = speedDisplay,
+                            style = MaterialTheme.typography.displayLarge.copy(
+                                fontSize = 64.sp,
+                                fontWeight = FontWeight.Bold,
+                                fontFamily = FontFamily.Monospace
+                            ),
+                            color = MaterialTheme.colorScheme.primary
+                        )
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Box(
+                            modifier = Modifier
+                                .padding(bottom = 12.dp)
+                                .clip(RoundedCornerShape(8.dp))
+                                .background(MaterialTheme.colorScheme.secondaryContainer)
+                                .clickable { onToggleSpeedUnit() }
+                                .padding(horizontal = 8.dp, vertical = 4.dp)
+                        ) {
+                            Text(
+                                text = unitText,
+                                style = MaterialTheme.typography.labelLarge,
+                                fontWeight = FontWeight.Bold,
+                                color = MaterialTheme.colorScheme.onSecondaryContainer
+                            )
+                        }
+                    }
+
+                    Spacer(modifier = Modifier.height(16.dp))
+
+                    // Detailed telemetry grid
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween
+                    ) {
+                        TelemetryMetricItem(
+                            icon = Icons.Default.Height,
+                            label = "Altitude",
+                            value = if (gps.hasFix) String.format(Locale.US, "%.1f m", gps.altitudeMeters) else "—",
+                            modifier = Modifier.weight(1f)
+                        )
+                        TelemetryMetricItem(
+                            icon = Icons.Default.Speed,
+                            label = "Accuracy",
+                            value = if (gps.hasFix) String.format(Locale.US, "±%.1f m", gps.accuracyMeters) else "—",
+                            modifier = Modifier.weight(1f)
+                        )
+                        TelemetryMetricItem(
+                            icon = Icons.Default.LocationOn,
+                            label = "Heading",
+                            value = if (gps.hasFix) String.format(Locale.US, "%.0f°", gps.bearingDegrees) else "—",
+                            modifier = Modifier.weight(1f)
+                        )
+                    }
+
+                    Spacer(modifier = Modifier.height(12.dp))
+
+                    // Live stream injection badge
+                    val streamActive = isCameraConnected && gps.hasFix
+                    val badgeBg = if (streamActive) Color(0xFF2E7D32).copy(alpha = 0.12f) else MaterialTheme.colorScheme.surfaceVariant
+                    val badgeColor = if (streamActive) Color(0xFF2E7D32) else MaterialTheme.colorScheme.onSurfaceVariant
+
+                    val streamText = when {
+                        streamActive && isRecording && joinedLateSeconds != null ->
+                            "Sending GPS, Joined $joinedLateSeconds s After the Start"
+                        streamActive && isRecording -> "Sending GPS to the Camera"
+                        streamActive -> "GPS Ready, Sent While Recording"
+                        isCameraConnected && !gps.hasFix -> "Waiting for GPS"
+                        else -> "No Camera Connected"
+                    }
+
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clip(RoundedCornerShape(8.dp))
+                            .background(badgeBg)
+                            .padding(horizontal = 12.dp, vertical = 8.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.SpaceBetween
+                    ) {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(6.dp)
+                        ) {
+                            Icon(
+                                imageVector = if (streamActive) Icons.Default.CheckCircle else Icons.Default.Sync,
+                                contentDescription = "GPS Sending Status",
+                                modifier = Modifier.size(16.dp),
+                                tint = badgeColor
+                            )
+                            Text(
+                                text = streamText,
+                                style = MaterialTheme.typography.bodySmall,
+                                fontWeight = FontWeight.Medium,
+                                color = badgeColor
+                            )
+                        }
+
+                        if (lastGpsSentTimeMs > 0) {
+                            Text(
+                                text = "Active",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = badgeColor
+                            )
+                        }
+                    }
+
+                    if (track.fileName != null) {
+                        Spacer(modifier = Modifier.height(8.dp))
+                        Text(
+                            text = "Route file: ${track.folder}/${track.fileName} (${track.pointCount} points)",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                    if (track.lastError != null) {
+                        Spacer(modifier = Modifier.height(8.dp))
+                        Text(
+                            text = track.lastError,
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.error
+                        )
+                    }
+                }
             }
         }
     }
