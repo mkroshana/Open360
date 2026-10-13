@@ -41,7 +41,7 @@ data class RemoteUiState(
     val isSpeedMph: Boolean = false,
     val recordingDurationSeconds: Long = 0L,
     val keepGpsActiveInBackground: Boolean = true,
-    val isGpsCardMinimized: Boolean = false,
+    val isGpsCardMinimized: Boolean = true,
     // The ID a switched-off camera accepts a wake-up from, null when none is stored
     val wakeUpId: String? = null,
     // Whether the set-up that gets the camera to allow this app to wake it is on screen
@@ -105,7 +105,7 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
     private val _uiState = MutableStateFlow(
         RemoteUiState(
             keepGpsActiveInBackground = settings.getBoolean(PREF_KEEP_GPS_IN_BACKGROUND, true),
-            isGpsCardMinimized = settings.getBoolean(PREF_GPS_CARD_MINIMIZED, false)
+            isGpsCardMinimized = settings.getBoolean(PREF_GPS_CARD_MINIMIZED, true)
         )
     )
     val uiState: StateFlow<RemoteUiState> = _uiState.asStateFlow()
