@@ -80,12 +80,34 @@ Insta360 cameras have two completely separate BLE architectures. Open360 uses Ar
 
 ## 4. Key Codebase Files & Responsibilities
 
-- `InstaGpsRemoteGattServer.kt`: Hosts the BLE GATT server (`0xCE80` & `0xD0FF`), manages BLE advertising as "Insta360 GPS Remote", handles camera connections, runs the 10 Hz NMEA transmission loop, and dispatches remote button commands.
-- `Go2BleProtocol.kt`: Pure Kotlin protocol encoders and decoders (`buildGpsNmeaFrame`, `buildRemoteButtonCommand`, `parseCameraStatusPacket`, CRC-16/MODBUS envelope framing).
-- `GpsTrackerEngine.kt` & `GpsTrackerService.kt`: Android GPS location provider and Foreground Service ensuring continuous GPS tracking and BLE broadcasting when the phone screen is off.
-- `CameraViewModel.kt`: Coordinates the GATT server, location fixes, recording duration timer, and UI state.
-- `CameraScreen.kt`: Jetpack Compose UI showing live speed gauge, altitude, heading, satellite fix, camera status, and tactile shutter.
-- `Go2BleProtocolTest.kt`: Unit test suite covering synthetic capture vectors, NMEA sentence formats, and status packet decoders.
+### Core BLE & Camera Control
+- `GpsRemoteBleManager.kt`: The active BLE manager for Architecture B. Handles connection to `0xBE80`, sync packet processing, keep-alive transmission every 2 s, status/capture notifications (`0x2026`, `0x2010`, `0x2003`, etc.), `GET_OPTIONS` queries, wake authorization messages, sequential write queue, and 53-byte `UploadGps` streaming.
+- `Go2BleProtocol.kt`: Protobuf and BLE packet framer with CRC-16/MODBUS. Encodes `UploadGps` (code 53) payloads, inner messages, sync responses, authorization check packets, and decodes incoming camera notifications (`CameraDetails`, `CameraCaptureState`, `BatteryStatus`, `StorageState`). Also preserves Architecture A NMEA frame encoders.
+- `CameraWakeUpBleManager.kt`: Wake beacon helper (preserves ORBIT beacon builder).
+- `InstaGpsRemoteGattServer.kt`: Emulated GATT server (`0xCE80` & `0xD0FF`) for Architecture A (dormant on GO 3S).
+
+### GPS Processing, Pacing & GPX Recording
+- `GpsTrackerEngine.kt`: Android LocationManager provider for satellite-only fixes (`GPS_PROVIDER`), converting altitude to sea level on Android 14+.
+- `GpsTrackerService.kt`: Foreground service holding a partial wake lock so fixes, keep-alive, and camera notifications continue with screen off.
+- `GpsTimeline.kt`: Circular buffer of recent fixes with linear interpolation to compute exact position, speed, and heading at any millisecond timestamp.
+- `GpsStreamSchedule.kt`: Manages 100 ms video moment scheduling from the recording's first frame, catching up late recordings with blank or backlog fixes.
+- `GpsSendPacer.kt` & `FixedRateLoop.kt`: Rates and batches GPS uploads at <= 12 records/sec and max 4 together to prevent camera buffer dropouts.
+- `GpxTrackRecorder.kt` & `GpxWriter.kt`: Records raw fixes and outputs formatted GPX files to `Download/Open360`, renaming to match the video clip name when stopped from the app.
+
+### UI & Navigation
+- `Open360App.kt`: Root composable managing navigation between `CameraScreen` and `SettingsScreen`, hosting `WakeUpSetupDialog` and `WakeUpIdDialog`.
+- `CameraScreen.kt`: Primary UI with speed readout, telemetry grid, status badges, and tactile shutter.
+- `SettingsScreen.kt`: Settings screen for Background GPS Tracking toggle, Set Up Wake Up status, and Wake-Up ID management.
+- `WakeUpSetup.kt`, `WakeUpSetupCard.kt`, `WakeUpSetupDialog.kt`: Step-by-step pairing wizard guiding the camera authorization prompt and tracking setup state.
+- `WakeUpIdDialog.kt`: Dialog to inspect, copy, or change the camera's 36-char wake-up authorization ID.
+- `CameraStatusText.kt`: Plain-English formatters for storage, battery, runtime, Action Pod, and warning conditions.
+- `CameraViewModel.kt`: Central state orchestrator connecting BLE, GPS, settings, and UI flows.
+
+### Testing & Debugging
+- `MainActivity.kt`: Supports debug intent triggers in debug builds:
+  - `adb shell am start -n com.open360/.MainActivity --ez debug_wake true` (triggers Wake Up)
+  - `adb shell am start -n com.open360/.MainActivity --ei debug_command <code> [--es debug_payload <hex>]` (sends test command to camera)
+- Unit test suite: `Go2BleProtocolTest.kt`, `GpsTimelineTest.kt`, `GpsStreamScheduleTest.kt`, `GpsSendPacerTest.kt`, `FixedRateLoopTest.kt`, `GpxWriterTest.kt`, `CameraStatusTextTest.kt`, `WakeUpSetupTest.kt`.
 
 ## 5. Connection Workflow
 
