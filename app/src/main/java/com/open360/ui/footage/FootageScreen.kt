@@ -74,6 +74,8 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.open360.core.model.CameraMediaFile
 
+import com.open360.core.network.CameraWifiStatus
+
 @Composable
 fun FootageScreen(
     viewModel: FootageViewModel,
@@ -98,7 +100,15 @@ fun FootageScreen(
 
     LaunchedEffect(uiState.currentTab) {
         when (uiState.currentTab) {
-            FootageTab.CAMERA -> if (uiState.cameraFiles.isEmpty()) viewModel.loadCameraFiles()
+            FootageTab.CAMERA -> {
+                if (uiState.cameraFiles.isEmpty()) {
+                    if (viewModel.wifiConnector.checkAndBindExistingCameraNetwork()) {
+                        viewModel.loadCameraFiles()
+                    } else {
+                        viewModel.connectCameraWifi()
+                    }
+                }
+            }
             FootageTab.DOWNLOADED -> viewModel.loadDownloadedFiles()
             FootageTab.USB -> uiState.usbTreeUri?.let { viewModel.loadUsbFiles(it) }
         }
@@ -124,7 +134,13 @@ fun FootageScreen(
                     IconButton(
                         onClick = {
                             when (uiState.currentTab) {
-                                FootageTab.CAMERA -> viewModel.loadCameraFiles()
+                                FootageTab.CAMERA -> {
+                                    if (viewModel.wifiConnector.boundNetwork != null) {
+                                        viewModel.loadCameraFiles()
+                                    } else {
+                                        viewModel.connectCameraWifi()
+                                    }
+                                }
                                 FootageTab.DOWNLOADED -> viewModel.loadDownloadedFiles()
                                 FootageTab.USB -> uiState.usbTreeUri?.let { viewModel.loadUsbFiles(it) }
                             }
@@ -161,8 +177,15 @@ fun FootageScreen(
                 FootageTab.CAMERA -> CameraWifiTabContent(
                     files = uiState.cameraFiles,
                     isLoading = uiState.isLoading,
+                    wifiStatus = uiState.wifiStatus,
+                    wifiSsid = uiState.wifiSsid,
+                    wifiStatusMessage = uiState.wifiStatusMessage,
+                    downloadedCount = uiState.downloadedFiles.size,
                     errorMessage = uiState.errorMessage,
                     downloadProgressMap = uiState.downloadProgressMap,
+                    onConnectWifi = { viewModel.connectCameraWifi() },
+                    onOpenWifiSettings = { viewModel.openWifiSettings(context) },
+                    onSelectDownloadedTab = { viewModel.selectTab(FootageTab.DOWNLOADED) },
                     onRetry = { viewModel.loadCameraFiles() },
                     onPlay = { viewModel.playFile(it) },
                     onDownload = { viewModel.downloadCameraFile(it) }
@@ -200,24 +223,83 @@ fun FootageScreen(
 private fun CameraWifiTabContent(
     files: List<CameraMediaFile>,
     isLoading: Boolean,
+    wifiStatus: CameraWifiStatus,
+    wifiSsid: String?,
+    wifiStatusMessage: String?,
+    downloadedCount: Int,
     errorMessage: String?,
     downloadProgressMap: Map<String, Float>,
+    onConnectWifi: () -> Unit,
+    onOpenWifiSettings: () -> Unit,
+    onSelectDownloadedTab: () -> Unit,
     onRetry: () -> Unit,
     onPlay: (CameraMediaFile) -> Unit,
     onDownload: (CameraMediaFile) -> Unit
 ) {
-    if (isLoading && files.isEmpty()) {
-        Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-            CircularProgressIndicator()
-        }
-        return
-    }
-
-    if (errorMessage != null && files.isEmpty()) {
+    if (wifiStatus == CameraWifiStatus.CONNECTING && files.isEmpty()) {
         Box(
             modifier = Modifier
                 .fillMaxSize()
                 .padding(24.dp),
+            contentAlignment = Alignment.Center
+        ) {
+            ElevatedCard(
+                modifier = Modifier.fillMaxWidth(),
+                shape = RoundedCornerShape(16.dp)
+            ) {
+                Column(
+                    modifier = Modifier.padding(24.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally
+                ) {
+                    CircularProgressIndicator(modifier = Modifier.size(48.dp))
+                    Spacer(modifier = Modifier.height(16.dp))
+                    Text(
+                        text = "Connecting to Camera Wi-Fi",
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.Bold
+                    )
+                    Spacer(modifier = Modifier.height(8.dp))
+                    Text(
+                        text = wifiStatusMessage ?: "Requesting connection to ${wifiSsid ?: "camera AP"}...",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    Spacer(modifier = Modifier.height(8.dp))
+                    Text(
+                        text = "If Android asks to connect, tap Connect on the system prompt.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.outline
+                    )
+                    Spacer(modifier = Modifier.height(16.dp))
+                    OutlinedButton(onClick = onOpenWifiSettings) {
+                        Text(text = "Open Wi-Fi Settings")
+                    }
+                }
+            }
+        }
+        return
+    }
+
+    if (isLoading && files.isEmpty()) {
+        Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+            Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                CircularProgressIndicator()
+                Spacer(modifier = Modifier.height(12.dp))
+                Text(
+                    text = "Loading Camera Footage...",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+        }
+        return
+    }
+
+    if ((errorMessage != null || wifiStatus == CameraWifiStatus.FAILED || wifiStatus == CameraWifiStatus.IDLE) && files.isEmpty()) {
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(20.dp),
             contentAlignment = Alignment.Center
         ) {
             ElevatedCard(
@@ -231,24 +313,80 @@ private fun CameraWifiTabContent(
                     Icon(
                         imageVector = Icons.Default.Wifi,
                         contentDescription = "Wi-Fi",
-                        modifier = Modifier.size(48.dp),
+                        modifier = Modifier.size(44.dp),
                         tint = MaterialTheme.colorScheme.primary
                     )
                     Spacer(modifier = Modifier.height(12.dp))
                     Text(
-                        text = "Camera Not Connected",
+                        text = "Camera Wi-Fi Connection",
                         style = MaterialTheme.typography.titleMedium,
                         fontWeight = FontWeight.Bold
                     )
                     Spacer(modifier = Modifier.height(8.dp))
                     Text(
-                        text = errorMessage,
+                        text = "Bluetooth handles shutter and GPS metadata. High-speed Wi-Fi is needed to stream and download video clips.",
                         style = MaterialTheme.typography.bodyMedium,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
+                    Spacer(modifier = Modifier.height(12.dp))
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .background(
+                                MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
+                                RoundedCornerShape(8.dp)
+                            )
+                            .padding(12.dp)
+                    ) {
+                        Text(
+                            text = "1. Swipe down on the camera or Action Pod screen and ensure Wi-Fi is enabled.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                        Spacer(modifier = Modifier.height(4.dp))
+                        Text(
+                            text = "2. Tap Connect Wi-Fi below to automatically bind to ${wifiSsid ?: "GO 3S ...OSC"}.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+
+                    if (errorMessage != null) {
+                        Spacer(modifier = Modifier.height(10.dp))
+                        Text(
+                            text = errorMessage,
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.error
+                        )
+                    }
+
                     Spacer(modifier = Modifier.height(16.dp))
-                    Button(onClick = onRetry) {
-                        Text(text = "Retry Connection")
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        Button(
+                            onClick = onConnectWifi,
+                            modifier = Modifier.weight(1f)
+                        ) {
+                            Text(text = "Connect Wi-Fi")
+                        }
+                        OutlinedButton(
+                            onClick = onOpenWifiSettings,
+                            modifier = Modifier.weight(1f)
+                        ) {
+                            Text(text = "Wi-Fi Settings")
+                        }
+                    }
+
+                    if (downloadedCount > 0) {
+                        Spacer(modifier = Modifier.height(16.dp))
+                        FilledTonalButton(
+                            onClick = onSelectDownloadedTab,
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Text(text = "View Downloaded Clips ($downloadedCount Available)")
+                        }
                     }
                 }
             }

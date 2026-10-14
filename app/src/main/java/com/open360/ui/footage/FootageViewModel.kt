@@ -13,6 +13,10 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 
+import android.content.Context
+import com.open360.core.network.CameraWifiConnector
+import com.open360.core.network.CameraWifiStatus
+
 enum class FootageTab(val title: String) {
     CAMERA("Camera Wi-Fi"),
     DOWNLOADED("Downloaded"),
@@ -28,12 +32,16 @@ data class FootageUiState(
     val isLoading: Boolean = false,
     val errorMessage: String? = null,
     val downloadProgressMap: Map<String, Float> = emptyMap(),
-    val activePlayerFile: CameraMediaFile? = null
+    val activePlayerFile: CameraMediaFile? = null,
+    val wifiStatus: CameraWifiStatus = CameraWifiStatus.IDLE,
+    val wifiSsid: String? = null,
+    val wifiStatusMessage: String? = null
 )
 
 class FootageViewModel(application: Application) : AndroidViewModel(application) {
 
     private val repository = FootageRepository(application)
+    val wifiConnector = CameraWifiConnector(application)
 
     private val _uiState = MutableStateFlow(FootageUiState())
     val uiState: StateFlow<FootageUiState> = _uiState.asStateFlow()
@@ -42,12 +50,40 @@ class FootageViewModel(application: Application) : AndroidViewModel(application)
 
     init {
         loadDownloadedFiles()
+
+        // Sync Wi-Fi connector state into FootageUiState
+        viewModelScope.launch {
+            wifiConnector.status.collect { status ->
+                _uiState.update { it.copy(wifiStatus = status) }
+                if (status == CameraWifiStatus.CONNECTED && _uiState.value.cameraFiles.isEmpty()) {
+                    loadCameraFiles()
+                }
+            }
+        }
+        viewModelScope.launch {
+            wifiConnector.activeSsid.collect { ssid ->
+                _uiState.update { it.copy(wifiSsid = ssid) }
+            }
+        }
+        viewModelScope.launch {
+            wifiConnector.statusMessage.collect { msg ->
+                _uiState.update { it.copy(wifiStatusMessage = msg) }
+            }
+        }
     }
 
     fun selectTab(tab: FootageTab) {
         _uiState.update { it.copy(currentTab = tab) }
         when (tab) {
-            FootageTab.CAMERA -> loadCameraFiles()
+            FootageTab.CAMERA -> {
+                if (_uiState.value.cameraFiles.isEmpty()) {
+                    if (wifiConnector.checkAndBindExistingCameraNetwork()) {
+                        loadCameraFiles()
+                    } else {
+                        connectCameraWifi()
+                    }
+                }
+            }
             FootageTab.DOWNLOADED -> loadDownloadedFiles()
             FootageTab.USB -> {
                 val tree = _uiState.value.usbTreeUri
@@ -56,6 +92,31 @@ class FootageViewModel(application: Application) : AndroidViewModel(application)
                 }
             }
         }
+    }
+
+    fun connectCameraWifi() {
+        val prefs = getApplication<Application>().getSharedPreferences("open360_ble_prefs", Context.MODE_PRIVATE)
+        val serialSuffix = prefs.getString("camera_serial_suffix", "8JY3HF") ?: "8JY3HF"
+        val ssid = CameraWifiConnector.determineCameraSsid("GO 3S $serialSuffix", serialSuffix)
+
+        wifiConnector.connect(
+            targetSsid = ssid,
+            onConnected = {
+                loadCameraFiles()
+            },
+            onFailed = { error ->
+                _uiState.update {
+                    it.copy(
+                        isLoading = false,
+                        errorMessage = "Camera Wi-Fi ($ssid) not reached. Make sure camera Wi-Fi is on."
+                    )
+                }
+            }
+        )
+    }
+
+    fun openWifiSettings(context: Context) {
+        wifiConnector.openWifiSettings(context)
     }
 
     fun loadCameraFiles() {
@@ -195,5 +256,10 @@ class FootageViewModel(application: Application) : AndroidViewModel(application)
 
     fun clearError() {
         _uiState.update { it.copy(errorMessage = null) }
+    }
+
+    override fun onCleared() {
+        super.onCleared()
+        wifiConnector.disconnect()
     }
 }
