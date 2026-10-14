@@ -2,6 +2,7 @@ package com.open360.ui
 
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material.icons.Icons
@@ -64,6 +65,7 @@ fun Open360App(
         )
     } else {
         Scaffold(
+            contentWindowInsets = WindowInsets(0, 0, 0, 0),
             bottomBar = {
                 NavigationBar {
                     NavigationBarItem(
@@ -109,7 +111,8 @@ fun Open360App(
                     MainNavTab.FOOTAGE -> {
                         screens.SaveableStateProvider("footage") {
                             FootageScreen(
-                                viewModel = footageViewModel
+                                viewModel = footageViewModel,
+                                bleState = ble
                             )
                         }
                     }

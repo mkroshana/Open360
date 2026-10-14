@@ -20,6 +20,9 @@ object CameraStatusText {
         }
     }
 
+    /** A concise time left label for the top bar, such as "1 h 20 min left", "42 min left" or "Under 1 min left". */
+    fun timeLeftLabel(seconds: Int): String = "${timeLeft(seconds)} left"
+
     /** What is wrong with the camera's storage, or null when nothing is. */
     fun storageProblem(state: CardState?): String? = when (state) {
         null, CardState.OK -> null
@@ -72,6 +75,26 @@ object CameraStatusText {
     fun podIsLow(status: ChargeBoxStatus): Boolean {
         val battery = status.battery ?: return false
         return status.connected && !battery.onExternalPower && battery.levelPercent <= LOW_BATTERY_PERCENT
+    }
+
+    /** The Action Pod's compact label for the top bar: e.g. "Pod 72%", or null when not connected or unknown. */
+    fun podBatteryLabel(status: ChargeBoxStatus?): String? {
+        if (status == null || !status.connected) return null
+        val battery = status.battery ?: return null
+        return "Pod ${battery.levelPercent}%"
+    }
+
+    /** Whether there is any status to display in the top status bar. */
+    fun hasTopStatus(
+        batteryPercent: Int?,
+        pod: ChargeBoxStatus?,
+        captureSecondsLeft: Int?,
+        cardState: CardState?
+    ): Boolean {
+        return batteryPercent != null ||
+            (pod?.connected == true && pod.battery != null) ||
+            captureSecondsLeft != null ||
+            storageProblem(cardState) != null
     }
 
     /** What the camera says about the wake-up ID, or null when it has not been asked. */

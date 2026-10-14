@@ -120,8 +120,11 @@ fun CameraScreen(
     }
 
     val deviceSubtitle = when {
+        uiState.isConnected && !ble.isCameraAwake -> "Standby"
         uiState.isConnected -> "Connected"
         server.isAdvertising -> "Broadcasting"
+        ble.connectionStatus == BleConnectionStatus.SCANNING -> "Scanning..."
+        ble.connectionStatus == BleConnectionStatus.CONNECTING -> "Connecting..."
         else -> "Disconnected"
     }
 
@@ -129,18 +132,11 @@ fun CameraScreen(
         topBar = {
             TopAppBar(
                 title = {
-                    Column {
-                        Text(
-                            text = "Open360 Remote",
-                            style = MaterialTheme.typography.titleLarge,
-                            fontWeight = FontWeight.Bold
-                        )
-                        Text(
-                            text = "$deviceTitle — $deviceSubtitle",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                    }
+                    Text(
+                        text = deviceTitle,
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.SemiBold
+                    )
                 },
                 actions = {
                     IconButton(

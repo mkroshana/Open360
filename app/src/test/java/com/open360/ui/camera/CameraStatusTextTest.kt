@@ -23,6 +23,13 @@ class CameraStatusTextTest {
     }
 
     @Test
+    fun testTimeLeftLabel() {
+        assertEquals("1 h 19 min left", CameraStatusText.timeLeftLabel(4796))
+        assertEquals("42 min left", CameraStatusText.timeLeftLabel(42 * 60 + 59))
+        assertEquals("Under 1 min left", CameraStatusText.timeLeftLabel(30))
+    }
+
+    @Test
     fun testStorageProblemOnlyWhenSomethingIsWrong() {
         assertNull(CameraStatusText.storageProblem(null))
         assertNull(CameraStatusText.storageProblem(CardState.OK))
@@ -67,6 +74,35 @@ class CameraStatusTextTest {
         assertTrue(CameraStatusText.podIsLow(low))
         assertFalse(CameraStatusText.podIsLow(lowButCharging))
         assertFalse(CameraStatusText.podIsLow(gone))
+    }
+
+    @Test
+    fun testPodBatteryLabel() {
+        val onBattery = ChargeBoxStatus(connected = true, battery = BatteryStatus(69, onExternalPower = false))
+        val gone = ChargeBoxStatus(connected = false, battery = null)
+        val connectedNoBattery = ChargeBoxStatus(connected = true, battery = null)
+
+        assertEquals("Pod 69%", CameraStatusText.podBatteryLabel(onBattery))
+        assertNull(CameraStatusText.podBatteryLabel(gone))
+        assertNull(CameraStatusText.podBatteryLabel(connectedNoBattery))
+        assertNull(CameraStatusText.podBatteryLabel(null))
+    }
+
+    @Test
+    fun testHasTopStatus() {
+        val pod = ChargeBoxStatus(connected = true, battery = BatteryStatus(80, onExternalPower = false))
+        val disconnectedPod = ChargeBoxStatus(connected = false, battery = null)
+
+        // All null / default -> false
+        assertFalse(CameraStatusText.hasTopStatus(null, null, null, null))
+        assertFalse(CameraStatusText.hasTopStatus(null, disconnectedPod, null, CardState.OK))
+
+        // When any relevant status is available -> true
+        assertTrue(CameraStatusText.hasTopStatus(90, null, null, null))
+        assertTrue(CameraStatusText.hasTopStatus(null, pod, null, null))
+        assertTrue(CameraStatusText.hasTopStatus(null, null, 1200, null))
+        assertTrue(CameraStatusText.hasTopStatus(null, null, null, CardState.FULL))
+        assertTrue(CameraStatusText.hasTopStatus(null, null, null, CardState.NO_CARD))
     }
 
     @Test
