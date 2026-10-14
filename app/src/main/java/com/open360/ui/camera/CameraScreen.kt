@@ -1,15 +1,17 @@
 package com.open360.ui.camera
 
 import androidx.compose.animation.AnimatedVisibility
-import androidx.compose.animation.animateContentSize
 import androidx.compose.animation.core.CubicBezierEasing
+import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.RepeatMode
+import androidx.compose.animation.core.animateDp
 import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.animation.core.animateFloat
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.infiniteRepeatable
 import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween
+import androidx.compose.animation.core.updateTransition
 import androidx.compose.animation.expandVertically
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
@@ -572,41 +574,88 @@ fun GpsTelemetryCard(
     onToggleSpeedUnit: () -> Unit,
     onToggleMinimize: () -> Unit = {}
 ) {
-    val motionEasing = CubicBezierEasing(0.77f, 0f, 0.175f, 1f)
-    val floatAnimSpec = tween<Float>(durationMillis = 280, easing = motionEasing)
-    val dpAnimSpec = tween<Dp>(durationMillis = 280, easing = motionEasing)
+    val expandEasing = CubicBezierEasing(0.3f, 0f, 0.3f, 1f)
+    val collapseEasing = FastOutSlowInEasing
+    val transition = updateTransition(targetState = isMinimized, label = "GpsCardTransition")
 
-    // Spatial motion: bias glides between 0f (center when expanded) and -1f (left corner when minimized)
-    val horizontalBias by animateFloatAsState(
-        targetValue = if (isMinimized) -1f else 0f,
-        animationSpec = floatAnimSpec,
+    // Both position and font size are synchronized with card expansion so the speed doesn't jump to the middle prematurely
+    val horizontalBias by transition.animateFloat(
+        transitionSpec = {
+            if (targetState) {
+                tween(durationMillis = 240, easing = collapseEasing)
+            } else {
+                tween(durationMillis = 280, delayMillis = 40, easing = expandEasing)
+            }
+        },
         label = "speedHorizontalBias"
-    )
-    val speedFontSize by animateFloatAsState(
-        targetValue = if (isMinimized) 22f else 56f,
-        animationSpec = floatAnimSpec,
+    ) { minimized ->
+        if (minimized) -1f else 0f
+    }
+
+    val speedFontSize by transition.animateFloat(
+        transitionSpec = {
+            if (targetState) {
+                tween(durationMillis = 220, easing = collapseEasing)
+            } else {
+                tween(durationMillis = 280, delayMillis = 40, easing = expandEasing)
+            }
+        },
         label = "speedFontSize"
-    )
-    val unitPaddingBottom by animateDpAsState(
-        targetValue = if (isMinimized) 2.dp else 10.dp,
-        animationSpec = dpAnimSpec,
+    ) { minimized ->
+        if (minimized) 22f else 56f
+    }
+
+    val unitPaddingBottom by transition.animateDp(
+        transitionSpec = {
+            if (targetState) {
+                tween(durationMillis = 220, easing = collapseEasing)
+            } else {
+                tween(durationMillis = 280, delayMillis = 40, easing = expandEasing)
+            }
+        },
         label = "unitPaddingBottom"
-    )
-    val unitFontSize by animateFloatAsState(
-        targetValue = if (isMinimized) 12f else 14f,
-        animationSpec = floatAnimSpec,
+    ) { minimized ->
+        if (minimized) 2.dp else 10.dp
+    }
+
+    val unitFontSize by transition.animateFloat(
+        transitionSpec = {
+            if (targetState) {
+                tween(durationMillis = 220, easing = collapseEasing)
+            } else {
+                tween(durationMillis = 280, delayMillis = 40, easing = expandEasing)
+            }
+        },
         label = "unitFontSize"
-    )
-    val chevronRotation by animateFloatAsState(
-        targetValue = if (isMinimized) 0f else 180f,
-        animationSpec = floatAnimSpec,
+    ) { minimized ->
+        if (minimized) 12f else 14f
+    }
+
+    val chevronRotation by transition.animateFloat(
+        transitionSpec = {
+            if (targetState) {
+                tween(durationMillis = 240, easing = collapseEasing)
+            } else {
+                tween(durationMillis = 300, easing = expandEasing)
+            }
+        },
         label = "chevronRotation"
-    )
-    val topSpacerHeight by animateDpAsState(
-        targetValue = if (isMinimized) 10.dp else 16.dp,
-        animationSpec = dpAnimSpec,
+    ) { minimized ->
+        if (minimized) 0f else 180f
+    }
+
+    val topSpacerHeight by transition.animateDp(
+        transitionSpec = {
+            if (targetState) {
+                tween(durationMillis = 220, easing = collapseEasing)
+            } else {
+                tween(durationMillis = 280, delayMillis = 40, easing = expandEasing)
+            }
+        },
         label = "topSpacerHeight"
-    )
+    ) { minimized ->
+        if (minimized) 10.dp else 16.dp
+    }
 
     ElevatedCard(
         modifier = Modifier.fillMaxWidth(),
@@ -616,7 +665,6 @@ fun GpsTelemetryCard(
             modifier = Modifier
                 .fillMaxWidth()
                 .padding(16.dp)
-                .animateContentSize(animationSpec = tween(280, easing = motionEasing))
         ) {
             // Header Row (Clickable to toggle minimize/expand)
             Row(
@@ -668,7 +716,7 @@ fun GpsTelemetryCard(
 
             Spacer(modifier = Modifier.height(topSpacerHeight))
 
-            // Shared Speed Box: smoothly glides from Center to Left corner and scales font size
+            // Shared Speed Box: smoothly glides from Center to Left corner and scales font size in lockstep
             Box(modifier = Modifier.fillMaxWidth()) {
                 val speedDisplay = if (gps.hasFix) {
                     val speedValue = if (isSpeedMph) gps.speedMph else gps.speedKmh
@@ -723,11 +771,11 @@ fun GpsTelemetryCard(
                     else -> "No Camera"
                 }
 
-                androidx.compose.animation.AnimatedVisibility(
-                    visible = isMinimized,
+                transition.AnimatedVisibility(
+                    visible = { it },
                     modifier = Modifier.align(Alignment.CenterEnd),
-                    enter = fadeIn(tween(180, delayMillis = 80)),
-                    exit = fadeOut(tween(90))
+                    enter = fadeIn(tween(140, delayMillis = 100)),
+                    exit = fadeOut(tween(60))
                 ) {
                     Row(
                         modifier = Modifier
@@ -758,10 +806,18 @@ fun GpsTelemetryCard(
             val badgeBg = if (streamActive) Color(0xFF2E7D32).copy(alpha = 0.12f) else MaterialTheme.colorScheme.surfaceVariant
             val badgeColor = if (streamActive) Color(0xFF2E7D32) else MaterialTheme.colorScheme.onSurfaceVariant
 
-            AnimatedVisibility(
-                visible = !isMinimized,
-                enter = fadeIn(tween(220, delayMillis = 60)) + expandVertically(tween(280, easing = motionEasing)),
-                exit = fadeOut(tween(130)) + shrinkVertically(tween(240, easing = motionEasing))
+            transition.AnimatedVisibility(
+                visible = { !it },
+                enter = fadeIn(tween(200, delayMillis = 100)) +
+                        expandVertically(
+                            animationSpec = tween(durationMillis = 320, easing = collapseEasing),
+                            expandFrom = Alignment.Top
+                        ),
+                exit = fadeOut(tween(80)) +
+                       shrinkVertically(
+                           animationSpec = tween(durationMillis = 240, easing = collapseEasing),
+                           shrinkTowards = Alignment.Top
+                       )
             ) {
                 Column {
                     Spacer(modifier = Modifier.height(16.dp))
