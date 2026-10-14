@@ -104,12 +104,13 @@ Insta360 cameras have two completely separate BLE architectures. Open360 uses Ar
 - `CameraViewModel.kt`: Central state orchestrator connecting BLE, GPS, settings, and UI flows.
 
 ### Media Browser, Wi-Fi Transfer & Player
+- `CameraWifiConnector.kt`: Programmatic Wi-Fi connection and process network binder. Replicates the official Insta360 app's mechanism: registers `WifiNetworkSuggestion` (password `88888888`) and requests network via `WifiNetworkSpecifier`, binding the app process (`bindProcessToNetwork`) so HTTP requests to `192.168.42.1` route directly to the camera over Wi-Fi STA concurrency while preserving Cellular/home Wi-Fi internet.
 - `FootageRepository.kt`: Manages media discovery, downloading, and importing across three sources:
   1. Camera Wi-Fi via Google OSC v2 `camera.listFiles` and HTTP streaming on port 80.
   2. Local storage (`Download/Open360` and `DCIM/Insta360Download`) via `MediaStore.Downloads` and `MediaStore.Video.Media`.
   3. Wired USB-C OTG / Storage Access Framework (SAF) folder tree (`DCIM/Camera01`).
-- `FootageViewModel.kt`: State management for camera Wi-Fi, downloaded, and USB footage tabs, tracking download progress percentages.
-- `FootageScreen.kt`: Material 3 UI with TabRow for "Camera Wi-Fi", "Downloaded", and "USB / Folder", clip metadata cards, download/stream buttons, and USB directory picker.
+- `FootageViewModel.kt`: State management for camera Wi-Fi, downloaded, and USB footage tabs, automatically triggering `CameraWifiConnector` when the camera tab opens.
+- `FootageScreen.kt`: Material 3 UI with TabRow for "Camera Wi-Fi", "Downloaded", and "USB / Folder", clip metadata cards, download/stream buttons, live connecting status cards, and USB directory picker.
 - `FootagePlayerDialog.kt`: In-app media player powered by AndroidX Media3 (ExoPlayer) with full playback controls, photo viewer, system share action, and companion GPX telemetry overlay.
 - `GpxParser.kt`: Universal XML parser extracting point count, total distance, duration, elevation gain, and max speed from companion `.gpx` files.
 - `OscClient.kt`: OSC v2 client supporting `/osc/info`, `/osc/state`, and `camera.listFiles` with pagination and thumbnails.
