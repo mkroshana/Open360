@@ -1471,27 +1471,6 @@ class GpsRemoteBleManager(private val context: Context) {
     }
 
     /**
-     * Wakes the camera screen.
-     */
-    fun wakeScreen() {
-        queuePacket(Go2BleProtocol.REMOTE_CMD_SCREEN_TOGGLE)
-    }
-
-    /**
-     * Cycles camera capture mode over BLE.
-     */
-    fun cycleMode() {
-        queuePacket(Go2BleProtocol.REMOTE_CMD_MODE)
-    }
-
-    /**
-     * Powers off the camera over BLE.
-     */
-    fun powerOff() {
-        queuePacket(Go2BleProtocol.REMOTE_CMD_POWER_OFF)
-    }
-
-    /**
      * Cleanly disconnects and releases Bluetooth resources.
      */
     @SuppressLint("MissingPermission")

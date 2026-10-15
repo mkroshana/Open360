@@ -62,9 +62,6 @@ object Go2BleProtocol {
 
     // Architecture A fixed 9-byte commands (GPS Remote emulation)
     val REMOTE_CMD_SHUTTER = byteArrayOf(0xfc.toByte(), 0xef.toByte(), 0xfe.toByte(), 0x86.toByte(), 0x00, 0x03, 0x01, 0x02, 0x00)
-    val REMOTE_CMD_MODE = byteArrayOf(0xfc.toByte(), 0xef.toByte(), 0xfe.toByte(), 0x86.toByte(), 0x00, 0x03, 0x01, 0x01, 0x00)
-    val REMOTE_CMD_SCREEN_TOGGLE = byteArrayOf(0xfc.toByte(), 0xef.toByte(), 0xfe.toByte(), 0x86.toByte(), 0x00, 0x03, 0x01, 0x00, 0x00)
-    val REMOTE_CMD_POWER_OFF = byteArrayOf(0xfc.toByte(), 0xef.toByte(), 0xfe.toByte(), 0x86.toByte(), 0x00, 0x03, 0x01, 0x00, 0x03)
 
     /**
      * Serializes an inner 16-byte message header + payload for GO 2 / GO 3 / GO 3S.

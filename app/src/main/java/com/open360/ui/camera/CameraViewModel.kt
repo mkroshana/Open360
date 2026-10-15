@@ -451,25 +451,6 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
         }
     }
 
-    fun cycleMode() {
-        gattServer.sendMode()
-        bleManager.cycleMode()
-        _uiState.update {
-            val next = if (it.currentMode == CaptureMode.VIDEO) CaptureMode.PHOTO else CaptureMode.VIDEO
-            it.copy(currentMode = next)
-        }
-    }
-
-    fun wakeScreen() {
-        gattServer.sendScreenToggle()
-        bleManager.wakeScreen()
-    }
-
-    fun powerOff() {
-        gattServer.sendPowerOff()
-        bleManager.powerOff()
-    }
-
     private fun startRecordingTimer() {
         recordingTimerJob?.cancel()
         // A recording found already running on connecting carries on from the camera's own count

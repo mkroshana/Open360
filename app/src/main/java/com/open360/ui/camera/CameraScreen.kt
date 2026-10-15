@@ -50,13 +50,11 @@ import androidx.compose.material.icons.filled.GpsNotFixed
 import androidx.compose.material.icons.filled.Height
 import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.LocationOn
-import androidx.compose.material.icons.filled.Power
 import androidx.compose.material.icons.filled.PowerSettingsNew
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Speed
 import androidx.compose.material.icons.filled.Stop
 import androidx.compose.material.icons.filled.Sync
-import androidx.compose.material.icons.filled.Tv
 import androidx.compose.material.icons.filled.Videocam
 import androidx.compose.material3.ElevatedCard
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -191,8 +189,6 @@ fun CameraScreen(
                     haptic.performHapticFeedback(HapticFeedbackType.LongPress)
                     viewModel.wakeUpCamera()
                 },
-                onWakeScreen = { viewModel.wakeScreen() },
-                onPowerOff = { viewModel.powerOff() },
                 onConnectToggle = {
                     if (uiState.isConnected) {
                         viewModel.disconnectBle()
@@ -227,7 +223,6 @@ fun CameraScreen(
                 isConnected = uiState.isConnected,
                 isAsleep = ble.connectionStatus == BleConnectionStatus.CONNECTED && !ble.isCameraAwake,
                 onModeSelected = { viewModel.setMode(it) },
-                onCycleMode = { viewModel.cycleMode() },
                 onShutterClick = {
                     haptic.performHapticFeedback(HapticFeedbackType.LongPress)
                     viewModel.onShutterClicked()
@@ -243,8 +238,6 @@ fun CameraScreen(
 fun CameraStatusCard(
     uiState: RemoteUiState,
     onWakeUp: () -> Unit,
-    onWakeScreen: () -> Unit,
-    onPowerOff: () -> Unit,
     onConnectToggle: () -> Unit
 ) {
     val ble = uiState.bleState
@@ -436,40 +429,6 @@ fun CameraStatusCard(
                     )
                     Spacer(modifier = Modifier.width(6.dp))
                     Text(text = if (uiState.isConnected) "Disconnect" else "Connect")
-                }
-            }
-
-            if (uiState.isConnected) {
-                Spacer(modifier = Modifier.height(8.dp))
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(8.dp)
-                ) {
-                    OutlinedButton(
-                        onClick = onWakeScreen,
-                        modifier = Modifier.weight(1f)
-                    ) {
-                        Icon(
-                            imageVector = Icons.Default.Tv,
-                            contentDescription = "Wake Screen",
-                            modifier = Modifier.size(18.dp)
-                        )
-                        Spacer(modifier = Modifier.width(6.dp))
-                        Text(text = "Screen")
-                    }
-
-                    OutlinedButton(
-                        onClick = onPowerOff,
-                        modifier = Modifier.weight(1f)
-                    ) {
-                        Icon(
-                            imageVector = Icons.Default.Power,
-                            contentDescription = "Power Off",
-                            modifier = Modifier.size(18.dp)
-                        )
-                        Spacer(modifier = Modifier.width(6.dp))
-                        Text(text = "Power Off")
-                    }
                 }
             }
         }
@@ -960,7 +919,6 @@ fun CameraControlCard(
     isConnected: Boolean,
     isAsleep: Boolean = false,
     onModeSelected: (CaptureMode) -> Unit,
-    onCycleMode: () -> Unit,
     onShutterClick: () -> Unit
 ) {
     ElevatedCard(
@@ -981,24 +939,6 @@ fun CameraControlCard(
                     style = MaterialTheme.typography.titleMedium,
                     fontWeight = FontWeight.SemiBold
                 )
-
-                if (isConnected) {
-                    OutlinedButton(
-                        onClick = onCycleMode,
-                        modifier = Modifier.height(32.dp)
-                    ) {
-                        Icon(
-                            imageVector = Icons.Default.Sync,
-                            contentDescription = "Next Mode",
-                            modifier = Modifier.size(14.dp)
-                        )
-                        Spacer(modifier = Modifier.width(4.dp))
-                        Text(
-                            text = "Next Mode",
-                            style = MaterialTheme.typography.labelSmall
-                        )
-                    }
-                }
             }
 
             Spacer(modifier = Modifier.height(14.dp))
