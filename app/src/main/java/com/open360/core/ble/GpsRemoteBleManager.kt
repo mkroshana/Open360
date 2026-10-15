@@ -219,8 +219,8 @@ class GpsRemoteBleManager(private val context: Context) {
         private const val RECONNECT_DELAY_MS = 1000L
 
         // A camera that is on answers as soon as the link is up. One that has not answered within
-        // this long is off, and the link is idle until it does.
-        private const val IDLE_LINK_AFTER_MS = 3000L
+        // this long is off, and the link is let go.
+        private const val SILENT_LINK_MS = 3000L
 
         val CCCD_UUID: UUID = UUID.fromString("00002902-0000-1000-8000-00805f9b34fb")
     }
@@ -259,6 +259,10 @@ class GpsRemoteBleManager(private val context: Context) {
     // Set by Wake Up: the next connection sends the wake-up packet before anything else
     @Volatile
     private var wakeOnNextConnect = false
+    // Set while the Wake-Up set-up is open: its first step waits for the camera to be switched
+    // on, which only a link shows, so a link to a camera that is off is held then
+    @Volatile
+    private var holdLinkWhileOff = false
     @Volatile
     private var wakeInProgress = false
     @Volatile
@@ -606,18 +610,23 @@ class GpsRemoteBleManager(private val context: Context) {
     }
 
     /**
-     * Marks the link idle ([BleCameraState.isLinkIdle]) when the camera has not answered on it
-     * within a few seconds. This runs while the phone is still held awake, which is let go only
-     * once the link is idle. The link itself is left as it is: changing its timing just as the
-     * camera came on was followed by the camera dropping both the link and its Action Pod.
+     * Lets go of the link when the camera has not answered on it within a few seconds and no
+     * wake-up is under way: the camera is switched off. Its Bluetooth accepts a link while it is
+     * off, but holding one is no use until it is switched on, and a link held while the camera
+     * powered up in its Action Pod is the likely trigger for the pod losing the camera. So
+     * opening the app with the camera off, or the link opened again after it was switched off,
+     * ends here, and Connect (which wakes it) links again. A camera switched on with its own
+     * button is not noticed until then.
      */
-    private fun scheduleIdleLink(gatt: BluetoothGatt) {
+    private fun letGoIfSilent(gatt: BluetoothGatt) {
         idleLinkJob?.cancel()
         idleLinkJob = scope.launch {
-            delay(IDLE_LINK_AFTER_MS)
-            if (answeringSinceMs != null || wakeInProgress || activeGatt !== gatt) return@launch
-            Log.i(TAG, "The camera is not answering: the link is idle")
-            _state.update { it.copy(isLinkIdle = true) }
+            delay(SILENT_LINK_MS)
+            if (answeringSinceMs != null || wakeInProgress || wakeOnNextConnect || holdLinkWhileOff ||
+                activeGatt !== gatt
+            ) return@launch
+            Log.i(TAG, "The camera is not answering: it is off, letting go of the link")
+            disconnect()
         }
     }
 
@@ -721,7 +730,7 @@ class GpsRemoteBleManager(private val context: Context) {
 
             _state.update { it.copy(connectionStatus = BleConnectionStatus.CONNECTED, isReconnecting = false) }
             startKeepAlive()
-            scheduleIdleLink(gatt)
+            letGoIfSilent(gatt)
             Log.i(TAG, "Camera BLE successfully connected. Ready for commands.")
         }
 
@@ -823,9 +832,9 @@ class GpsRemoteBleManager(private val context: Context) {
                 wakeInProgress = false
                 // A newer attempt, started since this one was cancelled, is still under way
                 if (wakeJob === attempt) _state.update { it.copy(isWaking = false) }
-                // Carry on as after any connection; a camera that is off answers once it is on
+                // Carry on as after any connection; a camera that did not come on is let go
                 requestStatusOnce()
-                activeGatt?.let { scheduleIdleLink(it) }
+                activeGatt?.let { letGoIfSilent(it) }
             }
         }
     }
@@ -992,6 +1001,16 @@ class GpsRemoteBleManager(private val context: Context) {
         val started = _state.value.connectionStatus != BleConnectionStatus.DISCONNECTED
         wakeOnNextConnect = started
         _state.update { it.copy(isWaking = started) }
+    }
+
+    /**
+     * Holds a link to a camera that is off, as the Wake-Up set-up needs to see it switched on, or
+     * goes back to letting go of one; a link held for the set-up is let go once it closes, if the
+     * camera is still off.
+     */
+    fun setHoldLinkWhileOff(hold: Boolean) {
+        holdLinkWhileOff = hold
+        if (!hold) activeGatt?.let { letGoIfSilent(it) }
     }
 
     /** Sends the status requests once per connection. */

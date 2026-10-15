@@ -233,10 +233,13 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
 
         // The set-up for Wake Up is put forward once, the first time the app runs without an ID
         val wakeUpId = bleManager.getWakeAuthorizationId()
+        val setupOpen = wakeUpId == null && !bleManager.wasWakeUpSetupOffered()
+        // The set-up waits for a camera that is off to be switched on, which only a held link shows
+        bleManager.setHoldLinkWhileOff(setupOpen)
         _uiState.update {
             it.copy(
                 wakeUpId = wakeUpId,
-                wakeUpSetupOpen = wakeUpId == null && !bleManager.wasWakeUpSetupOffered(),
+                wakeUpSetupOpen = setupOpen,
                 wakeUpSetupCardDismissed = bleManager.isWakeUpSetupCardDismissed()
             )
         }
@@ -324,11 +327,13 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
     }
 
     fun openWakeUpSetup() {
+        bleManager.setHoldLinkWhileOff(true)
         _uiState.update { it.copy(wakeUpSetupOpen = true) }
     }
 
     fun closeWakeUpSetup() {
         bleManager.markWakeUpSetupOffered()
+        bleManager.setHoldLinkWhileOff(false)
         _uiState.update { it.copy(wakeUpSetupOpen = false) }
     }
 
