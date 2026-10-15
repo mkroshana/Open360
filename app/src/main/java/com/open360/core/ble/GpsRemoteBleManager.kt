@@ -110,6 +110,7 @@ data class BleCameraState(
     // Set once the camera has not answered on the link for a few seconds: it is off, and nothing
     // needs to run until it answers
     val isLinkIdle: Boolean = false,
+    // The camera's battery as it last reported it, forgotten once it stops answering or the link ends
     val batteryPercent: Int? = null,
     val isCharging: Boolean = false,
     val details: CameraDetails = CameraDetails(),
@@ -536,7 +537,7 @@ class GpsRemoteBleManager(private val context: Context) {
                 queuePacket(Go2BleProtocol.buildKeepAlivePacket())
                 if (_state.value.isCameraAwake && SystemClock.elapsedRealtime() - lastHeardAtMs > CAMERA_SILENT_MS) {
                     Log.w(TAG, "Camera has stopped answering")
-                    _state.update { it.copy(isCameraAwake = false) }
+                    _state.update { it.copy(isCameraAwake = false, batteryPercent = null, isCharging = false) }
                 }
             }
         }
@@ -659,6 +660,8 @@ class GpsRemoteBleManager(private val context: Context) {
                         isRecording = false,
                         isCaptureStarting = false,
                         isCaptureStopping = false,
+                        batteryPercent = null,
+                        isCharging = false,
                         details = CameraDetails(),
                         wakeUpRegistration = it.wakeUpRegistration.afterLinkDown()
                     )
@@ -1515,6 +1518,8 @@ class GpsRemoteBleManager(private val context: Context) {
                 isRecording = false,
                 isCaptureStarting = false,
                 isCaptureStopping = false,
+                batteryPercent = null,
+                isCharging = false,
                 details = CameraDetails(),
                 wakeUpRegistration = it.wakeUpRegistration.afterLinkDown()
             )
