@@ -23,6 +23,7 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.RowScope
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -185,16 +186,11 @@ fun CameraScreen(
             // Camera Status Card
             CameraStatusCard(
                 uiState = uiState,
-                onWakeUp = {
-                    haptic.performHapticFeedback(HapticFeedbackType.LongPress)
-                    viewModel.wakeUpCamera()
-                },
-                onConnectToggle = {
-                    if (uiState.isConnected) {
-                        viewModel.disconnectBle()
-                    } else {
-                        viewModel.connectBle()
+                onCameraButton = { button ->
+                    if (button == CameraButton.CONNECT || button == CameraButton.WAKE_UP) {
+                        haptic.performHapticFeedback(HapticFeedbackType.LongPress)
                     }
+                    viewModel.onCameraButton(button)
                 }
             )
 
@@ -237,11 +233,11 @@ fun CameraScreen(
 @Composable
 fun CameraStatusCard(
     uiState: RemoteUiState,
-    onWakeUp: () -> Unit,
-    onConnectToggle: () -> Unit
+    onCameraButton: (CameraButton) -> Unit
 ) {
     val ble = uiState.bleState
     val server = uiState.serverState
+    val button = CameraButton.of(ble, uiState.isConnected)
 
     ElevatedCard(
         modifier = Modifier.fillMaxWidth(),
@@ -317,6 +313,7 @@ fun CameraStatusCard(
 
             val statusText = when {
                 server.isCameraConnected -> "Connected as a GPS Remote"
+                isAsleep && ble.isWaking -> "Switching the Camera On..."
                 isAsleep -> "Camera Is Off"
                 ble.connectionStatus == BleConnectionStatus.CONNECTED -> "Connected"
                 server.isAdvertising -> "Broadcasting as Insta360 GPS Remote"
@@ -355,8 +352,9 @@ fun CameraStatusCard(
                 )
             }
 
-            // What to do when the camera cannot be used yet
-            if (!uiState.isConnected || isAsleep) {
+            // What to do when the camera cannot be used yet. Kept while it is being linked to, so
+            // that the button below stays under the finger that pressed it.
+            if (button != CameraButton.DISCONNECT) {
                 Spacer(modifier = Modifier.height(8.dp))
                 Row(
                     modifier = Modifier
@@ -374,10 +372,12 @@ fun CameraStatusCard(
                         modifier = Modifier.size(16.dp)
                     )
                     Text(
-                        text = if (isAsleep) {
-                            "The camera is nearby but switched off. Tap Wake Up or press the camera's button to switch it on."
-                        } else {
-                            "Turn the camera on and keep it nearby. Open360 connects to it directly."
+                        text = when {
+                            isAsleep && ble.isWaking -> "Switching the camera on. It takes a few seconds."
+                            button == CameraButton.STOP -> "Looking for the camera. Keep it nearby."
+                            isAsleep -> "The camera is nearby but switched off. Tap Wake Up or press the camera's button to switch it on."
+                            uiState.wakeUpId != null -> "Keep the camera nearby and tap Connect. Open360 switches it on if it is off."
+                            else -> "Turn the camera on, keep it nearby and tap Connect."
                         },
                         style = MaterialTheme.typography.labelSmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
@@ -400,36 +400,34 @@ fun CameraStatusCard(
 
             Spacer(modifier = Modifier.height(14.dp))
 
-            // Control Buttons
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(8.dp)
-            ) {
+            // One button for the link, labelled with what it does next
+            val buttonIcon = when (button) {
+                CameraButton.CONNECT -> Icons.Default.Bluetooth
+                CameraButton.STOP -> Icons.Default.Stop
+                CameraButton.WAKE_UP -> Icons.Default.PowerSettingsNew
+                CameraButton.DISCONNECT -> Icons.Default.BluetoothDisabled
+            }
+            val buttonContent: @Composable RowScope.() -> Unit = {
+                Icon(
+                    imageVector = buttonIcon,
+                    contentDescription = null,
+                    modifier = Modifier.size(18.dp)
+                )
+                Spacer(modifier = Modifier.width(6.dp))
+                Text(text = button.label)
+            }
+            if (button == CameraButton.CONNECT || button == CameraButton.WAKE_UP) {
                 FilledTonalButton(
-                    onClick = onWakeUp,
-                    modifier = Modifier.weight(1f)
-                ) {
-                    Icon(
-                        imageVector = Icons.Default.PowerSettingsNew,
-                        contentDescription = "Wake Up",
-                        modifier = Modifier.size(18.dp)
-                    )
-                    Spacer(modifier = Modifier.width(6.dp))
-                    Text(text = "Wake Up")
-                }
-
+                    onClick = { onCameraButton(button) },
+                    modifier = Modifier.fillMaxWidth(),
+                    content = buttonContent
+                )
+            } else {
                 OutlinedButton(
-                    onClick = onConnectToggle,
-                    modifier = Modifier.weight(1f)
-                ) {
-                    Icon(
-                        imageVector = Icons.Default.Bluetooth,
-                        contentDescription = "Bluetooth",
-                        modifier = Modifier.size(18.dp)
-                    )
-                    Spacer(modifier = Modifier.width(6.dp))
-                    Text(text = if (uiState.isConnected) "Disconnect" else "Connect")
-                }
+                    onClick = { onCameraButton(button) },
+                    modifier = Modifier.fillMaxWidth(),
+                    content = buttonContent
+                )
             }
         }
     }

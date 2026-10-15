@@ -263,6 +263,18 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
         bleManager.wakeByConnecting()
     }
 
+    /**
+     * Does what the camera card's button showed when it was pressed. Connect also switches the
+     * camera on if it is off, once Wake Up is set up; without an ID it only connects.
+     */
+    fun onCameraButton(button: CameraButton) {
+        when (button) {
+            CameraButton.CONNECT -> if (_uiState.value.wakeUpId != null) wakeUpCamera() else connectBle()
+            CameraButton.WAKE_UP -> wakeUpCamera()
+            CameraButton.STOP, CameraButton.DISCONNECT -> disconnectBle()
+        }
+    }
+
     fun startGpsRemoteServer() {
         gattServer.startServer()
     }
