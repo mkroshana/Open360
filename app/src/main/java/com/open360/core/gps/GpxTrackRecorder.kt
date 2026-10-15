@@ -26,6 +26,7 @@ import java.nio.channels.FileChannel
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
+import java.util.TimeZone
 import kotlin.math.abs
 
 data class GpxTrackState(
@@ -73,6 +74,11 @@ class GpxTrackRecorder(private val context: Context) {
         var fileName: String? = null
         var folder: String? = null
         var finalized = false
+
+        // The FIT copy of the track, written whole once the recording has ended
+        var fitUri: Uri? = null
+        var fitFile: File? = null
+        var fitName: String? = null
     }
 
     @OptIn(ExperimentalCoroutinesApi::class)
@@ -251,6 +257,47 @@ class GpxTrackRecorder(private val context: Context) {
         }
         _state.update { it.copy(fileName = s.fileName, folder = s.folder, pointCount = s.fixes.size, isRecording = false) }
         Log.i(TAG, "GPX track saved: ${s.folder}/${s.fileName} (${s.fixes.size} points)")
+        saveFit(s)
+    }
+
+    /**
+     * Writes the track again as a FIT file named like the GPX, for importing into Insta360
+     * Studio, which reads more from FIT than from GPX. A failure here leaves the GPX as it is.
+     */
+    private fun saveFit(s: Session) {
+        val name = (s.fileName ?: return).substringBeforeLast('.') + ".fit"
+        try {
+            val content = FitWriter.activity(s.fixes, TimeZone.getDefault().getOffset(s.fixes.first().utcMs))
+            val uri = s.fitUri
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                val resolver = context.contentResolver
+                val target = uri ?: resolver.insert(
+                    MediaStore.Downloads.EXTERNAL_CONTENT_URI,
+                    ContentValues().apply {
+                        put(MediaStore.Downloads.DISPLAY_NAME, name)
+                        // A generic type, so the .fit extension is kept as given
+                        put(MediaStore.Downloads.MIME_TYPE, "application/octet-stream")
+                        put(MediaStore.Downloads.RELATIVE_PATH, "${Environment.DIRECTORY_DOWNLOADS}/$FOLDER")
+                    }
+                ) ?: throw IllegalStateException("MediaStore refused $name")
+                if (uri != null && s.fitName != name) {
+                    resolver.update(target, ContentValues().apply { put(MediaStore.Downloads.DISPLAY_NAME, name) }, null, null)
+                }
+                resolver.openOutputStream(target, "wt")?.use { it.write(content) }
+                    ?: throw IllegalStateException("Could not open $name")
+                s.fitUri = target
+            } else {
+                val dir = File(context.getExternalFilesDir(null), "tracks").apply { mkdirs() }
+                val target = File(dir, name)
+                s.fitFile?.takeIf { it != target }?.delete()
+                target.writeBytes(content)
+                s.fitFile = target
+            }
+            s.fitName = name
+            Log.i(TAG, "FIT track saved: ${s.folder}/$name (${content.size} bytes)")
+        } catch (e: Exception) {
+            Log.e(TAG, "Could not save FIT track", e)
+        }
     }
 
     private fun reopen(s: Session): FileChannel {
