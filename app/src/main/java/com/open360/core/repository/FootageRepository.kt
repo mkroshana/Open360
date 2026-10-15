@@ -3,11 +3,15 @@ package com.open360.core.repository
 import android.content.ContentUris
 import android.content.ContentValues
 import android.content.Context
+import android.graphics.Bitmap
+import android.media.ExifInterface
+import android.media.MediaMetadataRetriever
 import android.net.Uri
 import android.os.Build
 import android.os.Environment
 import android.provider.MediaStore
 import android.util.Log
+import android.util.LruCache
 import androidx.documentfile.provider.DocumentFile
 import com.open360.core.ble.Go2BleProtocol
 import com.open360.core.gps.GpxParser
@@ -18,9 +22,13 @@ import com.open360.core.socket.CameraSocketClient
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.sync.Semaphore
+import kotlinx.coroutines.sync.withPermit
 import kotlinx.coroutines.withContext
 import okhttp3.OkHttpClient
 import okhttp3.Request
+import java.io.ByteArrayInputStream
+import java.io.ByteArrayOutputStream
 import java.io.File
 import java.io.FileInputStream
 import java.io.FileOutputStream
@@ -40,7 +48,17 @@ class FootageRepository(
 
         // Files asked for at a time. A GO 3S sent all 74 of its files in one reply.
         private const val FILE_LIST_PAGE = 500
+
+        // Thumbnails: longest side in pixels, how many are kept, how many are fetched at once,
+        // and how much of a photo is read for the small picture in its EXIF data
+        private const val THUMBNAIL_SIZE = 256
+        private const val THUMBNAILS_KEPT = 100
+        private const val THUMBNAIL_FETCHES = 2
+        private const val PHOTO_HEADER_BYTES = 256 * 1024
     }
+
+    private val thumbnails = LruCache<String, Bitmap>(THUMBNAILS_KEPT)
+    private val thumbnailFetches = Semaphore(THUMBNAIL_FETCHES)
 
     private val httpClient = OkHttpClient.Builder()
         .connectTimeout(10, TimeUnit.SECONDS)
@@ -110,6 +128,65 @@ class FootageRepository(
         } finally {
             client.disconnect()
         }
+    }
+
+    /**
+     * A small picture of a file on the camera: the first frame of a video's low-resolution
+     * copy, or the thumbnail in a photo's EXIF data. The camera has no thumbnail command of its
+     * own (a GO 3S answers GetMiniThumbnail with "unknown msg code"). Null when there is none.
+     */
+    suspend fun loadCameraThumbnail(file: CameraMediaFile): Bitmap? {
+        thumbnails.get(file.fileUrl)?.let { return it }
+        return thumbnailFetches.withPermit {
+            withContext(Dispatchers.IO) {
+                thumbnails.get(file.fileUrl) ?: try {
+                    val bitmap = if (file.isVideo) videoFrame(file.previewUrl ?: file.fileUrl) else photoThumbnail(file.fileUrl)
+                    bitmap?.also { thumbnails.put(file.fileUrl, it) }
+                } catch (e: Exception) {
+                    Log.w(TAG, "No thumbnail for ${file.name}", e)
+                    null
+                }
+            }
+        }
+    }
+
+    private fun videoFrame(url: String): Bitmap? {
+        val retriever = MediaMetadataRetriever()
+        try {
+            retriever.setDataSource(url, emptyMap())
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O_MR1) {
+                return retriever.getScaledFrameAtTime(0, MediaMetadataRetriever.OPTION_CLOSEST_SYNC, THUMBNAIL_SIZE, THUMBNAIL_SIZE)
+            }
+            val frame = retriever.getFrameAtTime(0, MediaMetadataRetriever.OPTION_CLOSEST_SYNC) ?: return null
+            val scale = THUMBNAIL_SIZE.toFloat() / maxOf(frame.width, frame.height)
+            return Bitmap.createScaledBitmap(frame, (frame.width * scale).toInt(), (frame.height * scale).toInt(), true)
+        } finally {
+            retriever.release()
+        }
+    }
+
+    private fun photoThumbnail(url: String): Bitmap? {
+        val request = Request.Builder()
+            .url(url)
+            .header("Range", "bytes=0-${PHOTO_HEADER_BYTES - 1}")
+            .header("User-Agent", "Open360/1.0")
+            .build()
+        httpClient.newCall(request).execute().use { response ->
+            if (!response.isSuccessful) return null
+            val header = response.body?.byteStream()?.use { it.readNBytesCompat(PHOTO_HEADER_BYTES) } ?: return null
+            return ExifInterface(ByteArrayInputStream(header)).thumbnailBitmap
+        }
+    }
+
+    private fun InputStream.readNBytesCompat(limit: Int): ByteArray {
+        val out = ByteArrayOutputStream()
+        val buffer = ByteArray(BUFFER_SIZE)
+        while (out.size() < limit) {
+            val read = read(buffer, 0, minOf(buffer.size, limit - out.size()))
+            if (read == -1) break
+            out.write(buffer, 0, read)
+        }
+        return out.toByteArray()
     }
 
     /**

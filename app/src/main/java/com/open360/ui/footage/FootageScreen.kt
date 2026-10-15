@@ -4,9 +4,8 @@ package com.open360.ui.footage
 
 import android.content.Context
 import android.content.Intent
-import android.graphics.BitmapFactory
+import android.graphics.Bitmap
 import android.net.Uri
-import android.util.Base64
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.Image
@@ -61,13 +60,14 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.remember
+import androidx.compose.runtime.produceState
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import com.open360.core.ble.BleCameraState
 import com.open360.core.ble.BleConnectionStatus
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
@@ -201,7 +201,8 @@ fun FootageScreen(
                     onSelectDownloadedTab = { viewModel.selectTab(FootageTab.DOWNLOADED) },
                     onRetry = { viewModel.loadCameraFiles() },
                     onPlay = { viewModel.playFile(it) },
-                    onDownload = { viewModel.downloadCameraFile(it) }
+                    onDownload = { viewModel.downloadCameraFile(it) },
+                    loadThumbnail = viewModel::cameraThumbnail
                 )
 
                 FootageTab.DOWNLOADED -> DownloadedTabContent(
@@ -247,7 +248,8 @@ private fun CameraWifiTabContent(
     onSelectDownloadedTab: () -> Unit,
     onRetry: () -> Unit,
     onPlay: (CameraMediaFile) -> Unit,
-    onDownload: (CameraMediaFile) -> Unit
+    onDownload: (CameraMediaFile) -> Unit,
+    loadThumbnail: suspend (CameraMediaFile) -> Bitmap?
 ) {
     if (wifiStatus == CameraWifiStatus.CONNECTING && files.isEmpty()) {
         Box(
@@ -428,11 +430,17 @@ private fun CameraWifiTabContent(
             MediaFileCard(
                 file = file,
                 downloadProgress = progress,
-                primaryActionLabel = "Stream",
+                // A clip not on the phone yet plays its low-resolution copy
+                primaryActionLabel = when {
+                    file.isImported -> "Play"
+                    file.previewUrl != null -> "Preview"
+                    else -> "Stream"
+                },
                 secondaryActionLabel = if (file.isImported) "Downloaded" else "Download",
                 secondaryActionEnabled = !file.isImported && progress == null,
                 onPrimaryAction = { onPlay(file) },
-                onSecondaryAction = { onDownload(file) }
+                onSecondaryAction = { onDownload(file) },
+                loadThumbnail = loadThumbnail
             )
         }
     }
@@ -605,7 +613,8 @@ private fun MediaFileCard(
     onPrimaryAction: () -> Unit,
     onSecondaryAction: (() -> Unit)? = null,
     onShare: (() -> Unit)? = null,
-    onDelete: (() -> Unit)? = null
+    onDelete: (() -> Unit)? = null,
+    loadThumbnail: (suspend (CameraMediaFile) -> Bitmap?)? = null
 ) {
     Card(
         modifier = Modifier.fillMaxWidth(),
@@ -618,7 +627,7 @@ private fun MediaFileCard(
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 // Thumbnail or Type Icon
-                ThumbnailBox(file = file)
+                ThumbnailBox(file = file, loadThumbnail = loadThumbnail)
 
                 Spacer(modifier = Modifier.width(12.dp))
 
@@ -633,7 +642,7 @@ private fun MediaFileCard(
                     )
                     Spacer(modifier = Modifier.height(2.dp))
                     Text(
-                        text = "${file.formattedSize} • ${if (file.isVideo) "Video" else "Photo"}",
+                        text = mediaSummary(file),
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
@@ -751,17 +760,21 @@ private fun MediaFileCard(
     }
 }
 
+/**
+ * The line under a file's name: the date the camera gave it, its size when known (the camera's
+ * file list has no sizes) and whether it is a video or a photo.
+ */
+internal fun mediaSummary(file: CameraMediaFile): String =
+    listOfNotNull(
+        file.displayDateTime,
+        file.formattedSize.takeIf { file.sizeBytes > 0 },
+        if (file.isVideo) "Video" else "Photo"
+    ).joinToString(" • ")
+
 @Composable
-private fun ThumbnailBox(file: CameraMediaFile) {
-    val bitmap = remember(file.thumbnailUrl) {
-        val raw = file.thumbnailUrl ?: return@remember null
-        val base64Data = if (raw.contains(",")) raw.substringAfter(",") else raw
-        try {
-            val bytes = Base64.decode(base64Data, Base64.DEFAULT)
-            BitmapFactory.decodeByteArray(bytes, 0, bytes.size)?.asImageBitmap()
-        } catch (_: Exception) {
-            null
-        }
+private fun ThumbnailBox(file: CameraMediaFile, loadThumbnail: (suspend (CameraMediaFile) -> Bitmap?)?) {
+    val bitmap by produceState<ImageBitmap?>(initialValue = null, file.fileUrl, loadThumbnail) {
+        value = loadThumbnail?.invoke(file)?.asImageBitmap()
     }
 
     Box(
@@ -771,9 +784,10 @@ private fun ThumbnailBox(file: CameraMediaFile) {
             .background(MaterialTheme.colorScheme.surfaceContainerHighest),
         contentAlignment = Alignment.Center
     ) {
-        if (bitmap != null) {
+        val loaded = bitmap
+        if (loaded != null) {
             Image(
-                bitmap = bitmap,
+                bitmap = loaded,
                 contentDescription = file.name,
                 modifier = Modifier.fillMaxSize(),
                 contentScale = ContentScale.Crop

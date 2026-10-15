@@ -82,7 +82,7 @@ fun FootagePlayerDialog(
             Box(modifier = Modifier.fillMaxSize()) {
                 // Media Content (Video Player or Photo View)
                 if (file.isVideo) {
-                    VideoPlayer(uriString = file.playableUri)
+                    VideoPlayer(uriString = file.streamUri)
                 } else {
                     PhotoViewer(file = file)
                 }
@@ -98,7 +98,7 @@ fun FootagePlayerDialog(
                                 maxLines = 1
                             )
                             Text(
-                                text = "${file.formattedSize} • ${if (file.isVideo) "Video" else "Photo"}",
+                                text = mediaSummary(file),
                                 style = MaterialTheme.typography.bodySmall,
                                 color = Color.LightGray
                             )

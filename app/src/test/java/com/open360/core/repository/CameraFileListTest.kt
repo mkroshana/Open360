@@ -33,6 +33,9 @@ class CameraFileListTest {
         assertEquals("http://192.168.42.1/DCIM/Camera01/PRO_VID_20261015_181505_00_095.mp4", pro.fileUrl)
         assertEquals("http://192.168.42.1/DCIM/Camera01/PRO_LRV_20261015_181505_01_095.lrv", pro.previewUrl)
         assertEquals("2026-10-15 18:15:05", pro.dateTime)
+        assertEquals("15 Oct 2026, 18:15", pro.displayDateTime)
+        // Not on the phone yet, so the low-resolution copy is what plays
+        assertEquals(pro.previewUrl, pro.streamUri)
         assertTrue(pro.isVideo)
         assertEquals("PRO_VID_20261015_181505_00_095", pro.baseNameWithoutExtension)
 
@@ -61,5 +64,8 @@ class CameraFileListTest {
         assertNull(files[1].previewUrl)
         assertFalse(files[2].isVideo)
         assertEquals("", files[2].dateTime)
+        assertNull(files[2].displayDateTime)
+        // A clip without a copy plays in full
+        assertEquals(files[1].fileUrl, files[1].streamUri)
     }
 }

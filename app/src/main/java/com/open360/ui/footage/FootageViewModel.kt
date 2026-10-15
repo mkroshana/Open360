@@ -1,6 +1,7 @@
 package com.open360.ui.footage
 
 import android.app.Application
+import android.graphics.Bitmap
 import android.net.Uri
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
@@ -266,6 +267,9 @@ class FootageViewModel(application: Application) : AndroidViewModel(application)
             loadCameraFiles()
         }
     }
+
+    /** A thumbnail for a file on the camera, or null when it has none. */
+    suspend fun cameraThumbnail(file: CameraMediaFile): Bitmap? = repository.loadCameraThumbnail(file)
 
     fun playFile(file: CameraMediaFile) {
         _uiState.update { it.copy(activePlayerFile = file) }
