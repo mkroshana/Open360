@@ -363,12 +363,13 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
     /**
      * Runs the foreground service for as long as the camera is connected, so that with the
      * display off GPS fixes keep arriving and the link stays up. That covers recordings started
-     * on the camera too. Android only lets it start while the app is on screen.
+     * on the camera too. Android only lets it start while the app is on screen, so it is kept
+     * while the link is being opened again by itself, which may happen with the phone locked.
      */
     private fun updateBackgroundService() {
         val state = _uiState.value
         val wanted = state.keepGpsActiveInBackground &&
-            state.bleState.connectionStatus == BleConnectionStatus.CONNECTED
+            (state.bleState.connectionStatus == BleConnectionStatus.CONNECTED || state.bleState.isReconnecting)
         if (wanted == backgroundServiceRunning) return
 
         try {

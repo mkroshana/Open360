@@ -101,6 +101,9 @@ data class BleCameraState(
     // Set when the camera was already recording as the app connected: how long it had been
     // recording. The clip's first frame is worked back from this, to within about half a second.
     val joinedRecordingSeconds: Int? = null,
+    // Set while the link is being opened again by itself after it dropped soon after the camera
+    // started answering, as a GO 3S switched on while linked does
+    val isReconnecting: Boolean = false,
     val batteryPercent: Int? = null,
     val isCharging: Boolean = false,
     val details: CameraDetails = CameraDetails(),
@@ -198,6 +201,16 @@ class GpsRemoteBleManager(private val context: Context) {
         private const val PREF_CAMERA_WIFI_PASSWORD = "camera_wifi_password"
         private const val WIFI_INFO_REPLY_MS = 5000L
 
+        // A GO 3S switched on while linked sometimes drops the link a few seconds after it starts
+        // answering (5, 7 and 23 s seen), and a link opened after that holds. Its Bluetooth stops
+        // sending without ending the link, as it always does when the camera is switched off,
+        // and the phone gives up on it after the 5 s supervision timeout. A link that drops this
+        // soon after the camera started answering on it is opened again by itself, and so is a
+        // reconnection that fails, at most this many times in a row (ReconnectPolicy).
+        private const val EARLY_DROP_MS = 60_000L
+        private const val MAX_AUTO_RECONNECTS = 3
+        private const val RECONNECT_DELAY_MS = 1000L
+
         val CCCD_UUID: UUID = UUID.fromString("00002902-0000-1000-8000-00805f9b34fb")
     }
 
@@ -262,6 +275,16 @@ class GpsRemoteBleManager(private val context: Context) {
     private var wifiInfoQuerySeq = -1
     @Volatile
     private var wifiInfoReply: CompletableDeferred<Go2BleProtocol.WifiInfo?>? = null
+
+    // When the camera first answered on the current link, null until it does, and whether the
+    // link was opened by an automatic reconnection
+    @Volatile
+    private var answeringSinceMs: Long? = null
+    @Volatile
+    private var linkIsReconnect = false
+
+    private val reconnectPolicy = ReconnectPolicy(EARLY_DROP_MS, MAX_AUTO_RECONNECTS)
+    private var reconnectJob: Job? = null
 
     // Both are used only by the write queue worker
     private val gpsPacer = GpsSendPacer(GPS_SEND_RECORDS_PER_SECOND, GPS_SEND_MAX_BURST)
@@ -421,6 +444,7 @@ class GpsRemoteBleManager(private val context: Context) {
         val status = _state.value.connectionStatus
         if (status == BleConnectionStatus.CONNECTING || status == BleConnectionStatus.CONNECTED) return
         stopScan()
+        reconnectPolicy.reset()
 
         _state.update { it.copy(connectionStatus = BleConnectionStatus.SCANNING, lastError = null) }
 
@@ -517,7 +541,9 @@ class GpsRemoteBleManager(private val context: Context) {
     }
 
     @SuppressLint("MissingPermission")
-    private fun connectGatt(device: BluetoothDevice, discoveredName: String) {
+    private fun connectGatt(device: BluetoothDevice, discoveredName: String, isReconnect: Boolean = false) {
+        answeringSinceMs = null
+        linkIsReconnect = isReconnect
         val safeName = discoveredName.ifEmpty { device.name ?: "Insta360 Camera" }
         val tokens = safeName.trim().split("\\s+".toRegex())
         val candidateSuffix = tokens.lastOrNull()
@@ -541,6 +567,41 @@ class GpsRemoteBleManager(private val context: Context) {
         }
     }
 
+    /**
+     * Whether the link that has just dropped is to be opened again by itself, as [ReconnectPolicy]
+     * decides. Anything it does not reconnect ends as it always has, disconnected.
+     */
+    private fun shouldReconnect(): Boolean {
+        val answeredAt = answeringSinceMs
+        val wasReconnect = linkIsReconnect
+        answeringSinceMs = null
+        linkIsReconnect = false
+        val now = SystemClock.elapsedRealtime()
+        if (answeredAt != null) {
+            Log.i(TAG, "Link dropped ${now - answeredAt} ms after the camera started answering, " +
+                "${now - lastHeardAtMs} ms after it was last heard")
+        }
+        return when (reconnectPolicy.onDrop(now, answeredAt, wasReconnect)) {
+            ReconnectPolicy.Action.RECONNECT -> true
+            ReconnectPolicy.Action.GIVE_UP -> {
+                Log.w(TAG, "Not reconnecting: $MAX_AUTO_RECONNECTS reconnections in a row did not hold")
+                false
+            }
+            ReconnectPolicy.Action.STAY_DISCONNECTED -> false
+        }
+    }
+
+    /** Opens the link to [device] again, a moment after it dropped. */
+    private fun reconnect(device: BluetoothDevice) {
+        Log.i(TAG, "Reconnecting to the camera, ${reconnectPolicy.reconnectsLeft} more tries left after this one")
+        reconnectJob?.cancel()
+        reconnectJob = scope.launch {
+            // Lets the Bluetooth stack finish with the old link first
+            delay(RECONNECT_DELAY_MS)
+            connectGatt(device, _state.value.deviceName ?: "", isReconnect = true)
+        }
+    }
+
     private val gattCallback = object : BluetoothGattCallback() {
         @SuppressLint("MissingPermission")
         override fun onConnectionStateChange(gatt: BluetoothGatt, status: Int, newState: Int) {
@@ -555,9 +616,13 @@ class GpsRemoteBleManager(private val context: Context) {
                 stopKeepAlive()
                 markRecordingStop()
                 registrationJob?.cancel()
+                val reconnect = shouldReconnect()
+                if (reconnect) reconnect(gatt.device)
                 _state.update {
                     it.copy(
-                        connectionStatus = BleConnectionStatus.DISCONNECTED,
+                        // A reconnection is about to be tried; Disconnected would only flash up
+                        connectionStatus = if (reconnect) BleConnectionStatus.CONNECTING else BleConnectionStatus.DISCONNECTED,
+                        isReconnecting = reconnect,
                         isCameraAwake = false,
                         isRecording = false,
                         isCaptureStarting = false,
@@ -619,7 +684,7 @@ class GpsRemoteBleManager(private val context: Context) {
                 }
             }
 
-            _state.update { it.copy(connectionStatus = BleConnectionStatus.CONNECTED) }
+            _state.update { it.copy(connectionStatus = BleConnectionStatus.CONNECTED, isReconnecting = false) }
             startKeepAlive()
             Log.i(TAG, "Camera BLE successfully connected. Ready for commands.")
         }
@@ -915,6 +980,7 @@ class GpsRemoteBleManager(private val context: Context) {
 
         // Anything valid from the camera, a keep-alive answer included, shows it is switched on
         lastHeardAtMs = SystemClock.elapsedRealtime()
+        if (answeringSinceMs == null) answeringSinceMs = lastHeardAtMs
         if (!_state.value.isCameraAwake) {
             Log.i(TAG, "Camera is answering")
             _state.update { it.copy(isCameraAwake = true) }
@@ -1397,6 +1463,10 @@ class GpsRemoteBleManager(private val context: Context) {
      */
     @SuppressLint("MissingPermission")
     fun disconnect() {
+        // Cleared first, so that the link ending here is not taken for one that dropped
+        reconnectJob?.cancel()
+        answeringSinceMs = null
+        linkIsReconnect = false
         stopScan()
         stopKeepAlive()
         markRecordingStop()
@@ -1408,6 +1478,7 @@ class GpsRemoteBleManager(private val context: Context) {
         _state.update {
             it.copy(
                 connectionStatus = BleConnectionStatus.DISCONNECTED,
+                isReconnecting = false,
                 isCameraAwake = false,
                 isRecording = false,
                 isCaptureStarting = false,
