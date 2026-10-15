@@ -279,6 +279,23 @@ class Go2BleProtocolTest {
     }
 
     @Test
+    fun testWifiInfoRequestAndReply() {
+        // The request asks for option 36 alone
+        assertTrue(hex("0a0124").contentEquals(Go2BleProtocol.buildWifiInfoRequest()))
+
+        // Laid out like the reply from a GO 3S, with its password replaced
+        val reply = Go2BleProtocol.parseWifiInfoReply(
+            hex("08241228a202250a10") + "GO 3S 8JY3HF.OSC".toByteArray() +
+                hex("1208") + "12345678".toByteArray() + hex("189501200028013002")
+        )
+        assertEquals("GO 3S 8JY3HF.OSC", reply?.ssid)
+        assertEquals("12345678", reply?.password)
+
+        // An OK with no options in it
+        assertNull(Go2BleProtocol.parseWifiInfoReply(ByteArray(0)))
+    }
+
+    @Test
     fun testCaptureStatusReply() {
         // The reply captured from an idle GO 3S; it carries more fields than the published ones
         val captured = Go2BleProtocol.parseCaptureStatusReply(hex("0a17080010003000380040880e480a5000600068ff0170ff01"))

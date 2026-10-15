@@ -14,6 +14,7 @@ import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 
 import android.content.Context
+import com.open360.core.ble.GpsRemoteBleManager
 import com.open360.core.network.CameraWifiConnector
 import com.open360.core.network.CameraWifiStatus
 
@@ -42,6 +43,9 @@ class FootageViewModel(application: Application) : AndroidViewModel(application)
 
     private val repository = FootageRepository(application)
     val wifiConnector = CameraWifiConnector(application)
+
+    // The Bluetooth link to the camera, set by the activity. The camera gives its Wi-Fi password over it.
+    var cameraLink: GpsRemoteBleManager? = null
 
     private val _uiState = MutableStateFlow(FootageUiState())
     val uiState: StateFlow<FootageUiState> = _uiState.asStateFlow()
@@ -94,25 +98,42 @@ class FootageViewModel(application: Application) : AndroidViewModel(application)
         }
     }
 
+    /**
+     * Joins the camera's Wi-Fi with the name and password the camera gives over Bluetooth, or
+     * the ones it gave last time when it is not connected.
+     */
     fun connectCameraWifi() {
-        val prefs = getApplication<Application>().getSharedPreferences("open360_ble_prefs", Context.MODE_PRIVATE)
-        val serialSuffix = prefs.getString("camera_serial_suffix", "8JY3HF") ?: "8JY3HF"
-        val ssid = CameraWifiConnector.determineCameraSsid("GO 3S $serialSuffix", serialSuffix)
-
-        wifiConnector.connect(
-            targetSsid = ssid,
-            onConnected = {
-                loadCameraFiles()
-            },
-            onFailed = { error ->
+        viewModelScope.launch {
+            _uiState.update { it.copy(isLoading = true, errorMessage = null) }
+            val link = cameraLink
+            val info = link?.requestWifiInfo() ?: link?.getSavedWifiInfo()
+            if (info == null) {
                 _uiState.update {
                     it.copy(
                         isLoading = false,
-                        errorMessage = "Camera Wi-Fi ($ssid) not reached. Make sure camera Wi-Fi is on."
+                        errorMessage = "The camera gives Open360 its Wi-Fi password over Bluetooth. " +
+                            "Switch the camera on, connect to it on the Remote tab, then try again."
                     )
                 }
+                return@launch
             }
-        )
+
+            wifiConnector.connect(
+                targetSsid = info.ssid,
+                passphrase = info.password,
+                onConnected = {
+                    loadCameraFiles()
+                },
+                onFailed = { _ ->
+                    _uiState.update {
+                        it.copy(
+                            isLoading = false,
+                            errorMessage = "Camera Wi-Fi (${info.ssid}) not reached. Make sure the camera is on."
+                        )
+                    }
+                }
+            )
+        }
     }
 
     fun openWifiSettings(context: Context) {

@@ -192,6 +192,12 @@ class GpsRemoteBleManager(private val context: Context) {
         private const val AUTHORIZATION_REPLY_MS = 5000L
         private const val AUTHORIZATION_CONFIRM_MS = 60_000L
 
+        // The camera's Wi-Fi name and password, kept from its last answer. A GO 3S answered the
+        // request in about a second.
+        private const val PREF_CAMERA_WIFI_SSID = "camera_wifi_ssid"
+        private const val PREF_CAMERA_WIFI_PASSWORD = "camera_wifi_password"
+        private const val WIFI_INFO_REPLY_MS = 5000L
+
         val CCCD_UUID: UUID = UUID.fromString("00002902-0000-1000-8000-00805f9b34fb")
     }
 
@@ -250,6 +256,12 @@ class GpsRemoteBleManager(private val context: Context) {
     @Volatile
     private var authorizationOutcome: CompletableDeferred<Go2BleProtocol.AuthorizationResult>? = null
     private var wakeJob: Job? = null
+
+    // The request for the camera's Wi-Fi details, matched to its reply by sequence number
+    @Volatile
+    private var wifiInfoQuerySeq = -1
+    @Volatile
+    private var wifiInfoReply: CompletableDeferred<Go2BleProtocol.WifiInfo?>? = null
 
     // Both are used only by the write queue worker
     private val gpsPacer = GpsSendPacer(GPS_SEND_RECORDS_PER_SECOND, GPS_SEND_MAX_BURST)
@@ -820,6 +832,45 @@ class GpsRemoteBleManager(private val context: Context) {
     }
 
     /**
+     * Asks the camera for its Wi-Fi name and password, which it gives over Bluetooth, and keeps
+     * them for when it is not connected. Null when the camera is not on or gives no usable
+     * answer. The camera switches its Wi-Fi on by itself a few seconds after it comes on.
+     */
+    suspend fun requestWifiInfo(): Go2BleProtocol.WifiInfo? {
+        if (!cameraIsOn()) return null
+        val reply = CompletableDeferred<Go2BleProtocol.WifiInfo?>()
+        wifiInfoReply = reply
+        val seq = nextSeq()
+        wifiInfoQuerySeq = seq
+        queuePacket(
+            Go2BleProtocol.encodeMessagePacket(
+                Go2BleProtocol.encodeInnerMessage(Go2BleProtocol.CMD_GET_OPTIONS, seq, Go2BleProtocol.buildWifiInfoRequest())
+            )
+        )
+        val info = withTimeoutOrNull(WIFI_INFO_REPLY_MS) { reply.await() }
+        wifiInfoReply = null
+        wifiInfoQuerySeq = -1
+        if (info == null) {
+            Log.w(TAG, "The camera gave no Wi-Fi details")
+            return null
+        }
+        Log.i(TAG, "Camera Wi-Fi network: ${info.ssid}")
+        context.getSharedPreferences("open360_ble_prefs", Context.MODE_PRIVATE).edit()
+            .putString(PREF_CAMERA_WIFI_SSID, info.ssid)
+            .putString(PREF_CAMERA_WIFI_PASSWORD, info.password)
+            .apply()
+        return info
+    }
+
+    /** The camera's Wi-Fi name and password from its last answer, or null if it has not given them. */
+    fun getSavedWifiInfo(): Go2BleProtocol.WifiInfo? {
+        val prefs = context.getSharedPreferences("open360_ble_prefs", Context.MODE_PRIVATE)
+        val ssid = prefs.getString(PREF_CAMERA_WIFI_SSID, null) ?: return null
+        val password = prefs.getString(PREF_CAMERA_WIFI_PASSWORD, null) ?: return null
+        return Go2BleProtocol.WifiInfo(ssid, password)
+    }
+
+    /**
      * Wakes a camera that is off by opening a fresh link to it, on which the wake-up
      * authorization is the first thing sent.
      */
@@ -993,6 +1044,10 @@ class GpsRemoteBleManager(private val context: Context) {
                         Log.i(TAG, "Authorization check reply: $hexPayload")
                         authorizationCheckReply?.complete(Go2BleProtocol.parseCheckAuthorizationReply(inner.payload))
                     }
+                    if (inner.sequence == wifiInfoQuerySeq) {
+                        wifiInfoQuerySeq = -1
+                        wifiInfoReply?.complete(Go2BleProtocol.parseWifiInfoReply(inner.payload))
+                    }
                     if (inner.sequence == stopCaptureSeq) {
                         stopCaptureSeq = -1
                         Go2BleProtocol.parseCapturedFilePath(inner.payload)?.let { path ->
@@ -1009,6 +1064,10 @@ class GpsRemoteBleManager(private val context: Context) {
                     if (inner.sequence == authorizationCheckSeq) {
                         authorizationCheckSeq = -1
                         authorizationCheckReply?.complete(null)
+                    }
+                    if (inner.sequence == wifiInfoQuerySeq) {
+                        wifiInfoQuerySeq = -1
+                        wifiInfoReply?.complete(null)
                     }
                 }
             }

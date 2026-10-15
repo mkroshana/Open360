@@ -8,7 +8,6 @@ import android.net.NetworkCapabilities
 import android.net.NetworkRequest
 import android.net.wifi.WifiManager
 import android.net.wifi.WifiNetworkSpecifier
-import android.net.wifi.WifiNetworkSuggestion
 import android.os.Build
 import android.provider.Settings
 import android.util.Log
@@ -28,35 +27,17 @@ enum class CameraWifiStatus {
  * Manages connecting to Insta360 camera Wi-Fi access points programmatically.
  *
  * Uses:
- * 1. WifiNetworkSuggestion (Android 10+) to allow system auto-join without prompt.
- * 2. WifiNetworkSpecifier (Android 10+) to bind to peer-to-peer camera AP.
- * 3. ConnectivityManager.bindProcessToNetwork to route OSC HTTP traffic (192.168.42.1)
- *    over the camera link even when it has no internet, preserving Cellular/Primary Wi-Fi.
+ * 1. WifiNetworkSpecifier (Android 10+) to join the camera's access point for this app only,
+ *    with the name and password the camera gives over Bluetooth.
+ * 2. ConnectivityManager.bindProcessToNetwork to route the app's traffic to the camera
+ *    (192.168.42.1) over that link even though it has no internet, preserving Cellular/Primary Wi-Fi.
  */
 class CameraWifiConnector(private val context: Context) {
 
     companion object {
         private const val TAG = "CameraWifiConnector"
-        const val DEFAULT_PASSWORD = "88888888"
         const val DEFAULT_CAMERA_IP = "192.168.42.1"
         const val CONNECTION_TIMEOUT_MS = 20000
-
-        /**
-         * Determines the camera Wi-Fi SSID from device name or serial suffix.
-         */
-        fun determineCameraSsid(deviceName: String?, serialSuffix: String): String {
-            val suffix = serialSuffix.trim()
-            val name = deviceName?.trim() ?: ""
-            return when {
-                name.contains("GO 3S", ignoreCase = true) -> "GO 3S $suffix.OSC"
-                name.contains("GO 3", ignoreCase = true) -> "GO 3 $suffix.OSC"
-                name.contains("X4", ignoreCase = true) -> "Insta360 X4 $suffix.OSC"
-                name.contains("X3", ignoreCase = true) -> "Insta360 X3 $suffix.OSC"
-                name.contains("ONE RS", ignoreCase = true) -> "Insta360 ONE RS $suffix.OSC"
-                name.isNotEmpty() -> "$name.OSC"
-                else -> "GO 3S $suffix.OSC"
-            }
-        }
     }
 
     private val connectivityManager =
@@ -125,7 +106,7 @@ class CameraWifiConnector(private val context: Context) {
      */
     fun connect(
         targetSsid: String,
-        passphrase: String = DEFAULT_PASSWORD,
+        passphrase: String,
         onConnected: (() -> Unit)? = null,
         onFailed: ((String) -> Unit)? = null
     ) {
@@ -142,10 +123,9 @@ class CameraWifiConnector(private val context: Context) {
         _statusMessage.value = "Connecting to $targetSsid..."
         Log.i(TAG, "Initiating connection to camera Wi-Fi: $targetSsid")
 
-        // 1. Add Network Suggestion (Android 10+) so Android knows the network credentials
-        registerSuggestion(targetSsid, passphrase)
+        removeOldSuggestions()
 
-        // 2. Request Network via WifiNetworkSpecifier
+        // Request the network via WifiNetworkSpecifier
         val requestBuilder = NetworkRequest.Builder()
             .addTransportType(NetworkCapabilities.TRANSPORT_WIFI)
             .removeCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)
@@ -213,23 +193,18 @@ class CameraWifiConnector(private val context: Context) {
         }
     }
 
-    private fun registerSuggestion(ssid: String, passphrase: String) {
+    /**
+     * Withdraws the network suggestion earlier versions registered for the camera. It held the
+     * password 88888888, which the GO 3S does not use, and Android tried to join the camera as
+     * the phone's main Wi-Fi with it. The request above needs no suggestion.
+     */
+    private fun removeOldSuggestions() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q && wifiManager != null) {
             try {
-                val builder = WifiNetworkSuggestion.Builder()
-                    .setSsid(ssid)
-                    .setWpa2Passphrase(passphrase)
-                    .setIsAppInteractionRequired(false)
-
-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-                    builder.setPriority(100)
-                }
-
-                val suggestion = builder.build()
-                val code = wifiManager.addNetworkSuggestions(listOf(suggestion))
-                Log.i(TAG, "Registered WifiNetworkSuggestion for $ssid, code=$code")
+                // An empty list withdraws every suggestion this app has made
+                wifiManager.removeNetworkSuggestions(emptyList())
             } catch (e: Exception) {
-                Log.w(TAG, "Failed to register network suggestion", e)
+                Log.w(TAG, "Failed to remove network suggestions", e)
             }
         }
     }

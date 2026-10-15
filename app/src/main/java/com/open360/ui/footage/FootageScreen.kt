@@ -352,13 +352,13 @@ private fun CameraWifiTabContent(
                             .padding(12.dp)
                     ) {
                         Text(
-                            text = "1. Swipe down on the camera or Action Pod screen and ensure Wi-Fi is enabled.",
+                            text = "1. Switch the camera on and connect to it on the Remote tab. It gives Open360 its Wi-Fi password over Bluetooth.",
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
                         Spacer(modifier = Modifier.height(4.dp))
                         Text(
-                            text = "2. Tap Connect Wi-Fi below to automatically bind to ${wifiSsid ?: "GO 3S ...OSC"}.",
+                            text = "2. Tap Connect Wi-Fi. The camera turns its Wi-Fi on by itself a few seconds after it comes on.",
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )

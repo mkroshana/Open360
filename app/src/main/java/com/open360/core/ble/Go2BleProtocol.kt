@@ -262,6 +262,7 @@ object Go2BleProtocol {
     private const val OPTION_BATTERY_STATUS = 11
     private const val OPTION_STORAGE_STATE = 20
     private const val OPTION_CHARGEBOX_CONNECTED_STATUS = 85
+    private const val OPTION_WIFI_INFO = 36
 
     /**
      * Builds the payload of a GetOptions request for the status the app shows: battery,
@@ -301,6 +302,27 @@ object Go2BleProtocol {
             cardState = (fields[OPTION_STORAGE_STATE] as? ByteArray)?.let { parseStorageUpdate(it) },
             pod = (fields[OPTION_CHARGEBOX_CONNECTED_STATUS] as? ByteArray)?.let { parseChargeBoxStatus(it) }
         )
+    }
+
+    /** Builds the payload of a GetOptions request for the camera's Wi-Fi name and password. */
+    fun buildWifiInfoRequest(): ByteArray = byteArrayOf(0x0A, 0x01, OPTION_WIFI_INFO.toByte())
+
+    /** The camera's own Wi-Fi network, as it reports it. */
+    data class WifiInfo(val ssid: String, val password: String)
+
+    /**
+     * Decodes the reply to [buildWifiInfoRequest]: field 2 is an Options message whose field 36
+     * is a WifiInfo with the network name (field 1) and password (field 2). A GO 3S also sent
+     * the channel (149), the mode (0, access point), the state (1, auto) and a password version
+     * (2). Returns null when the name or password is missing.
+     */
+    fun parseWifiInfoReply(payload: ByteArray): WifiInfo? {
+        val options = readProtoFields(payload)[2] as? ByteArray ?: return null
+        val info = readProtoFields(options)[OPTION_WIFI_INFO] as? ByteArray ?: return null
+        val fields = readProtoFields(info)
+        val ssid = (fields[1] as? ByteArray)?.toString(Charsets.UTF_8)?.takeIf { it.isNotBlank() } ?: return null
+        val password = (fields[2] as? ByteArray)?.toString(Charsets.UTF_8)?.takeIf { it.isNotEmpty() } ?: return null
+        return WifiInfo(ssid, password)
     }
 
     /** What the camera is doing: its CameraCaptureState and how long it has been recording. */
