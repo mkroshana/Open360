@@ -16,7 +16,9 @@ data class CameraMediaFile(
     val thumbnailUrl: String? = null,
     val isImported: Boolean = false,
     val hasCompanionGpx: Boolean = false,
-    val gpxSummary: GpxTrackSummary? = null
+    val gpxSummary: GpxTrackSummary? = null,
+    // A camera video's low-resolution copy (.lrv) on the camera, for previews
+    val previewUrl: String? = null
 ) {
     val formattedSize: String
         get() = when {

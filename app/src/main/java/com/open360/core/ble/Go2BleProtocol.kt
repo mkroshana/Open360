@@ -38,6 +38,7 @@ object Go2BleProtocol {
     const val CMD_START_CAPTURE = 0x04
     const val CMD_STOP_CAPTURE = 0x05
     const val CMD_GET_OPTIONS = 0x08
+    const val CMD_GET_FILE_LIST = 0x0D
     const val CMD_GET_CURRENT_CAPTURE_STATUS = 0x0F
     const val CMD_CHECK_AUTHORIZATION = 0x27
     // 0x19 is CALIBRATE_GYRO in the published definitions and must not be sent. Earlier
@@ -325,6 +326,45 @@ object Go2BleProtocol {
         return WifiInfo(ssid, password)
     }
 
+    // MediaType in the published definitions: videos and photos together
+    private const val MEDIA_TYPE_VIDEO_AND_PHOTO = 2
+
+    /**
+     * Builds the payload of a GetFileList request for up to [limit] files from position
+     * [start]: media type (field 1), start (2) and limit (3). The camera answers it over
+     * Bluetooth and over its Wi-Fi port 6666 alike.
+     */
+    fun buildFileListRequest(start: Int, limit: Int): ByteArray =
+        byteArrayOf(0x08, MEDIA_TYPE_VIDEO_AND_PHOTO.toByte(), 0x10) + encodeVarint(start) +
+            byteArrayOf(0x18) + encodeVarint(limit)
+
+    /** One page of the camera's file list, and how many files it holds in all. */
+    data class FileListPage(val paths: List<String>, val totalCount: Int)
+
+    /**
+     * Decodes the reply to [buildFileListRequest] (GetFileListResp): a path for each file in
+     * field 1, newest first, and the total in field 2. A GO 3S lists each video as its full
+     * clip and a low-resolution copy, for example /DCIM/Camera01/PRO_VID_20261015_181505_00_095.mp4
+     * and /DCIM/Camera01/PRO_LRV_20261015_181505_01_095.lrv, and photos as IMG_..._00_086.jpg.
+     */
+    fun parseFileListReply(payload: ByteArray): FileListPage {
+        val fields = readProtoFieldList(payload)
+        val paths = fields.filter { it.first == 1 }.mapNotNull { (it.second as? ByteArray)?.toString(Charsets.UTF_8) }
+        val total = fields.lastOrNull { it.first == 2 }?.second as? Long ?: paths.size.toLong()
+        return FileListPage(paths, total.coerceIn(0L, Int.MAX_VALUE.toLong()).toInt())
+    }
+
+    private fun encodeVarint(value: Int): ByteArray {
+        val out = ArrayList<Byte>()
+        var v = value.toLong() and 0xFFFFFFFFL
+        while (v >= 0x80) {
+            out += ((v and 0x7F) or 0x80).toByte()
+            v = v ushr 7
+        }
+        out += v.toByte()
+        return out.toByteArray()
+    }
+
     /** What the camera is doing: its CameraCaptureState and how long it has been recording. */
     data class CaptureStatusReply(val captureState: Int, val captureSeconds: Int)
 
@@ -368,10 +408,13 @@ object Go2BleProtocol {
 
     /**
      * Reads the top-level fields of a protobuf message: varints as Long, length-delimited
-     * fields as ByteArray. Fixed-width fields are skipped.
+     * fields as ByteArray. Fixed-width fields are skipped. A field that repeats keeps its last value.
      */
-    private fun readProtoFields(data: ByteArray): Map<Int, Any> {
-        val fields = HashMap<Int, Any>()
+    private fun readProtoFields(data: ByteArray): Map<Int, Any> = readProtoFieldList(data).toMap()
+
+    /** Reads the top-level fields of a protobuf message in order, repeated fields included. */
+    private fun readProtoFieldList(data: ByteArray): List<Pair<Int, Any>> {
+        val fields = ArrayList<Pair<Int, Any>>()
         var pos = 0
 
         fun readVarint(): Long {
@@ -390,12 +433,12 @@ object Go2BleProtocol {
             val key = readVarint().toInt()
             val number = key ushr 3
             when (key and 0x07) {
-                0 -> fields[number] = readVarint()
+                0 -> fields += number to readVarint()
                 1 -> pos += 8
                 2 -> {
                     val length = readVarint().toInt()
                     if (length < 0 || pos + length > data.size) return fields
-                    fields[number] = data.copyOfRange(pos, pos + length)
+                    fields += number to data.copyOfRange(pos, pos + length)
                     pos += length
                 }
                 5 -> pos += 4

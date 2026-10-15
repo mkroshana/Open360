@@ -46,6 +46,26 @@ class PacketFramerTest {
     }
 
     @Test
+    fun testParseMessageReadsCodeSequenceAndBody() {
+        // A file list request as sent, read back
+        val (sent, _) = PacketFramer.unpackStreams(PacketFramer.buildCommandPacket(13, 0x010203, "0802".hexToByteArray()))
+        val command = PacketFramer.parseMessage(sent[0])
+        assertEquals(13, command?.messageCode)
+        assertEquals(0x010203, command?.sequenceNumber)
+        assertEquals("0802", command?.body?.toHexString())
+
+        // A notification from a GO 3S: code 0x201e, with the camera's own sequence number
+        val (received, _) = PacketFramer.unpackStreams("1e0000000400001e2002ff8a43f40301080112040800103e180120022802".hexToByteArray())
+        val notification = PacketFramer.parseMessage(received[0])
+        assertEquals(0x201E, notification?.messageCode)
+        assertEquals(0x438AFF, notification?.sequenceNumber)
+        assertEquals("080112040800103e180120022802", notification?.body?.toHexString())
+
+        // Keep-alive packets are not messages
+        assertEquals(null, PacketFramer.parseMessage("050000".hexToByteArray()))
+    }
+
+    @Test
     fun testParseLiveCameraBatteryNotification62Percent() {
         // Raw packet received live from Insta360 GO 3S:
         val rawWireHex = "1e0000000400001e2002ff8a43f40301080112040800103e180120022802"

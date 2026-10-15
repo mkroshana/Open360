@@ -72,6 +72,24 @@ object PacketFramer {
         return framePayload(payload)
     }
 
+    /** A message as it arrives: its code (200 for an OK reply), sequence number and protobuf body. */
+    class Message(val messageCode: Int, val sequenceNumber: Int, val body: ByteArray)
+
+    /**
+     * Reads a message packet (without its length prefix) by the header [buildCommandPacket]
+     * writes. A reply carries the sequence number of the command it answers. Null for packets
+     * that are not messages, such as sync and keep-alive packets.
+     */
+    fun parseMessage(payload: ByteArray): Message? {
+        if (payload.size < 12 || payload[0] != 0x04.toByte() || payload[1] != 0x00.toByte() || payload[2] != 0x00.toByte()) {
+            return null
+        }
+        val messageCode = (payload[3].toInt() and 0xFF) or ((payload[4].toInt() and 0xFF) shl 8)
+        val sequenceNumber = (payload[6].toInt() and 0xFF) or ((payload[7].toInt() and 0xFF) shl 8) or
+            ((payload[8].toInt() and 0xFF) shl 16)
+        return Message(messageCode, sequenceNumber, payload.copyOfRange(12, payload.size))
+    }
+
     /**
      * Extracts complete packets from an incoming byte buffer.
      * Returns a pair of (List of complete payload ByteArrays, remaining incomplete bytes).

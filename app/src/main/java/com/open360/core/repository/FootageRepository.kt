@@ -9,29 +9,37 @@ import android.os.Environment
 import android.provider.MediaStore
 import android.util.Log
 import androidx.documentfile.provider.DocumentFile
+import com.open360.core.ble.Go2BleProtocol
 import com.open360.core.gps.GpxParser
 import com.open360.core.gps.GpxTrackSummary
 import com.open360.core.model.CameraMediaFile
-import com.open360.core.osc.OscClient
+import com.open360.core.network.CameraWifiConnector
+import com.open360.core.socket.CameraSocketClient
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.withContext
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import java.io.File
 import java.io.FileInputStream
 import java.io.FileOutputStream
+import java.io.IOException
 import java.io.InputStream
 import java.io.OutputStream
 import java.util.concurrent.TimeUnit
 
 class FootageRepository(
-    private val context: Context,
-    private val oscClient: OscClient = OscClient()
+    private val context: Context
 ) {
     companion object {
         private const val TAG = "FootageRepository"
         private const val FOLDER = "Open360"
         private const val BUFFER_SIZE = 64 * 1024
+        private const val CAMERA_BASE_URL = "http://${CameraWifiConnector.DEFAULT_CAMERA_IP}"
+
+        // Files asked for at a time. A GO 3S sent all 74 of its files in one reply.
+        private const val FILE_LIST_PAGE = 500
     }
 
     private val httpClient = OkHttpClient.Builder()
@@ -44,10 +52,13 @@ class FootageRepository(
      * downloaded locally and if a companion GPX track exists.
      */
     suspend fun fetchCameraFiles(): Result<List<CameraMediaFile>> = withContext(Dispatchers.IO) {
-        val result = oscClient.listFiles()
-        if (result.isFailure) return@withContext result
-
-        val remoteList = result.getOrNull() ?: emptyList()
+        val remoteList = try {
+            CameraFileList.toMediaFiles(listCameraPaths(), CAMERA_BASE_URL)
+        } catch (e: Exception) {
+            if (e is CancellationException) throw e
+            Log.e(TAG, "Could not list the camera's files", e)
+            return@withContext Result.failure(e)
+        }
         val localFiles = getLocalFiles()
         val localMap = localFiles.associateBy { it.baseNameWithoutExtension }
 
@@ -70,6 +81,35 @@ class FootageRepository(
             }
         }
         Result.success(enriched)
+    }
+
+    /**
+     * Asks the camera for the path of every file on its storage, over its own protocol on
+     * Wi-Fi port 6666 (GetFileList, command 13). The OSC camera.listFiles command is refused by
+     * a GO 3S with disabledCommand, and its folder listing over HTTP with 403.
+     */
+    private suspend fun listCameraPaths(): List<String> = coroutineScope {
+        val client = CameraSocketClient()
+        try {
+            client.connect(this)
+            val paths = mutableListOf<String>()
+            while (true) {
+                val reply = client.request(
+                    Go2BleProtocol.CMD_GET_FILE_LIST,
+                    Go2BleProtocol.buildFileListRequest(paths.size, FILE_LIST_PAGE)
+                ) ?: throw IOException("The camera did not answer the file list request")
+                if (reply.messageCode != 200) {
+                    throw IOException("The camera refused the file list request with status ${reply.messageCode}")
+                }
+                val page = Go2BleProtocol.parseFileListReply(reply.body)
+                paths += page.paths
+                if (page.paths.isEmpty() || paths.size >= page.totalCount) break
+            }
+            Log.i(TAG, "The camera listed ${paths.size} files")
+            paths
+        } finally {
+            client.disconnect()
+        }
     }
 
     /**

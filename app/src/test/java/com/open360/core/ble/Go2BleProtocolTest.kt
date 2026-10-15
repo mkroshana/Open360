@@ -296,6 +296,35 @@ class Go2BleProtocolTest {
     }
 
     @Test
+    fun testFileListRequestAndReply() {
+        // Videos and photos, from the start, up to 500; and a later page
+        assertTrue(hex("08021000" + "18f403").contentEquals(Go2BleProtocol.buildFileListRequest(0, 500)))
+        assertTrue(hex("08021004" + "1804").contentEquals(Go2BleProtocol.buildFileListRequest(4, 4)))
+
+        // The reply from a GO 3S to a request for three files
+        val page = Go2BleProtocol.parseFileListReply(
+            hex(
+                "0a312f4443494d2f43616d65726130312f50524f5f4c52565f32303236313031355f3138313530355f30315f3039352e6c7276" +
+                    "0a312f4443494d2f43616d65726130312f50524f5f5649445f32303236313031355f3138313530355f30305f3039352e6d7034" +
+                    "0a312f4443494d2f43616d65726130312f50524f5f4c52565f32303236313031355f3137333035345f30315f3039342e6c7276" +
+                    "104a"
+            )
+        )
+        assertEquals(
+            listOf(
+                "/DCIM/Camera01/PRO_LRV_20261015_181505_01_095.lrv",
+                "/DCIM/Camera01/PRO_VID_20261015_181505_00_095.mp4",
+                "/DCIM/Camera01/PRO_LRV_20261015_173054_01_094.lrv"
+            ),
+            page.paths
+        )
+        assertEquals(74, page.totalCount)
+
+        // An empty storage
+        assertEquals(Go2BleProtocol.FileListPage(emptyList(), 0), Go2BleProtocol.parseFileListReply(ByteArray(0)))
+    }
+
+    @Test
     fun testCaptureStatusReply() {
         // The reply captured from an idle GO 3S; it carries more fields than the published ones
         val captured = Go2BleProtocol.parseCaptureStatusReply(hex("0a17080010003000380040880e480a5000600068ff0170ff01"))
