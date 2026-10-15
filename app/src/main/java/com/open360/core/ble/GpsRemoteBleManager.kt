@@ -104,6 +104,9 @@ data class BleCameraState(
     // Set while the link is being opened again by itself after it dropped soon after the camera
     // started answering, as a GO 3S switched on while linked does
     val isReconnecting: Boolean = false,
+    // Set once the camera has not answered on the link for a few seconds: it is off, and nothing
+    // needs to run until it answers
+    val isLinkIdle: Boolean = false,
     val batteryPercent: Int? = null,
     val isCharging: Boolean = false,
     val details: CameraDetails = CameraDetails(),
@@ -211,6 +214,10 @@ class GpsRemoteBleManager(private val context: Context) {
         private const val MAX_AUTO_RECONNECTS = 3
         private const val RECONNECT_DELAY_MS = 1000L
 
+        // A camera that is on answers as soon as the link is up. One that has not answered within
+        // this long is off, and the link is idle until it does.
+        private const val IDLE_LINK_AFTER_MS = 3000L
+
         val CCCD_UUID: UUID = UUID.fromString("00002902-0000-1000-8000-00805f9b34fb")
     }
 
@@ -285,6 +292,7 @@ class GpsRemoteBleManager(private val context: Context) {
 
     private val reconnectPolicy = ReconnectPolicy(EARLY_DROP_MS, MAX_AUTO_RECONNECTS)
     private var reconnectJob: Job? = null
+    private var idleLinkJob: Job? = null
 
     // Both are used only by the write queue worker
     private val gpsPacer = GpsSendPacer(GPS_SEND_RECORDS_PER_SECOND, GPS_SEND_MAX_BURST)
@@ -512,7 +520,8 @@ class GpsRemoteBleManager(private val context: Context) {
     }
 
     /**
-     * Sends the keep-alive packet on a timer while connected.
+     * Sends the keep-alive packet on a timer while connected, once the camera has answered on the
+     * link. A camera that is off holds the link without it and announces itself when switched on.
      */
     private fun startKeepAlive() {
         keepAliveJob?.cancel()
@@ -520,7 +529,7 @@ class GpsRemoteBleManager(private val context: Context) {
             while (isActive) {
                 delay(KEEP_ALIVE_INTERVAL_MS)
                 // Nothing else is sent while a wake-up attempt is under way
-                if (wakeInProgress) continue
+                if (wakeInProgress || answeringSinceMs == null) continue
                 queuePacket(Go2BleProtocol.buildKeepAlivePacket())
                 if (_state.value.isCameraAwake && SystemClock.elapsedRealtime() - lastHeardAtMs > CAMERA_SILENT_MS) {
                     Log.w(TAG, "Camera has stopped answering")
@@ -554,6 +563,7 @@ class GpsRemoteBleManager(private val context: Context) {
         _state.update {
             it.copy(
                 connectionStatus = BleConnectionStatus.CONNECTING,
+                isLinkIdle = false,
                 deviceName = safeName,
                 deviceAddress = device.address
             )
@@ -591,6 +601,22 @@ class GpsRemoteBleManager(private val context: Context) {
         }
     }
 
+    /**
+     * Marks the link idle ([BleCameraState.isLinkIdle]) when the camera has not answered on it
+     * within a few seconds. This runs while the phone is still held awake, which is let go only
+     * once the link is idle. The link itself is left as it is: changing its timing just as the
+     * camera came on was followed by the camera dropping both the link and its Action Pod.
+     */
+    private fun scheduleIdleLink(gatt: BluetoothGatt) {
+        idleLinkJob?.cancel()
+        idleLinkJob = scope.launch {
+            delay(IDLE_LINK_AFTER_MS)
+            if (answeringSinceMs != null || wakeInProgress || activeGatt !== gatt) return@launch
+            Log.i(TAG, "The camera is not answering: the link is idle")
+            _state.update { it.copy(isLinkIdle = true) }
+        }
+    }
+
     /** Opens the link to [device] again, a moment after it dropped. */
     private fun reconnect(device: BluetoothDevice) {
         Log.i(TAG, "Reconnecting to the camera, ${reconnectPolicy.reconnectsLeft} more tries left after this one")
@@ -613,6 +639,7 @@ class GpsRemoteBleManager(private val context: Context) {
             } else if (newState == BluetoothProfile.STATE_DISCONNECTED) {
                 Log.w(TAG, "GATT disconnected, status=$status")
                 writeCharacteristic = null
+                idleLinkJob?.cancel()
                 stopKeepAlive()
                 markRecordingStop()
                 registrationJob?.cancel()
@@ -623,6 +650,7 @@ class GpsRemoteBleManager(private val context: Context) {
                         // A reconnection is about to be tried; Disconnected would only flash up
                         connectionStatus = if (reconnect) BleConnectionStatus.CONNECTING else BleConnectionStatus.DISCONNECTED,
                         isReconnecting = reconnect,
+                        isLinkIdle = false,
                         isCameraAwake = false,
                         isRecording = false,
                         isCaptureStarting = false,
@@ -686,6 +714,7 @@ class GpsRemoteBleManager(private val context: Context) {
 
             _state.update { it.copy(connectionStatus = BleConnectionStatus.CONNECTED, isReconnecting = false) }
             startKeepAlive()
+            scheduleIdleLink(gatt)
             Log.i(TAG, "Camera BLE successfully connected. Ready for commands.")
         }
 
@@ -783,6 +812,7 @@ class GpsRemoteBleManager(private val context: Context) {
                 wakeInProgress = false
                 // Carry on as after any connection; a camera that is off answers once it is on
                 requestStatusOnce()
+                activeGatt?.let { scheduleIdleLink(it) }
             }
         }
     }
@@ -980,7 +1010,10 @@ class GpsRemoteBleManager(private val context: Context) {
 
         // Anything valid from the camera, a keep-alive answer included, shows it is switched on
         lastHeardAtMs = SystemClock.elapsedRealtime()
-        if (answeringSinceMs == null) answeringSinceMs = lastHeardAtMs
+        if (answeringSinceMs == null) {
+            answeringSinceMs = lastHeardAtMs
+            _state.update { it.copy(isLinkIdle = false) }
+        }
         if (!_state.value.isCameraAwake) {
             Log.i(TAG, "Camera is answering")
             _state.update { it.copy(isCameraAwake = true) }
@@ -1465,6 +1498,7 @@ class GpsRemoteBleManager(private val context: Context) {
     fun disconnect() {
         // Cleared first, so that the link ending here is not taken for one that dropped
         reconnectJob?.cancel()
+        idleLinkJob?.cancel()
         answeringSinceMs = null
         linkIsReconnect = false
         stopScan()
@@ -1479,6 +1513,7 @@ class GpsRemoteBleManager(private val context: Context) {
             it.copy(
                 connectionStatus = BleConnectionStatus.DISCONNECTED,
                 isReconnecting = false,
+                isLinkIdle = false,
                 isCameraAwake = false,
                 isRecording = false,
                 isCaptureStarting = false,

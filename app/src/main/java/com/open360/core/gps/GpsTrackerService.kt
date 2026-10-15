@@ -20,13 +20,16 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
-import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.launch
 
 /**
  * Foreground Service that keeps GPS fixes arriving and the camera link alive when the phone
  * display is off or the app is in the background. It runs for as long as the camera is
  * connected and has to be started while the app is on screen.
+ *
+ * The fixes come from CameraViewModel's GpsTrackerEngine: a running location service is what
+ * lets the app receive them, and start them again, while it is not on screen. The processor is
+ * held awake only while the camera is answering; while it is off nothing needs to run on time.
  */
 class GpsTrackerService : Service() {
 
@@ -37,16 +40,28 @@ class GpsTrackerService : Service() {
 
         const val ACTION_START_TRACKING = "com.open360.action.START_GPS_TRACKING"
         const val ACTION_STOP_TRACKING = "com.open360.action.STOP_GPS_TRACKING"
+        const val ACTION_SET_HOLD_AWAKE = "com.open360.action.SET_HOLD_AWAKE"
+        const val EXTRA_HOLD_AWAKE = "hold_awake"
 
-        fun start(context: Context) {
+        fun start(context: Context, holdAwake: Boolean) {
             val intent = Intent(context, GpsTrackerService::class.java).apply {
                 action = ACTION_START_TRACKING
+                putExtra(EXTRA_HOLD_AWAKE, holdAwake)
             }
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
                 context.startForegroundService(intent)
             } else {
                 context.startService(intent)
             }
+        }
+
+        /** Holds the processor awake, or lets it sleep, while the service is running. */
+        fun setHoldAwake(context: Context, holdAwake: Boolean) {
+            val intent = Intent(context, GpsTrackerService::class.java).apply {
+                action = ACTION_SET_HOLD_AWAKE
+                putExtra(EXTRA_HOLD_AWAKE, holdAwake)
+            }
+            context.startService(intent)
         }
 
         fun stop(context: Context) {
@@ -58,7 +73,6 @@ class GpsTrackerService : Service() {
     }
 
     private val serviceScope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
-    private lateinit var gpsEngine: GpsTrackerEngine
     private var bleManager: GpsRemoteBleManager? = null
     private var wakeLock: PowerManager.WakeLock? = null
 
@@ -68,15 +82,12 @@ class GpsTrackerService : Service() {
 
     private val binder = LocalBinder()
 
-    val telemetry: StateFlow<GpsTelemetry> get() = gpsEngine.telemetry
-
     fun attachBleManager(manager: GpsRemoteBleManager) {
         this.bleManager = manager
     }
 
     override fun onCreate() {
         super.onCreate()
-        gpsEngine = GpsTrackerEngine(this)
         createNotificationChannel()
     }
 
@@ -84,6 +95,10 @@ class GpsTrackerService : Service() {
         when (intent?.action) {
             ACTION_START_TRACKING -> {
                 startForegroundTracking()
+                holdAwake(intent.getBooleanExtra(EXTRA_HOLD_AWAKE, true))
+            }
+            ACTION_SET_HOLD_AWAKE -> {
+                holdAwake(intent.getBooleanExtra(EXTRA_HOLD_AWAKE, true))
             }
             ACTION_STOP_TRACKING -> {
                 stopForegroundTracking()
@@ -108,22 +123,29 @@ class GpsTrackerService : Service() {
             startForeground(NOTIFICATION_ID, notification)
         }
 
-        // Keeps location updates and the process alive in the background. The fixes themselves
-        // are sent to the camera by CameraViewModel.
-        gpsEngine.startTracking()
+        Log.i(TAG, "GpsTrackerService started foreground tracking")
+    }
 
-        // With the display off the phone lets the processor sleep between fixes. That stalls the
-        // keep-alive the camera needs every 2 s and the GPS sent to it, so it is held awake.
+    /**
+     * With the display off the phone lets the processor sleep between fixes. That stalls the
+     * keep-alive the camera needs every 2 s and the GPS sent to it, so while the camera is
+     * answering it is held awake.
+     */
+    private fun holdAwake(hold: Boolean) {
+        if (!hold) {
+            if (wakeLock?.isHeld == true) Log.i(TAG, "Letting the processor sleep")
+            releaseWakeLock()
+            return
+        }
         val lock = wakeLock ?: getSystemService(PowerManager::class.java)
             .newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "Open360:CameraLink")
             .apply { setReferenceCounted(false) }
             .also { wakeLock = it }
+        if (!lock.isHeld) Log.i(TAG, "Holding the processor awake")
         lock.acquire()
-        Log.i(TAG, "GpsTrackerService started foreground tracking")
     }
 
     private fun stopForegroundTracking() {
-        gpsEngine.stopTracking()
         releaseWakeLock()
         stopForeground(STOP_FOREGROUND_REMOVE)
         Log.i(TAG, "GpsTrackerService stopped foreground tracking")
@@ -168,7 +190,6 @@ class GpsTrackerService : Service() {
 
     override fun onDestroy() {
         super.onDestroy()
-        gpsEngine.stopTracking()
         releaseWakeLock()
         serviceScope.cancel()
     }

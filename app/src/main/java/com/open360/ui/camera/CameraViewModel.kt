@@ -115,6 +115,11 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
     private var trackedFirstFrameAtMs: Long? = null
     private var backgroundServiceRunning = false
 
+    // Whether the app is on screen, and whether it is off screen with a link to a camera that is
+    // off, when GPS is paused and the processor may sleep (updateWaitingForCamera)
+    private var appVisible = true
+    private var waitingForCamera = false
+
     init {
         // The GO 3S has not connected to a phone advertising as the GPS Remote, so the GATT server
         // is not started here. The app connects out to the camera and uploads GPS over that link.
@@ -182,6 +187,7 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
                 } else if (!linked && gpsStreamJob != null) {
                     stopGpsTelemetryInjection()
                 }
+                updateWaitingForCamera()
                 updateBackgroundService()
 
                 // One GPX track per recording, from its first frame to its stop
@@ -376,13 +382,47 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
             if (wanted) {
                 // Android refuses a location service to an app without the permission
                 if (!gpsEngine.hasLocationPermission()) return
-                GpsTrackerService.start(getApplication())
+                GpsTrackerService.start(getApplication(), holdAwake = !waitingForCamera)
             } else {
                 GpsTrackerService.stop(getApplication())
             }
             backgroundServiceRunning = wanted
         } catch (e: Exception) {
             Log.w(TAG, "Could not ${if (wanted) "start" else "stop"} the background service", e)
+        }
+    }
+
+    /** Called as the app comes on screen and goes off it. */
+    fun setAppVisible(visible: Boolean) {
+        appVisible = visible
+        updateWaitingForCamera()
+    }
+
+    /**
+     * While the app is off screen with an idle link to a camera that is off, nothing it does is
+     * needed until the camera is switched on, so GPS is paused and the processor is let sleep.
+     * Both start again as soon as the camera answers; the location service keeps running, as
+     * Android would not let it start again from the background. On screen GPS keeps running for
+     * the readouts, and while a link is being opened or a recording runs nothing is paused.
+     */
+    private fun updateWaitingForCamera() {
+        val ble = _uiState.value.bleState
+        val waiting = !appVisible && ble.isLinkIdle && !ble.isCameraAwake && ble.recordingFirstFrameAtMs == null
+        if (waiting == waitingForCamera) return
+        waitingForCamera = waiting
+        if (waiting) {
+            Log.i(TAG, "Waiting for the camera to be switched on: GPS paused")
+            gpsEngine.stopTracking()
+        } else {
+            Log.i(TAG, "No longer waiting for the camera: GPS resumed")
+            gpsEngine.startTracking()
+        }
+        if (backgroundServiceRunning) {
+            try {
+                GpsTrackerService.setHoldAwake(getApplication(), holdAwake = !waiting)
+            } catch (e: Exception) {
+                Log.w(TAG, "Could not tell the background service whether to hold the phone awake", e)
+            }
         }
     }
 

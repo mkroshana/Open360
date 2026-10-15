@@ -61,6 +61,16 @@ class MainActivity : ComponentActivity() {
         }
     }
 
+    override fun onStart() {
+        super.onStart()
+        cameraViewModel.setAppVisible(true)
+    }
+
+    override fun onStop() {
+        super.onStop()
+        cameraViewModel.setAppVisible(false)
+    }
+
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
         storeWakeAuthorizationId(intent)
