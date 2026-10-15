@@ -211,20 +211,27 @@ object Go2BleProtocol {
         )
     }
 
-    /** The Action Pod as the camera reports it. [battery] is null when the pod is not connected. */
-    data class ChargeBoxStatus(val connected: Boolean, val battery: BatteryStatus?)
+    /**
+     * The Action Pod as the camera reports it. [battery] is null when the pod is not connected
+     * or is switched off; [isOn] is false for a pod that is connected but switched off.
+     */
+    data class ChargeBoxStatus(val connected: Boolean, val battery: BatteryStatus?, val isOn: Boolean = true)
 
     /**
      * Decodes the charge box connect status notification (0x201e, ChargeboxConnectedStatus),
-     * the camera's report on its Action Pod: connected or not (field 1) and the pod's own
-     * BatteryStatus (field 2). When the pod is not connected its battery is sent as zero.
+     * the camera's report on its Action Pod: connected or not (field 1), the pod's own
+     * BatteryStatus (field 2) and whether it is switched on (field 3, 0 offline, 1 online).
+     * When the pod is not connected or is switched off its battery is sent as zero, as with a
+     * camera woken over Bluetooth in a pod that stays off. A report without field 3 is taken
+     * as the pod being on.
      */
     fun parseChargeBoxStatus(payload: ByteArray): ChargeBoxStatus? {
         val fields = readProtoFields(payload)
         if (fields.isEmpty()) return null
         val connected = fields[1] as? Long == 1L
+        val isOn = fields[3] as? Long != 0L
         val battery = (fields[2] as? ByteArray)?.let { readBatteryStatus(it) }
-        return ChargeBoxStatus(connected, if (connected) battery else null)
+        return ChargeBoxStatus(connected, if (connected && isOn) battery else null, isOn)
     }
 
     /**

@@ -381,6 +381,14 @@ class Go2BleProtocolTest {
         assertEquals(false, gone?.connected)
         assertNull(gone?.battery)
 
+        // Captured from a GO 3S woken over Bluetooth in a pod that stayed off: connected,
+        // battery zero, offline (field 3 = 0). The zero is not a reading.
+        val switchedOff = Go2BleProtocol.parseChargeBoxStatus(hex("0801120408001000180020012801"))
+        assertEquals(true, switchedOff?.connected)
+        assertEquals(false, switchedOff?.isOn)
+        assertNull(switchedOff?.battery)
+        assertEquals(true, onBattery.isOn)
+
         assertNull(Go2BleProtocol.parseChargeBoxStatus(ByteArray(0)))
     }
 

@@ -64,9 +64,10 @@ object CameraStatusText {
         }
     }
 
-    /** The Action Pod's line: its battery, "72%, Plugged In", or "Not Connected". */
+    /** The Action Pod's line: its battery, "72%, Plugged In", "Switched Off" or "Not Connected". */
     fun pod(status: ChargeBoxStatus): String {
         if (!status.connected) return "Not Connected"
+        if (!status.isOn) return "Switched Off"
         val battery = status.battery ?: return "Connected"
         return if (battery.onExternalPower) "${battery.levelPercent}%, Plugged In" else "${battery.levelPercent}%"
     }

@@ -69,6 +69,10 @@ class CameraStatusTextTest {
         assertEquals("65%, Plugged In", CameraStatusText.pod(pluggedIn))
         assertEquals("Not Connected", CameraStatusText.pod(gone))
         assertEquals("Connected", CameraStatusText.pod(ChargeBoxStatus(connected = true, battery = null)))
+        // Docked but switched off: not a battery reading
+        val switchedOff = ChargeBoxStatus(connected = true, battery = null, isOn = false)
+        assertEquals("Switched Off", CameraStatusText.pod(switchedOff))
+        assertFalse(CameraStatusText.podIsLow(switchedOff))
 
         assertFalse(CameraStatusText.podIsLow(onBattery))
         assertTrue(CameraStatusText.podIsLow(low))
