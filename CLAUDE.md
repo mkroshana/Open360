@@ -41,6 +41,7 @@ Insta360 cameras have two completely separate BLE architectures. Open360 uses Ar
 - **Capture status.** Notification `0x2010` carries `CameraCaptureState` in field 1: `1` when a video starts, `0` when it stops. It arrives about 1 s after the clip really starts.
 - **Architecture A.** The phone-side server was verified end to end with a PC as the central, but the GO 3S never connected to it. Android advertises from a private address that changes; the real remote and working clones use a fixed one. That is the suspected cause, not a proven one.
 - **Local GPX.** Each recording gets its own GPX file in `Download/Open360` on the phone, holding the real fixes taken between its first frame and its stop. The camera's reply to the stop command carries the video path (field 1, then field 1), so a recording stopped from the app is saved as the video's name with `.gpx`, for example `VID_20261012_163049_00_066.gpx`, with the video name and the start and end times inside. A recording stopped on the camera has no reply to read, so its file keeps the name `Open360_<date>_<time>.gpx`.
+- **Footage over Wi-Fi (checked 2026-10-15).** The camera turns its Wi-Fi on by itself about 2 s after it starts answering over Bluetooth (notification `0x2017`). Its network is `GO 3S <serial suffix>.OSC` on channel 149, and its password is not `88888888`: the app asks for the name and password over Bluetooth with `GET_OPTIONS` option 36 (`WIFI_INFO`; in the reply's `Options`, field 36 holds the name in field 1 and the password in field 2), keeps them, and joins with `WifiNetworkSpecifier` for the app alone. Earlier versions guessed `88888888`, every join failed with `AUTH_FAILURE_WRONG_PSWD`, and the network suggestion they left made Android try the camera as the phone's main Wi-Fi; the app now withdraws it. The camera's OSC HTTP API answers `/osc/info` and `/osc/state`, but refuses `camera.listFiles` with `disabledCommand` and the folder `/DCIM/Camera01/` with 403. Files are listed with `GET_FILE_LIST` (command 13: media type 2, start, limit), which the camera answers over Bluetooth and over Wi-Fi port 6666 alike (the same protobuf messages, behind a 4-byte length and a 12-byte header; a reply carries its request's sequence number): 74 paths in 0.08 s, newest first, with no sizes. Each video is a full clip and a low-resolution copy, for example `PRO_VID_20261015_181505_00_095.mp4` (358 MB) and `PRO_LRV_20261015_181505_01_095.lrv` (22 MB); photos are `IMG_..._00_001.jpg` with a thumbnail in their EXIF data. Files are served over HTTP at `http://192.168.42.1/<path>` with byte ranges: 19 MB/s to the PC, and a 126 MB clip reached the phone in under 10 s. `GET_MINI_THUMBNAIL` (command 30) is answered 400, "unknown msg code". In the app each clip is listed once, with the first frame of its copy as the thumbnail and the date from its name; Preview streams the copy and Download saves the full clip to `Download/Open360`. Checked on the phone: joining, the list, thumbnails of clips and photos, a preview, a photo, and downloading and playing a clip. Not checked: joining with the saved password while Bluetooth is off, and a list longer than one page of 500.
 
 ## 3. Architecture A GATT Layout & Wire Protocol
 
@@ -104,23 +105,25 @@ Insta360 cameras have two completely separate BLE architectures. Open360 uses Ar
 - `CameraViewModel.kt`: Central state orchestrator connecting BLE, GPS, settings, and UI flows.
 
 ### Media Browser, Wi-Fi Transfer & Player
-- `CameraWifiConnector.kt`: Programmatic Wi-Fi connection and process network binder. Replicates the official Insta360 app's mechanism: registers `WifiNetworkSuggestion` (password `88888888`) and requests network via `WifiNetworkSpecifier`, binding the app process (`bindProcessToNetwork`) so HTTP requests to `192.168.42.1` route directly to the camera over Wi-Fi STA concurrency while preserving Cellular/home Wi-Fi internet.
+- `CameraWifiConnector.kt`: Programmatic Wi-Fi connection and process network binder. Joins the camera's access point for the app alone via `WifiNetworkSpecifier`, with the name and password the camera gives over Bluetooth, and binds the app process (`bindProcessToNetwork`) so requests to `192.168.42.1` go to the camera over Wi-Fi STA concurrency while Cellular/home Wi-Fi keeps the internet. Withdraws the network suggestion earlier versions registered with the wrong password.
 - `FootageRepository.kt`: Manages media discovery, downloading, and importing across three sources:
-  1. Camera Wi-Fi via Google OSC v2 `camera.listFiles` and HTTP streaming on port 80.
+  1. Camera Wi-Fi: file list over port 6666 (`GET_FILE_LIST` through `CameraSocketClient`), downloads and streaming over HTTP on port 80, thumbnails from each clip's `.lrv` copy and from photos' EXIF data.
   2. Local storage (`Download/Open360` and `DCIM/Insta360Download`) via `MediaStore.Downloads` and `MediaStore.Video.Media`.
   3. Wired USB-C OTG / Storage Access Framework (SAF) folder tree (`DCIM/Camera01`).
-- `FootageViewModel.kt`: State management for camera Wi-Fi, downloaded, and USB footage tabs, automatically triggering `CameraWifiConnector` when the camera tab opens.
-- `FootageScreen.kt`: Material 3 UI with TabRow for "Camera Wi-Fi", "Downloaded", and "USB / Folder", clip metadata cards, download/stream buttons, live connecting status cards, and USB directory picker.
+- `CameraFileList.kt`: Turns the camera's listed paths into list entries, attaching each clip's `.lrv` copy as its preview and reading the date from the file name.
+- `CameraSocketClient.kt`: Client for the camera's port 6666 (sync, keep-alive, notifications), with `request()` matching each reply to its command by sequence number.
+- `FootageViewModel.kt`: State management for camera Wi-Fi, downloaded, and USB footage tabs. When the camera tab opens it gets the Wi-Fi name and password from the Bluetooth link (`GpsRemoteBleManager.requestWifiInfo`, or the saved ones) and starts `CameraWifiConnector`.
+- `FootageScreen.kt`: Material 3 UI with TabRow for "Camera Wi-Fi", "Downloaded", and "USB / Folder", clip cards with thumbnails and dates, download/preview buttons, live connecting status cards, and USB directory picker.
 - `FootagePlayerDialog.kt`: In-app media player powered by AndroidX Media3 (ExoPlayer) with full playback controls, photo viewer, system share action, and companion GPX telemetry overlay.
 - `GpxParser.kt`: Universal XML parser extracting point count, total distance, duration, elevation gain, and max speed from companion `.gpx` files.
-- `OscClient.kt`: OSC v2 client supporting `/osc/info`, `/osc/state`, and `camera.listFiles` with pagination and thumbnails.
-- `CameraMediaFile.kt`: Unified data model for camera clips across remote HTTP, local storage, and SAF content URIs.
+- `OscClient.kt`: OSC v2 client supporting `/osc/info`, `/osc/state` and capture commands. Not used for listing: the GO 3S refuses `camera.listFiles`.
+- `CameraMediaFile.kt`: Unified data model for camera clips across remote HTTP, local storage, and SAF content URIs, with `previewUrl` for a camera clip's `.lrv` copy.
 
 ### Testing & Debugging
 - `MainActivity.kt`: Supports debug intent triggers in debug builds:
   - `adb shell am start -n com.open360/.MainActivity --ez debug_wake true` (triggers Wake Up)
   - `adb shell am start -n com.open360/.MainActivity --ei debug_command <code> [--es debug_payload <hex>]` (sends test command to camera)
-- Unit test suite: `Go2BleProtocolTest.kt`, `GpsTimelineTest.kt`, `GpsStreamScheduleTest.kt`, `GpsSendPacerTest.kt`, `FixedRateLoopTest.kt`, `GpxWriterTest.kt`, `GpxParserTest.kt`, `OscClientTest.kt`, `CameraStatusTextTest.kt`, `WakeUpSetupTest.kt`.
+- Unit test suite: `Go2BleProtocolTest.kt`, `GpsTimelineTest.kt`, `GpsStreamScheduleTest.kt`, `GpsSendPacerTest.kt`, `FixedRateLoopTest.kt`, `GpxWriterTest.kt`, `GpxParserTest.kt`, `OscClientTest.kt`, `CameraStatusTextTest.kt`, `WakeUpSetupTest.kt`, `PacketFramerTest.kt`, `CameraFileListTest.kt`.
 
 ## 5. Connection Workflow
 
