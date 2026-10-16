@@ -1,5 +1,6 @@
 package com.open360.ui.camera
 
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -17,8 +18,11 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedCard
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import com.open360.core.ble.WakeUpRegistration
@@ -40,9 +44,12 @@ fun WakeUpSetupCard(
         else -> null
     }
 
+    val buttonInteraction = remember { MutableInteractionSource() }
+    val buttonScale by rememberPressScale(buttonInteraction, targetScale = 0.96f)
+
     OutlinedCard(
         modifier = Modifier.fillMaxWidth(),
-        shape = RoundedCornerShape(16.dp)
+        shape = RoundedCornerShape(20.dp)
     ) {
         Column(modifier = Modifier.padding(start = 16.dp, top = 4.dp, end = 4.dp, bottom = 16.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
@@ -81,7 +88,15 @@ fun WakeUpSetupCard(
                     )
                 }
                 Spacer(modifier = Modifier.height(12.dp))
-                FilledTonalButton(onClick = onSetUp) {
+                FilledTonalButton(
+                    onClick = onSetUp,
+                    interactionSource = buttonInteraction,
+                    modifier = Modifier.graphicsLayer {
+                        scaleX = buttonScale
+                        scaleY = buttonScale
+                    },
+                    shape = RoundedCornerShape(12.dp)
+                ) {
                     Text("Set Up")
                 }
             }
