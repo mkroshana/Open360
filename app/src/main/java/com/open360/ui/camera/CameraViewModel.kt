@@ -584,8 +584,7 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
             longitude = longitude,
             altitudeMeters = altitudeMeters,
             speedMps = speedKmh / 3.6,
-            bearingDegrees = bearingDegrees.toDouble(),
-            gpsAltitudeMeters = gpsAltitudeMeters
+            bearingDegrees = bearingDegrees.toDouble()
         )
     }
 

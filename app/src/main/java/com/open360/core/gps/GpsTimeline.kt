@@ -4,9 +4,7 @@ import kotlin.math.abs
 
 /**
  * One measured GPS fix. [elapsedMs] is when it was taken on the phone's monotonic clock
- * (SystemClock.elapsedRealtime) and [utcMs] is the same moment in GPS time. [altitudeMeters] is
- * the altitude sent to the camera, blended with the barometer when there is one, and
- * [gpsAltitudeMeters] the GPS altitude of the fix itself.
+ * (SystemClock.elapsedRealtime) and [utcMs] is the same moment in GPS time.
  */
 data class GpsFix(
     val elapsedMs: Long,
@@ -15,8 +13,7 @@ data class GpsFix(
     val longitude: Double,
     val altitudeMeters: Double,
     val speedMps: Double,
-    val bearingDegrees: Double,
-    val gpsAltitudeMeters: Double = altitudeMeters
+    val bearingDegrees: Double
 )
 
 /**

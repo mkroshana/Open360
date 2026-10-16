@@ -119,7 +119,7 @@ class GpxTrackRecorder(private val context: Context) {
             try {
                 val out = s.channel ?: open(s)
                 out.position(s.footerPosition)
-                out.write(bytes(GpxWriter.trackPoint(fix.latitude, fix.longitude, fix.gpsAltitudeMeters, fix.utcMs)))
+                out.write(bytes(GpxWriter.trackPoint(fix.latitude, fix.longitude, fix.altitudeMeters, fix.utcMs)))
                 s.footerPosition = out.position()
                 out.write(bytes(GpxWriter.FOOTER))
                 s.fixes.add(fix)
@@ -241,7 +241,7 @@ class GpxTrackRecorder(private val context: Context) {
 
         val content = StringBuilder(GpxWriter.header(video ?: "Open360 ${stamp(s.startWallMs)}", description, first.utcMs))
         for (fix in s.fixes) {
-            content.append(GpxWriter.trackPoint(fix.latitude, fix.longitude, fix.gpsAltitudeMeters, fix.utcMs))
+            content.append(GpxWriter.trackPoint(fix.latitude, fix.longitude, fix.altitudeMeters, fix.utcMs))
         }
         content.append(GpxWriter.FOOTER)
 
