@@ -1,5 +1,6 @@
 package com.open360.core.gps
 
+import com.open360.core.sensors.SensorTrack
 import java.io.ByteArrayOutputStream
 import kotlin.math.asin
 import kotlin.math.cos
@@ -13,8 +14,9 @@ import kotlin.math.sqrt
  * takes only the position, elevation and time.
  *
  * The file holds a file_id, a timer start, one record per second with position, altitude,
- * speed and distance, a timer stop, and the lap, session and activity summaries. FIT keeps time
- * in whole seconds, so a second fix within the same second is left out.
+ * speed and distance, and heart rate, cadence and power when sensors gave them, a timer stop,
+ * and the lap, session and activity summaries. FIT keeps time in whole seconds, so a second fix
+ * within the same second is left out.
  */
 object FitWriter {
 
@@ -35,6 +37,7 @@ object FitWriter {
 
     // Base types
     private const val ENUM = 0x00
+    private const val UINT8 = 0x02
     private const val UINT16 = 0x84
     private const val SINT32 = 0x85
     private const val UINT32 = 0x86
@@ -57,11 +60,20 @@ object FitWriter {
 
     private const val EARTH_RADIUS_M = 6_371_000.0
 
+    // A sensor reading further than this from a record's time is not used for it
+    private const val MAX_READING_GAP_MS = 3_000L
+
+    // FIT's values for a field that holds nothing
+    private const val INVALID_UINT8 = 0xFF
+    private const val INVALID_UINT16 = 0xFFFF
+
     /**
      * The FIT file for [fixes], which must be in time order. [utcOffsetMs] is the local time
-     * zone's offset at the start, for the activity's local timestamp.
+     * zone's offset at the start, for the activity's local timestamp. Each record also takes the
+     * [sensors] reading nearest its fix, within 3 s; a kind of reading that is missing altogether
+     * is left out of the file.
      */
-    fun activity(fixes: List<GpsFix>, utcOffsetMs: Int): ByteArray {
+    fun activity(fixes: List<GpsFix>, utcOffsetMs: Int, sensors: SensorTrack = SensorTrack()): ByteArray {
         require(fixes.isNotEmpty()) { "A FIT activity needs at least one fix" }
         val data = Data()
 
@@ -72,13 +84,23 @@ object FitWriter {
         data.define(1, MESG_EVENT, listOf(Field(FIELD_TIMESTAMP, 4, UINT32), Field(0, 1, ENUM), Field(1, 1, ENUM)))
         data.message(1) { u32(start); enum(EVENT_TIMER); enum(EVENT_TYPE_START) }
 
+        val hasHeartRate = sensors.heartRateBpm.isNotEmpty()
+        val hasCadence = sensors.cadenceRpm.isNotEmpty()
+        val hasPower = sensors.powerWatts.isNotEmpty()
         data.define(
             2, MESG_RECORD,
             listOf(
                 Field(FIELD_TIMESTAMP, 4, UINT32), Field(0, 4, SINT32), Field(1, 4, SINT32), Field(5, 4, UINT32),
                 Field(2, 2, UINT16), Field(6, 2, UINT16), Field(78, 4, UINT32), Field(73, 4, UINT32)
+            ) + listOfNotNull(
+                Field(3, 1, UINT8).takeIf { hasHeartRate },
+                Field(4, 1, UINT8).takeIf { hasCadence },
+                Field(7, 2, UINT16).takeIf { hasPower }
             )
         )
+        val heartRates = ArrayList<Int>()
+        val cadences = ArrayList<Int>()
+        val powers = ArrayList<Int>()
         var distanceM = 0.0
         var previous: GpsFix? = null
         var lastTime = -1L
@@ -98,6 +120,21 @@ object FitWriter {
                 u16((fix.speedMps * 1000).roundToLong().coerceIn(0, 0xFFFE))
                 u32(((fix.altitudeMeters + 500) * 5).roundToLong().coerceAtLeast(0))
                 u32((fix.speedMps * 1000).roundToLong().coerceAtLeast(0))
+                if (hasHeartRate) {
+                    val bpm = SensorTrack.nearest(sensors.heartRateBpm, fix.elapsedMs, MAX_READING_GAP_MS)?.coerceIn(0, 254)
+                    bpm?.let { heartRates += it }
+                    u8(bpm ?: INVALID_UINT8)
+                }
+                if (hasCadence) {
+                    val rpm = SensorTrack.nearest(sensors.cadenceRpm, fix.elapsedMs, MAX_READING_GAP_MS)?.coerceIn(0, 254)
+                    rpm?.let { cadences += it }
+                    u8(rpm ?: INVALID_UINT8)
+                }
+                if (hasPower) {
+                    val watts = SensorTrack.nearest(sensors.powerWatts, fix.elapsedMs, MAX_READING_GAP_MS)?.coerceIn(0, 65534)
+                    watts?.let { powers += it }
+                    u16(watts ?: INVALID_UINT16)
+                }
             }
         }
 
@@ -113,10 +150,24 @@ object FitWriter {
         data.define(3, MESG_LAP, summary)
         data.message(3) { u32(end); u32(start); u32(elapsedMs); u32(elapsedMs); u32(distanceCm); enum(EVENT_LAP); enum(EVENT_TYPE_STOP) }
 
-        data.define(4, MESG_SESSION, summary + listOf(Field(5, 1, ENUM), Field(6, 1, ENUM), Field(25, 2, UINT16), Field(26, 2, UINT16)))
+        // Averages and maximums of what the records hold: heart rate (16, 17), cadence (18, 19), power (20, 21)
+        val sensorSummary = listOfNotNull(
+            heartRates.takeIf { it.isNotEmpty() }?.let { Triple(Field(16, 1, UINT8), Field(17, 1, UINT8), it) },
+            cadences.takeIf { it.isNotEmpty() }?.let { Triple(Field(18, 1, UINT8), Field(19, 1, UINT8), it) },
+            powers.takeIf { it.isNotEmpty() }?.let { Triple(Field(20, 2, UINT16), Field(21, 2, UINT16), it) }
+        )
+        data.define(
+            4, MESG_SESSION,
+            summary + listOf(Field(5, 1, ENUM), Field(6, 1, ENUM), Field(25, 2, UINT16), Field(26, 2, UINT16)) +
+                sensorSummary.flatMap { listOf(it.first, it.second) }
+        )
         data.message(4) {
             u32(end); u32(start); u32(elapsedMs); u32(elapsedMs); u32(distanceCm); enum(EVENT_SESSION); enum(EVENT_TYPE_STOP)
             enum(SPORT_GENERIC); enum(0); u16(0); u16(1)
+            for ((averageField, _, values) in sensorSummary) {
+                val average = (values.sum().toDouble() / values.size).roundToLong().toInt()
+                if (averageField.size == 1) { u8(average); u8(values.max()) } else { u16(average); u16(values.max()) }
+            }
         }
 
         data.define(

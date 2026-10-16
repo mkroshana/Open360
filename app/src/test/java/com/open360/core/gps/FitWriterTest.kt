@@ -1,5 +1,7 @@
 package com.open360.core.gps
 
+import com.open360.core.sensors.SensorReading
+import com.open360.core.sensors.SensorTrack
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -123,6 +125,43 @@ class FitWriterTest {
         assertEquals(1L, activity[1])
         assertEquals(startFit + 2 + 19_800L, activity[5])
         assertTrue(messages.any { it.global == 19 })
+    }
+
+    @Test
+    fun testSensorReadingsGoIntoTheRecordsAndTheSession() {
+        // Six fixes a second apart; the heart rate stops after 1.1 s, so the last record is 3.9 s
+        // from a reading and gets no value
+        val fixes = (0..5).map { fix(it.toDouble(), 6.6657512 + it * 0.0001, 79.9369134, 10.0, 8.0) }
+        val sensors = SensorTrack(
+            heartRateBpm = listOf(SensorReading(0, 90), SensorReading(1_100, 100)),
+            powerWatts = (0..5).map { SensorReading(it * 1_000L + 200, 150 + it * 10) }
+        )
+        val messages = decode(FitWriter.activity(fixes, utcOffsetMs = 0, sensors = sensors))
+
+        val records = messages.filter { it.global == 20 }.map { it.fields }
+        assertEquals(listOf(90L, 100L, 100L, 100L, 100L, 255L), records.map { it[3] })
+        assertEquals(listOf(150L, 160L, 170L, 180L, 190L, 200L), records.map { it[7] })
+        // no cadence readings at all: the field is not in the file
+        assertTrue(records.none { it.containsKey(4) })
+
+        val session = messages.single { it.global == 18 }.fields
+        // heart rate average of the five records that have one, and its maximum
+        assertEquals(98L, session[16])
+        assertEquals(100L, session[17])
+        assertEquals(175L, session[20])
+        assertEquals(200L, session[21])
+        assertTrue(!session.containsKey(18))
+    }
+
+    @Test
+    fun testNearestReadingIsUsedOnlyWithinTheGap() {
+        val readings = listOf(SensorReading(1_000, 60), SensorReading(2_000, 70), SensorReading(10_000, 80))
+        assertEquals(60, SensorTrack.nearest(readings, 1_400, 3_000))
+        assertEquals(70, SensorTrack.nearest(readings, 1_600, 3_000))
+        assertEquals(70, SensorTrack.nearest(readings, 4_900, 3_000))
+        assertEquals(null, SensorTrack.nearest(readings, 6_000, 3_000))
+        assertEquals(80, SensorTrack.nearest(readings, 12_000, 3_000))
+        assertEquals(null, SensorTrack.nearest(emptyList(), 0, 3_000))
     }
 
     @Test
