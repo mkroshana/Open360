@@ -8,6 +8,7 @@ import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.open360.core.ble.BleCameraState
 import com.open360.core.ble.BleConnectionStatus
+import com.open360.core.ble.Go2BleProtocol
 import com.open360.core.ble.GpsRemoteBleManager
 import com.open360.core.ble.InstaGpsRemoteGattServer
 import com.open360.core.ble.InstaGpsRemoteServerState
@@ -113,6 +114,8 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
     private var recordingTimerJob: Job? = null
     private var gpsStreamJob: Job? = null
     private var trackedFirstFrameAtMs: Long? = null
+    // The camera's mode as last reported, so the Video and Photo choice follows each new report
+    private var followedSubModes: Go2BleProtocol.SubModes? = null
     private var backgroundServiceRunning = false
 
     // Whether the app is on screen, and whether it is off screen with a link to a camera that is
@@ -164,6 +167,18 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
                         isConnected = connected,
                         isRecording = recording
                     )
+                }
+
+                // The Video and Photo choice follows the camera when it reports its mode, on
+                // connecting and whenever it changes, from the app or on the camera
+                val subModes = ble.details.subModes
+                if (subModes != followedSubModes) {
+                    followedSubModes = subModes
+                    if (subModes != null) {
+                        _uiState.update {
+                            it.copy(currentMode = if (subModes.isPhoto) CaptureMode.PHOTO else CaptureMode.VIDEO)
+                        }
+                    }
                 }
 
                 if (ble.isRecording && recordingTimerJob == null) {
@@ -305,7 +320,20 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
     }
 
     fun setMode(mode: CaptureMode) {
+        val current = _uiState.value
+        val ble = current.bleState
+        // Not while a recording runs: what a switch would do to it is not known
+        if (current.isRecording || ble.isCaptureStarting || ble.isCaptureStopping) return
         _uiState.update { it.copy(currentMode = mode) }
+
+        // A camera that is on is switched too, so its own button and the pod's screen match.
+        // One that is off acts on commands when it next wakes, so it is sent nothing.
+        val photo = mode == CaptureMode.PHOTO
+        if (ble.connectionStatus == BleConnectionStatus.CONNECTED && ble.isCameraAwake &&
+            ble.details.subModes?.isPhoto != photo
+        ) {
+            bleManager.setCameraMode(photo)
+        }
     }
 
     fun toggleSpeedUnit() {

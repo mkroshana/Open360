@@ -256,8 +256,8 @@ class Go2BleProtocolTest {
 
     @Test
     fun testStatusOptionsRequestAndReply() {
-        // The request asks for options 9, 11, 20 and 85 as a packed list
-        assertTrue(hex("0a04090b1455").contentEquals(Go2BleProtocol.buildStatusOptionsRequest()))
+        // The request asks for options 9, 11, 20, 85, 40 and 41 as a packed list
+        assertTrue(hex("0a06090b14552829").contentEquals(Go2BleProtocol.buildStatusOptionsRequest()))
 
         // The reply captured from a GO 3S in its Action Pod, idle in Video mode
         val reply = Go2BleProtocol.parseStatusOptionsReply(
@@ -273,9 +273,46 @@ class Go2BleProtocolTest {
         assertEquals(Go2BleProtocol.CardState.OK, reply.cardState)
         assertEquals(true, reply.pod?.connected)
         assertEquals(89, reply.pod?.battery?.levelPercent)
+        // Asked for before the sub-modes were
+        assertNull(reply.subModes)
 
         // An OK with nothing in it, such as the one that answers a GPS upload
         assertNull(Go2BleProtocol.parseStatusOptionsReply(ByteArray(0)))
+    }
+
+    @Test
+    fun testStatusOptionsReplyGivesTheSubModes() {
+        // Replies a GO 3S sent the Insta360 app over Wi-Fi when it asked for options 40, 41, 11,
+        // 20, 48, 114, 110 and 156: in single photo, then in normal video
+        val common = "08280829080b081408300872086e124c5a06080010642831a201160800108080f0dc7818808094ebdc0328808094ebdc03"
+        val tail = "82030e496e73746133363020474f203353f2060776312e332e353992070776312e332e3539"
+
+        val photo = Go2BleProtocol.parseStatusOptionsReply(hex(common + "c00200c80264" + tail))
+        assertEquals(Go2BleProtocol.SubModes(photo = 0, video = 100), photo?.subModes)
+        assertTrue(photo!!.subModes!!.isPhoto)
+        assertEquals(100, photo.battery?.levelPercent)
+
+        val video = Go2BleProtocol.parseStatusOptionsReply(hex(common + "c00264c80200" + tail))
+        assertEquals(Go2BleProtocol.SubModes(photo = 100, video = 0), video?.subModes)
+        assertEquals(false, video!!.subModes!!.isPhoto)
+    }
+
+    @Test
+    fun testSetSubModePayloadMatchesTheInsta360App() {
+        // Byte for byte what the Insta360 app sent a GO 3S to switch it
+        assertTrue(hex("08281200").contentEquals(Go2BleProtocol.buildSetSubModePayload(photo = true, subMode = 0)))
+        assertTrue(hex("08291200").contentEquals(Go2BleProtocol.buildSetSubModePayload(photo = false, subMode = 0)))
+        assertTrue(hex("08291203c80205").contentEquals(Go2BleProtocol.buildSetSubModePayload(photo = false, subMode = 5)))
+        assertTrue(hex("08281203c00207").contentEquals(Go2BleProtocol.buildSetSubModePayload(photo = true, subMode = 7)))
+    }
+
+    @Test
+    fun testSubModeNotification() {
+        // Sent by a GO 3S after a switch to single photo, normal video and video sub-mode 5
+        assertEquals(Go2BleProtocol.SubModes(0, 100), Go2BleProtocol.parseSubModeNotification(hex("08001064")))
+        assertEquals(Go2BleProtocol.SubModes(100, 0), Go2BleProtocol.parseSubModeNotification(hex("08641000")))
+        assertEquals(Go2BleProtocol.SubModes(100, 5), Go2BleProtocol.parseSubModeNotification(hex("08641005")))
+        assertNull(Go2BleProtocol.parseSubModeNotification(ByteArray(0)))
     }
 
     @Test

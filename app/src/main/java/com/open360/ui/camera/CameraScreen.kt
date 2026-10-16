@@ -941,7 +941,9 @@ fun CameraControlCard(
 
             Spacer(modifier = Modifier.height(14.dp))
 
-            // Mode Selection Chips (Video & Photo only)
+            // Mode Selection Chips (Video & Photo only). They switch a camera that is on as well,
+            // and are held while a recording runs.
+            val modeLocked = isRecording || isStarting || isStopping
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.Center
@@ -949,6 +951,7 @@ fun CameraControlCard(
                 FilterChip(
                     selected = currentMode == CaptureMode.VIDEO,
                     onClick = { onModeSelected(CaptureMode.VIDEO) },
+                    enabled = !modeLocked,
                     label = { Text("Video") },
                     leadingIcon = { Icon(Icons.Default.Videocam, contentDescription = null, modifier = Modifier.size(18.dp)) },
                     modifier = Modifier.padding(horizontal = 8.dp)
@@ -956,6 +959,7 @@ fun CameraControlCard(
                 FilterChip(
                     selected = currentMode == CaptureMode.PHOTO,
                     onClick = { onModeSelected(CaptureMode.PHOTO) },
+                    enabled = !modeLocked,
                     label = { Text("Photo") },
                     leadingIcon = { Icon(Icons.Default.CameraAlt, contentDescription = null, modifier = Modifier.size(18.dp)) },
                     modifier = Modifier.padding(horizontal = 8.dp)

@@ -37,6 +37,7 @@ object Go2BleProtocol {
     const val CMD_TAKE_PICTURE = 0x03
     const val CMD_START_CAPTURE = 0x04
     const val CMD_STOP_CAPTURE = 0x05
+    const val CMD_SET_OPTIONS = 0x07
     const val CMD_GET_OPTIONS = 0x08
     const val CMD_GET_FILE_LIST = 0x0D
     const val CMD_GET_CURRENT_CAPTURE_STATUS = 0x0F
@@ -59,6 +60,7 @@ object Go2BleProtocol {
     const val NOTIF_CHARGE_BOX_STATUS = 0x201E
     const val NOTIF_CAPTURE_TIME_LEFT = 0x2021
     const val NOTIF_PERIODIC_STATUS = 0x2026
+    const val NOTIF_SUB_MODE_CHANGE = 0x2053
 
     // Architecture A fixed 9-byte commands (GPS Remote emulation)
     val REMOTE_CMD_SHUTTER = byteArrayOf(0xfc.toByte(), 0xef.toByte(), 0xfe.toByte(), 0x86.toByte(), 0x00, 0x03, 0x01, 0x02, 0x00)
@@ -268,18 +270,63 @@ object Go2BleProtocol {
     private const val OPTION_STORAGE_STATE = 20
     private const val OPTION_CHARGEBOX_CONNECTED_STATUS = 85
     private const val OPTION_WIFI_INFO = 36
+    private const val OPTION_PHOTO_SUB_MODE = 40
+    private const val OPTION_VIDEO_SUB_MODE = 41
+
+    /** The sub-mode the camera gives for the one of Photo and Video it is not in. */
+    const val SUB_MODE_NONE = 100
+
+    /**
+     * The camera's photo and video sub-modes (PhotoSubMode and VideoSubMode in the published
+     * definitions). One of them is [SUB_MODE_NONE], and the other is the sub-mode of the mode
+     * the camera is in: 0 is single photo or normal video, and video 5 is likely PRO Video.
+     */
+    data class SubModes(val photo: Int, val video: Int) {
+        val isPhoto: Boolean get() = photo != SUB_MODE_NONE
+    }
+
+    /**
+     * Builds the payload of a SetOptions request that puts the camera in Photo ([photo] true) or
+     * Video, in [subMode]: field 1 names the one option and field 2 is an Options message
+     * holding its value, empty for 0. This is what the Insta360 app sends, for example
+     * `08 28 12 00` for single photo and `08 29 12 03 c8 02 05` for video sub-mode 5. It must
+     * name one option only: given both, a GO 3S took both and ended in Video.
+     */
+    fun buildSetSubModePayload(photo: Boolean, subMode: Int): ByteArray {
+        val option = if (photo) OPTION_PHOTO_SUB_MODE else OPTION_VIDEO_SUB_MODE
+        val value = if (subMode == 0) ByteArray(0) else encodeVarint(option shl 3) + encodeVarint(subMode)
+        return byteArrayOf(0x08) + encodeVarint(option) + byteArrayOf(0x12) + encodeVarint(value.size) + value
+    }
+
+    /**
+     * Decodes the sub-mode notification (0x2053, NotifyCameraSubMode): field 1 the photo
+     * sub-mode, field 2 the video sub-mode. A GO 3S sends it each time its mode changes, from
+     * the app or on the camera. Null when it holds neither.
+     */
+    fun parseSubModeNotification(payload: ByteArray): SubModes? {
+        val fields = readProtoFields(payload)
+        return subModesOf(fields[1], fields[2])
+    }
+
+    /** Sub-modes from their two fields, a missing one being 0 as in protobuf. Null when both are missing. */
+    private fun subModesOf(photo: Any?, video: Any?): SubModes? {
+        if (photo !is Long && video !is Long) return null
+        return SubModes(((photo as? Long) ?: 0L).toInt(), ((video as? Long) ?: 0L).toInt())
+    }
 
     /**
      * Builds the payload of a GetOptions request for the status the app shows: battery,
-     * recording time left, storage state and the Action Pod. Field 1 is the packed list of
-     * OptionType values.
+     * recording time left, storage state, the Action Pod and the photo and video sub-modes.
+     * Field 1 is the packed list of OptionType values.
      */
     fun buildStatusOptionsRequest(): ByteArray {
         val types = byteArrayOf(
             OPTION_REMAINING_CAPTURE_TIME.toByte(),
             OPTION_BATTERY_STATUS.toByte(),
             OPTION_STORAGE_STATE.toByte(),
-            OPTION_CHARGEBOX_CONNECTED_STATUS.toByte()
+            OPTION_CHARGEBOX_CONNECTED_STATUS.toByte(),
+            OPTION_PHOTO_SUB_MODE.toByte(),
+            OPTION_VIDEO_SUB_MODE.toByte()
         )
         return byteArrayOf(0x0A, types.size.toByte()) + types
     }
@@ -289,7 +336,8 @@ object Go2BleProtocol {
         val battery: BatteryStatus?,
         val captureSecondsLeft: Int?,
         val cardState: CardState?,
-        val pod: ChargeBoxStatus?
+        val pod: ChargeBoxStatus?,
+        val subModes: SubModes? = null
     )
 
     /**
@@ -305,7 +353,9 @@ object Go2BleProtocol {
                 ?.takeIf { it in 0..Int.MAX_VALUE }?.toInt(),
             // StorageState starts with the same CardState as the storage update notification
             cardState = (fields[OPTION_STORAGE_STATE] as? ByteArray)?.let { parseStorageUpdate(it) },
-            pod = (fields[OPTION_CHARGEBOX_CONNECTED_STATUS] as? ByteArray)?.let { parseChargeBoxStatus(it) }
+            pod = (fields[OPTION_CHARGEBOX_CONNECTED_STATUS] as? ByteArray)?.let { parseChargeBoxStatus(it) },
+            // A GO 3S gives both, the one it is not in as SUB_MODE_NONE
+            subModes = subModesOf(fields[OPTION_PHOTO_SUB_MODE], fields[OPTION_VIDEO_SUB_MODE])
         )
     }
 

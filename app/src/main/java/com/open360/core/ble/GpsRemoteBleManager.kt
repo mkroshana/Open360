@@ -62,6 +62,8 @@ data class CameraDetails(
     val pod: Go2BleProtocol.ChargeBoxStatus? = null,
     // CameraCaptureState of the recording in progress (1 Video, 17 PRO Video), null when idle
     val recordingState: Int? = null,
+    // The camera's photo and video sub-modes, which tell whether it is in Photo or Video
+    val subModes: Go2BleProtocol.SubModes? = null,
     // Warnings the camera raises itself
     val batteryLow: Boolean = false,
     val temperatureHigh: Boolean = false
@@ -267,6 +269,12 @@ class GpsRemoteBleManager(private val context: Context) {
     private var wakeInProgress = false
     @Volatile
     private var startCommandAtMs: Long? = null
+    // The photo and video sub-modes the camera was last seen in, so a switch to Photo or Video
+    // goes back to that one (PRO Video stays PRO Video). 0 is single photo and normal video.
+    @Volatile
+    private var lastPhotoSubMode = 0
+    @Volatile
+    private var lastVideoSubMode = 0
     private val gpsQueue = ConcurrentLinkedQueue<ByteArray>()
     // Completed by the camera's answer to the wake-up authorization
     @Volatile
@@ -1138,6 +1146,13 @@ class GpsRemoteBleManager(private val context: Context) {
                     updateDetails { it.copy(cardState = cardState) }
                 }
 
+                Go2BleProtocol.NOTIF_SUB_MODE_CHANGE -> {
+                    Go2BleProtocol.parseSubModeNotification(inner.payload)?.let { subModes ->
+                        Log.i(TAG, "Camera mode: photo sub-mode ${subModes.photo}, video sub-mode ${subModes.video}")
+                        onSubModes(subModes)
+                    }
+                }
+
                 Go2BleProtocol.NOTIF_CHARGE_BOX_STATUS -> {
                     Go2BleProtocol.parseChargeBoxStatus(inner.payload)?.let { pod ->
                         updateDetails { it.copy(pod = pod) }
@@ -1213,13 +1228,21 @@ class GpsRemoteBleManager(private val context: Context) {
         _state.update { it.copy(details = change(it.details)) }
     }
 
+    /** Keeps the camera's reported mode, and the sub-mode of that mode for switching back to it. */
+    private fun onSubModes(subModes: Go2BleProtocol.SubModes) {
+        if (subModes.photo != Go2BleProtocol.SUB_MODE_NONE) lastPhotoSubMode = subModes.photo
+        if (subModes.video != Go2BleProtocol.SUB_MODE_NONE) lastVideoSubMode = subModes.video
+        updateDetails { it.copy(subModes = subModes) }
+    }
+
     /**
      * The camera's answer to the status request sent on connecting. It fills in what the camera
      * would otherwise only send when something next changes.
      */
     private fun onStatusOptionsReply(reply: Go2BleProtocol.StatusOptions) {
         Log.i(TAG, "Status on connecting: battery=${reply.battery}, time left=${reply.captureSecondsLeft} s, " +
-            "storage=${reply.cardState}, pod=${reply.pod}")
+            "storage=${reply.cardState}, pod=${reply.pod}, sub-modes=${reply.subModes}")
+        reply.subModes?.let { onSubModes(it) }
         _state.update { state ->
             state.copy(
                 batteryPercent = reply.battery?.levelPercent ?: state.batteryPercent,
@@ -1346,6 +1369,18 @@ class GpsRemoteBleManager(private val context: Context) {
                 }
             }
         }
+    }
+
+    /**
+     * Switches the camera to Photo ([photo] true) or Video, in the sub-mode it was last seen in
+     * for that mode. The camera confirms with the sub-mode notification about 0.9 s later.
+     */
+    fun setCameraMode(photo: Boolean) {
+        val subMode = if (photo) lastPhotoSubMode else lastVideoSubMode
+        val seq = nextSeq()
+        Log.i(TAG, "Switching the camera to ${if (photo) "Photo" else "Video"}, sub-mode $subMode, seq=$seq")
+        val payload = Go2BleProtocol.buildSetSubModePayload(photo, subMode)
+        queuePacket(Go2BleProtocol.encodeMessagePacket(Go2BleProtocol.encodeInnerMessage(Go2BleProtocol.CMD_SET_OPTIONS, seq, payload)))
     }
 
     /**
