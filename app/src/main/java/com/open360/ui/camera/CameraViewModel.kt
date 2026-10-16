@@ -126,7 +126,7 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
 
     private var recordingTimerJob: Job? = null
     private var gpsStreamJob: Job? = null
-    private var trackedFirstFrameAtMs: Long? = null
+    private var trackedStreamStartAtMs: Long? = null
     // The recording whose GPS records are being stamped, when the app first saw it, and how much
     // later than their moments its records are stamped (CameraClock.stampOffsetMs), fixed once known
     private var stampedStreamStartMs: Long? = null
@@ -226,15 +226,15 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
                 updateWaitingForCamera()
                 updateBackgroundService()
 
-                // One GPX track per recording, from its first frame to its stop
-                val firstFrame = ble.recordingFirstFrameAtMs
-                if (firstFrame != trackedFirstFrameAtMs) {
-                    trackedFirstFrameAtMs = firstFrame
-                    if (firstFrame != null) {
-                        trackRecorder.start(firstFrame)
+                // One GPX track per recording, from the start of its GPS stream to its stop
+                val streamStart = ble.gpsStreamStartAtMs
+                if (streamStart != trackedStreamStartAtMs) {
+                    trackedStreamStartAtMs = streamStart
+                    if (streamStart != null) {
+                        trackRecorder.start(streamStart)
                         // A recording joined late began in the past: its track takes the fixes
                         // already remembered from then
-                        gpsTimeline.fixesFrom(firstFrame).forEach { trackRecorder.addFix(it) }
+                        gpsTimeline.fixesFrom(streamStart).forEach { trackRecorder.addFix(it) }
                     } else {
                         trackRecorder.stop(SystemClock.elapsedRealtime())
                     }
@@ -484,7 +484,7 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
      */
     private fun updateWaitingForCamera() {
         val ble = _uiState.value.bleState
-        val waiting = !appVisible && ble.isLinkIdle && !ble.isCameraAwake && ble.recordingFirstFrameAtMs == null
+        val waiting = !appVisible && ble.isLinkIdle && !ble.isCameraAwake && ble.gpsStreamStartAtMs == null
         if (waiting == waitingForCamera) return
         waitingForCamera = waiting
         if (waiting) {
@@ -567,8 +567,8 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
             // each time a new fix makes the next ones known.
             runAtFixedRate(GPS_SAMPLE_INTERVAL_MS, MAX_CATCH_UP_MS, SystemClock::elapsedRealtime) { scheduledMs ->
                 val ble = bleManager.state.value
-                val streamStart = ble.recordingFirstFrameAtMs
-                gpsSchedule.setFirstFrame(streamStart)
+                val streamStart = ble.gpsStreamStartAtMs
+                gpsSchedule.setStart(streamStart)
                 if (streamStart != stampedStreamStartMs) {
                     stampedStreamStartMs = streamStart
                     streamSeenAtMs = scheduledMs

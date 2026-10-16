@@ -98,20 +98,21 @@ class GpxTrackRecorder(
     private var session: Session? = null
 
     /**
-     * A recording has started, with its first video frame at [firstFrameElapsedMs] on the
-     * monotonic clock. Called again with a slightly different time, it corrects the start.
+     * A recording has started, with its GPS streamed from [startElapsedMs] on the monotonic
+     * clock, a little before its first frame. Called again with a slightly different time, it
+     * corrects the start.
      */
-    fun start(firstFrameElapsedMs: Long) {
+    fun start(startElapsedMs: Long) {
         scope.launch {
             val current = session
             if (current != null && !current.finalized && current.stopElapsedMs == Long.MAX_VALUE &&
-                abs(firstFrameElapsedMs - current.startElapsedMs) <= SAME_RECORDING_MS
+                abs(startElapsedMs - current.startElapsedMs) <= SAME_RECORDING_MS
             ) {
-                if (current.fixes.isEmpty()) current.startElapsedMs = firstFrameElapsedMs
+                if (current.fixes.isEmpty()) current.startElapsedMs = startElapsedMs
                 return@launch
             }
             if (current != null && !current.finalized) finalize(current)
-            session = Session(firstFrameElapsedMs)
+            session = Session(startElapsedMs)
             _state.value = GpxTrackState(isRecording = true)
         }
     }

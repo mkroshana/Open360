@@ -6,11 +6,11 @@ import kotlin.math.max
 /**
  * Works out which GPS samples of a recording are ready to be sent to the camera.
  *
- * Sample k describes the moment `firstFrame + k * periodMs`. It is ready once a fix taken at or
- * after that moment has arrived, so the position can be interpolated instead of guessed. Every
- * sample is handed out exactly once and none is skipped, because the camera's software places
- * them on the video by counting from the first one. They do not have to be sent evenly: the
- * camera keeps them in the order they arrive.
+ * Sample k describes the moment `start + k * periodMs`, the start being a little before the
+ * recording's first frame. It is ready once a fix taken at or after that moment has arrived, so
+ * the position can be interpolated instead of guessed. Every sample is handed out exactly once
+ * and none is skipped. They do not have to be sent evenly: the camera keeps them in the order
+ * they arrive, and Insta360 Studio places them by their times.
  *
  * A sample that is still not ready [maxWaitMs] after its moment is handed out anyway, to be sent
  * as void, so a loss of GPS cannot hold the stream up for good.
@@ -20,27 +20,27 @@ import kotlin.math.max
  */
 class GpsStreamSchedule(private val periodMs: Long, private val maxWaitMs: Long) {
 
-    private var firstFrameMs: Long? = null
+    private var startMs: Long? = null
     private var nextIndex = 0L
 
     /**
-     * Sets when the recording's first frame was captured, or null when not recording.
+     * Sets the moment the recording's samples start from, or null when not recording.
      *
      * A small correction to the time is accepted until the first sample has gone out. A time
      * that differs by more than [NEW_RECORDING_MS] is a new recording and starts the count again.
      */
-    fun setFirstFrame(firstFrameMs: Long?) {
-        val current = this.firstFrameMs
+    fun setStart(startMs: Long?) {
+        val current = this.startMs
         when {
-            firstFrameMs == null -> {
-                this.firstFrameMs = null
+            startMs == null -> {
+                this.startMs = null
                 nextIndex = 0
             }
-            current == null || abs(firstFrameMs - current) > NEW_RECORDING_MS -> {
-                this.firstFrameMs = firstFrameMs
+            current == null || abs(startMs - current) > NEW_RECORDING_MS -> {
+                this.startMs = startMs
                 nextIndex = 0
             }
-            nextIndex == 0L -> this.firstFrameMs = firstFrameMs
+            nextIndex == 0L -> this.startMs = startMs
         }
     }
 
@@ -49,7 +49,7 @@ class GpsStreamSchedule(private val periodMs: Long, private val maxWaitMs: Long)
      * was taken at [newestFixMs] (null when there is none). Returns up to [max] at a time.
      */
     fun due(nowMs: Long, newestFixMs: Long?, max: Int = MAX_BURST): List<Long> {
-        val start = firstFrameMs ?: return emptyList()
+        val start = startMs ?: return emptyList()
         val coveredByFix = if (newestFixMs != null) Math.floorDiv(newestFixMs - start, periodMs) else -1L
         val waitedOut = Math.floorDiv(nowMs - maxWaitMs - start, periodMs)
         // Never ahead of the present, whatever the fix times say

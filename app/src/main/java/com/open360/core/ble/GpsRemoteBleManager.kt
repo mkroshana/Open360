@@ -97,8 +97,9 @@ data class BleCameraState(
     val isRecording: Boolean = false,
     val isCaptureStarting: Boolean = false,
     val isCaptureStopping: Boolean = false,
-    // SystemClock.elapsedRealtime() of the current recording's first video frame, null when idle
-    val recordingFirstFrameAtMs: Long? = null,
+    // SystemClock.elapsedRealtime() from which the current recording's GPS is streamed, a little
+    // before its first video frame; null when idle
+    val gpsStreamStartAtMs: Long? = null,
     // File name of the last video the camera reported saving, e.g. VID_20261012_163049_00_066.mp4.
     // Only known for recordings stopped from the app. Cleared when the next recording starts.
     val lastVideoFile: String? = null,
@@ -161,26 +162,19 @@ class GpsRemoteBleManager(private val context: Context) {
         private const val GPS_SEND_RECORDS_PER_SECOND = 12.0
         private const val GPS_SEND_MAX_BURST = 4
 
-        // Time from the camera's start notice to the first video frame on a GO 3S, worked out as
-        // the stop minus the video length, so it takes the video to end at the stop. It depends
-        // on who started the recording. The notice comes about 0.2 s after the app's start
-        // command, with the first frame 1.61 and 1.67 s later on two clips. When the camera's
-        // own button is used the notice comes well into the start-up, with the first frame 0.2
-        // to 0.4 s later on four clips. On a ride, though, the GPS of a clip started with the
-        // button sat about 0.2 s later against the camera's motion sensors than that of a clip
-        // started from the app, so the button figure is taken as 0.55 s.
-        private const val FIRST_FRAME_AFTER_APP_START_NOTICE_MS = 1640L
-        private const val FIRST_FRAME_AFTER_BUTTON_START_NOTICE_MS = 550L
-
-        // Used for an app start until the notice arrives
-        private const val FIRST_FRAME_AFTER_START_COMMAND_MS = 1850L
-
+        // A recording's GPS is streamed from before its first frame, so that its first record is
+        // older than the camera's clock reading the clip stores, which then places the GPS
+        // (CameraClock); Studio leaves out the records before it. On a GO 3S (2026-10-17) the first
+        // frame came 1.92 to 2.02 s after the start notice in Video and 0.78 to 0.82 s after it in
+        // PRO Video, for app and button starts alike, and the notice about 0.15 s after the app's
+        // start command. So a recording started from the app is streamed from its start command,
+        // and one started on the camera from its start notice.
         // A start notice this soon after the app's start command was caused by it
         private const val START_COMMAND_NOTICE_WINDOW_MS = 3000L
 
-        // The capture status notification comes 1.6 to 2.3 s after the first frame. Used only
-        // when a recording is seen without its start notice.
-        private const val FIRST_FRAME_BEFORE_CAPTURE_STATUS_MS = 1800L
+        // The capture status notification came 1.2 to 1.5 s after the first frame (2026-10-17),
+        // and 1.6 to 2.3 s after it before. Used only when a recording is seen without its start notice.
+        private const val STREAM_START_BEFORE_CAPTURE_STATUS_MS = 2800L
 
         val SERVICE_BE80: UUID = UUID.fromString("0000be80-0000-1000-8000-00805f9b34fb")
         val WRITE_BE81: UUID = UUID.fromString("0000be81-0000-1000-8000-00805f9b34fb")
@@ -190,11 +184,10 @@ class GpsRemoteBleManager(private val context: Context) {
         val WRITE_CE81: UUID = UUID.fromString("0000ce81-0000-1000-8000-00805f9b34fb")
         val NOTIFY_CE82: UUID = UUID.fromString("0000ce82-0000-1000-8000-00805f9b34fb")
 
-        // The camera gives the time recorded so far in whole seconds. Half a second is added,
-        // the middle of what that leaves open, so a recording joined late is placed to within
-        // about half a second. On the one clip checked, a reply of 5 s came between 5.4 and
-        // 6.4 s after the first frame.
-        private const val JOINED_RECORDING_ROUNDING_MS = 500L
+        // The camera gives the time recorded so far in whole seconds: on the one clip checked, a
+        // reply of 5 s came between 5.4 and 6.4 s after the first frame. A recording joined late
+        // is streamed from this much further back, so from before its first frame.
+        private const val JOINED_RECORDING_STREAM_EXTRA_MS = 1500L
 
         // How long the camera's Bluetooth is given to answer the wake-up authorization, and
         // then the camera to switch on. With the Insta360 app these took 0.3 s and 2.1 s.
@@ -1103,7 +1096,7 @@ class GpsRemoteBleManager(private val context: Context) {
 
     /** Whether a recording is starting or running, when the camera's clock must not be changed. */
     private fun isCapturing(): Boolean =
-        _state.value.let { it.isRecording || it.isCaptureStarting || it.recordingFirstFrameAtMs != null }
+        _state.value.let { it.isRecording || it.isCaptureStarting || it.gpsStreamStartAtMs != null }
 
     /**
      * Asks for the camera's clock [CLOCK_READINGS] times, across its ticks, and works out how far
@@ -1297,10 +1290,8 @@ class GpsRemoteBleManager(private val context: Context) {
                             val startedByApp = startCommandAtMs?.let {
                                 SystemClock.elapsedRealtime() - it <= START_COMMAND_NOTICE_WINDOW_MS
                             } == true
-                            markRecordingStart(
-                                if (startedByApp) FIRST_FRAME_AFTER_APP_START_NOTICE_MS
-                                else FIRST_FRAME_AFTER_BUTTON_START_NOTICE_MS
-                            )
+                            // A recording started from the app is already streamed from its command
+                            if (!startedByApp || _state.value.gpsStreamStartAtMs == null) markRecordingStart(0L)
                             // The notice names the mode before the capture status does
                             Go2BleProtocol.parseCaptureStepState(inner.payload)
                                 ?.takeIf { Go2BleProtocol.isRecordingCaptureState(it) }
@@ -1395,17 +1386,17 @@ class GpsRemoteBleManager(private val context: Context) {
 
     /**
      * The camera's answer to the capture status request sent on connecting. If it is already
-     * recording, the clip's first frame is worked back from the time recorded so far, and the
-     * GPS stream starts from there: the camera's software places GPS by counting from the first
-     * frame, so the part that was missed has to be sent too, as records without a fix.
+     * recording, the GPS stream starts from before the clip's first frame, worked back from the
+     * time recorded so far, so the part that was missed is sent too, as records without a fix
+     * where there are no remembered fixes.
      */
     private fun onCaptureStatusReply(reply: Go2BleProtocol.CaptureStatusReply) {
         Log.i(TAG, "Capture status on connecting: state=${reply.captureState}, recorded ${reply.captureSeconds} s")
         if (!Go2BleProtocol.isRecordingCaptureState(reply.captureState)) return
         // A start notice may have arrived in the meantime; then the start was seen after all
-        if (_state.value.recordingFirstFrameAtMs != null) return
+        if (_state.value.gpsStreamStartAtMs != null) return
 
-        markRecordingStart(-(reply.captureSeconds * 1000L + JOINED_RECORDING_ROUNDING_MS))
+        markRecordingStart(-(reply.captureSeconds * 1000L + JOINED_RECORDING_STREAM_EXTRA_MS))
         _state.update {
             it.copy(
                 isRecording = true,
@@ -1430,9 +1421,9 @@ class GpsRemoteBleManager(private val context: Context) {
                 markRecordingStop()
             } else {
                 val current = _state.value
-                if (current.recordingFirstFrameAtMs == null && current.joinedRecordingSeconds == null) {
+                if (current.gpsStreamStartAtMs == null && current.joinedRecordingSeconds == null) {
                     // Recording without the start notice having been seen
-                    markRecordingStart(-FIRST_FRAME_BEFORE_CAPTURE_STATUS_MS)
+                    markRecordingStart(-STREAM_START_BEFORE_CAPTURE_STATUS_MS)
                 }
                 updateDetails { it.copy(recordingState = captureState) }
             }
@@ -1440,30 +1431,27 @@ class GpsRemoteBleManager(private val context: Context) {
     }
 
     /**
-     * Records when the first video frame of the recording now starting is, or was, captured.
-     *
-     * The camera keeps every GPS sample it receives from the start to the stop, but the video
-     * itself begins later (about 1.8 s after an app start command), and Insta360 Studio shows
-     * the first kept sample on the first frame. So the samples sent have to begin with the one
-     * for this moment.
+     * Records the moment, [startInMs] from now, from which the recording now starting, or already
+     * running, has its GPS streamed: a little before its first frame (STREAM_START_* and the
+     * notes beside it).
      */
-    private fun markRecordingStart(firstFrameInMs: Long) {
-        val firstFrameAt = SystemClock.elapsedRealtime() + firstFrameInMs
+    private fun markRecordingStart(startInMs: Long) {
+        val startAt = SystemClock.elapsedRealtime() + startInMs
         _state.update {
-            it.copy(recordingFirstFrameAtMs = firstFrameAt, lastVideoFile = null, lastVideoSeconds = null)
+            it.copy(gpsStreamStartAtMs = startAt, lastVideoFile = null, lastVideoSeconds = null)
         }
-        Log.i(TAG, "Recording start, first frame in $firstFrameInMs ms")
+        Log.i(TAG, "Recording start, GPS streamed from $startInMs ms from now")
     }
 
     private fun markRecordingStop() {
-        if (_state.value.recordingFirstFrameAtMs != null) {
+        if (_state.value.gpsStreamStartAtMs != null) {
             Log.i(TAG, "Recording stop")
             // Read again for the next recording, in case the clock has drifted or been set
             if (cameraIsOn()) scheduleClockSync()
         }
         _state.update {
             it.copy(
-                recordingFirstFrameAtMs = null,
+                gpsStreamStartAtMs = null,
                 joinedRecordingSeconds = null,
                 details = it.details.copy(recordingState = null)
             )
@@ -1563,7 +1551,7 @@ class GpsRemoteBleManager(private val context: Context) {
         }
 
         startCommandAtMs = SystemClock.elapsedRealtime()
-        markRecordingStart(FIRST_FRAME_AFTER_START_COMMAND_MS)
+        markRecordingStart(0L)
 
         // The camera takes a few seconds to start. isRecording is set when its capture status
         // notification arrives, so the timer lines up with the clip.
@@ -1634,9 +1622,8 @@ class GpsRemoteBleManager(private val context: Context) {
     /**
      * Queues one GPS sample for the camera.
      *
-     * Every sample is sent, in order, because the stored records are placed on the video by
-     * their position in the stream. Samples that are waiting go out at a steady pace, not all
-     * together: the camera drops records that arrive in a burst.
+     * Every sample is sent, in order, and samples that are waiting go out at a steady pace, not
+     * all together: the camera drops records that arrive in a burst.
      */
     fun addGpsFix(
         timestampMs: Long,
@@ -1648,7 +1635,7 @@ class GpsRemoteBleManager(private val context: Context) {
         hasFix: Boolean = true
     ) {
         if (writeCharacteristic == null) return
-        if (_state.value.recordingFirstFrameAtMs == null) return
+        if (_state.value.gpsStreamStartAtMs == null) return
         gpsQueue.add(
             Go2BleProtocol.buildGpsRecord(timestampMs, latitude, longitude, speedMps, bearingDegrees, altitudeMeters, hasFix)
         )

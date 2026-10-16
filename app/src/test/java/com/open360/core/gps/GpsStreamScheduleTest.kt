@@ -16,12 +16,12 @@ class GpsStreamScheduleTest {
     @Test
     fun samplesWaitForAFixTakenAtOrAfterTheirMoment() {
         val s = schedule()
-        s.setFirstFrame(10_000)
+        s.setStart(10_000)
 
-        // The newest fix is from before the first frame: nothing can be interpolated yet
+        // The newest fix is from before the start: nothing can be interpolated yet
         assertTrue(s.due(nowMs = 10_600, newestFixMs = 9_700).isEmpty())
 
-        // A fix taken at 10.7 s arrives: every moment up to it is ready, starting at the first frame
+        // A fix taken at 10.7 s arrives: every moment up to it is ready, from the start
         assertEquals(
             listOf(10_000L, 10_100L, 10_200L, 10_300L, 10_400L, 10_500L, 10_600L, 10_700L),
             s.due(nowMs = 11_500, newestFixMs = 10_700)
@@ -34,9 +34,9 @@ class GpsStreamScheduleTest {
 
     @Test
     fun aRecordingJoinedLateIsFilledInFromItsFirstFrame() {
-        // The app connects 12 s into a recording: the first frame was at 88 s, it is now 100 s
+        // The app connects 12 s into a recording: its stream starts at 88 s, it is now 100 s
         val s = schedule()
-        s.setFirstFrame(88_000)
+        s.setStart(88_000)
 
         // Only as many as there is room to send are handed out at a time, oldest first
         val first = s.due(nowMs = 100_000, newestFixMs = 99_900, max = 30)
@@ -59,10 +59,10 @@ class GpsStreamScheduleTest {
     @Test
     fun everySampleIsHandedOutOnceAndInOrderOverALongRecording() {
         val s = schedule()
-        s.setFirstFrame(10_000)
+        s.setStart(10_000)
 
         val all = ArrayList<Long>()
-        var now = 9_937L // ticks do not line up with the first frame
+        var now = 9_937L // ticks do not line up with the start
         while (now <= 80_000) {
             // One fix a second, taken on the whole second and delivered 800 ms later
             val newestFix = Math.floorDiv(now - 800, 1000L) * 1000
@@ -79,7 +79,7 @@ class GpsStreamScheduleTest {
     @Test
     fun aSampleNoFixCameForIsReleasedAfterTheWaitSoTheStreamKeepsMoving() {
         val s = schedule()
-        s.setFirstFrame(10_000)
+        s.setStart(10_000)
 
         // No fix at all
         assertTrue(s.due(nowMs = 13_900, newestFixMs = null).isEmpty())
@@ -90,7 +90,7 @@ class GpsStreamScheduleTest {
     @Test
     fun neverHandsOutAMomentThatHasNotHappenedYet() {
         val s = schedule()
-        s.setFirstFrame(10_000)
+        s.setStart(10_000)
         // A fix time ahead of the clock must not release future samples
         assertEquals(listOf(10_000L, 10_100L), s.due(nowMs = 10_150, newestFixMs = 12_000))
     }
@@ -98,28 +98,28 @@ class GpsStreamScheduleTest {
     @Test
     fun aCorrectionToTheFirstFrameIsTakenUntilTheFirstSampleHasGoneOut() {
         val s = schedule()
-        s.setFirstFrame(10_000)
-        s.setFirstFrame(10_040)
+        s.setStart(10_000)
+        s.setStart(10_040)
         assertEquals(listOf(10_040L), s.due(nowMs = 11_000, newestFixMs = 10_100))
 
-        s.setFirstFrame(10_090) // too late, samples are already out
+        s.setStart(10_090) // too late, samples are already out
         assertEquals(listOf(10_140L), s.due(nowMs = 11_000, newestFixMs = 10_200))
     }
 
     @Test
     fun aNewRecordingStartsTheCountAgain() {
         val s = schedule()
-        s.setFirstFrame(10_000)
+        s.setStart(10_000)
         s.due(nowMs = 12_500, newestFixMs = 11_000)
 
-        s.setFirstFrame(null)
+        s.setStart(null)
         assertTrue(s.due(nowMs = 13_000, newestFixMs = 12_500).isEmpty())
 
-        s.setFirstFrame(40_000)
+        s.setStart(40_000)
         assertEquals(listOf(40_000L), s.due(nowMs = 41_000, newestFixMs = 40_050))
 
         // A new recording seen without the idle state in between
-        s.setFirstFrame(70_000)
+        s.setStart(70_000)
         assertEquals(listOf(70_000L), s.due(nowMs = 71_000, newestFixMs = 70_050))
     }
 }
