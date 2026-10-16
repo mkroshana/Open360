@@ -116,6 +116,8 @@ class FitWriterTest {
         assertEquals(listOf(0L, 4L), events.map { it.fields[1] })
 
         val session = messages.single { it.global == 18 }.fields
+        // no sensors: a generic activity
+        assertEquals(0L, session[5])
         assertEquals(distanceCm, session[9])
         assertEquals(2000L, session[7])
         assertEquals(startFit, session[2])
@@ -151,6 +153,8 @@ class FitWriterTest {
         assertEquals(175L, session[20])
         assertEquals(200L, session[21])
         assertTrue(!session.containsKey(18))
+        // with power in the file the activity is cycling, so Studio offers cadence and power
+        assertEquals(2L, session[5])
     }
 
     @Test

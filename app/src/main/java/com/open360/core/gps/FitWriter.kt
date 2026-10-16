@@ -56,6 +56,7 @@ object FitWriter {
     private const val EVENT_TYPE_STOP = 1
     private const val EVENT_TYPE_STOP_ALL = 4
     private const val SPORT_GENERIC = 0
+    private const val SPORT_CYCLING = 2
     private const val ACTIVITY_TYPE_MANUAL = 0
 
     private const val EARTH_RADIUS_M = 6_371_000.0
@@ -163,7 +164,8 @@ object FitWriter {
         )
         data.message(4) {
             u32(end); u32(start); u32(elapsedMs); u32(elapsedMs); u32(distanceCm); enum(EVENT_SESSION); enum(EVENT_TYPE_STOP)
-            enum(SPORT_GENERIC); enum(0); u16(0); u16(1)
+            // Studio offers cadence and power only for a cycling activity
+            enum(if (hasCadence || hasPower) SPORT_CYCLING else SPORT_GENERIC); enum(0); u16(0); u16(1)
             for ((averageField, _, values) in sensorSummary) {
                 val average = (values.sum().toDouble() / values.size).roundToLong().toInt()
                 if (averageField.size == 1) { u8(average); u8(values.max()) } else { u16(average); u16(values.max()) }
