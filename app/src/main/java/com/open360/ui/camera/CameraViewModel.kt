@@ -94,6 +94,10 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
         // much later. Whether the phone's GPS reports late or the video starts later than
         // worked out is not known; the effect on the video is the same.
         private const val GPS_BEHIND_PICTURE_MS = 550L
+
+        // GPS time is counted from a fix at most this far from the moment, as the phone's clock
+        // drifts from it by about 30 ppm
+        private const val GPS_TIME_FROM_FIX_WITHIN_MS = 60_000L
     }
 
     val bleManager = GpsRemoteBleManager(application)
@@ -131,6 +135,9 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
         // The GO 3S has not connected to a phone advertising as the GPS Remote, so the GATT server
         // is not started here. The app connects out to the camera and uploads GPS over that link.
         // The two cannot run together: there is only one LE link between phone and camera.
+
+        // The camera's clock is read and set against GPS time
+        bleManager.setGpsTimeSource { elapsedMs -> gpsTimeline.utcAt(elapsedMs, GPS_TIME_FROM_FIX_WITHIN_MS) }
 
         // Collect GATT server state updates (Architecture A: GPS Remote)
         viewModelScope.launch {

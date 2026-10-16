@@ -25,6 +25,22 @@ class GpsTimelineTest {
     @Test
     fun emptyTimelineHasNoAnswer() {
         assertNull(GpsTimeline().sampleAt(1000))
+        assertNull(GpsTimeline().utcAt(1000))
+    }
+
+    @Test
+    fun gpsTimeOfAMomentCountsFromTheNearestFix() {
+        val timeline = GpsTimeline()
+        // The phone's clock and GPS time drift apart: the second fix is 3 ms later than the first suggests
+        timeline.add(GpsFix(10_000, 5_000_000L, 6.0, 79.0, 0.0, 0.0, 0.0))
+        timeline.add(GpsFix(11_000, 5_001_003L, 6.0, 79.0, 0.0, 0.0, 0.0))
+        assertEquals(5_000_200L, timeline.utcAt(10_200))
+        assertEquals(5_000_803L, timeline.utcAt(10_800))
+        assertEquals(5_031_003L, timeline.utcAt(41_000))
+        assertEquals(4_990_000L, timeline.utcAt(0))
+        // Too far from any fix
+        assertNull(timeline.utcAt(72_000, maxDistanceMs = 60_000))
+        assertEquals(5_060_003L, timeline.utcAt(70_000, maxDistanceMs = 60_000))
     }
 
     @Test

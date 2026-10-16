@@ -55,6 +55,17 @@ class GpsTimeline(
     @Synchronized
     fun newestFixMs(): Long? = fixes.lastOrNull()?.elapsedMs
 
+    /**
+     * The GPS time of [elapsedMs], counted from the nearest fix. Null when there is no fix within
+     * [maxDistanceMs] of it, as the phone's clock and GPS time drift apart.
+     */
+    @Synchronized
+    fun utcAt(elapsedMs: Long, maxDistanceMs: Long = Long.MAX_VALUE): Long? {
+        val nearest = fixes.minByOrNull { abs(it.elapsedMs - elapsedMs) } ?: return null
+        if (abs(nearest.elapsedMs - elapsedMs) > maxDistanceMs) return null
+        return nearest.utcMs + (elapsedMs - nearest.elapsedMs)
+    }
+
     /** The remembered fixes taken at or after [elapsedMs], oldest first. */
     @Synchronized
     fun fixesFrom(elapsedMs: Long): List<GpsFix> = fixes.filter { it.elapsedMs >= elapsedMs }

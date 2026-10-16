@@ -41,8 +41,11 @@ import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withTimeoutOrNull
+import java.util.TimeZone
 import java.util.UUID
+import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.ConcurrentLinkedQueue
+import kotlin.math.abs
 
 enum class BleConnectionStatus {
     DISCONNECTED,
@@ -113,6 +116,9 @@ data class BleCameraState(
     // Set once the camera has not answered on the link for a few seconds: it is off, and nothing
     // needs to run until it answers
     val isLinkIdle: Boolean = false,
+    // How far the clock the camera stamps clips with is ahead of GPS time, read on this link
+    // (CameraClock); null until read, and forgotten once the camera stops answering or the link ends
+    val cameraClockOffsetMs: Long? = null,
     // The camera's battery as it last reported it, forgotten once it stops answering or the link ends
     val batteryPercent: Int? = null,
     val isCharging: Boolean = false,
@@ -225,6 +231,24 @@ class GpsRemoteBleManager(private val context: Context) {
         // this long is off, and the link is let go.
         private const val SILENT_LINK_MS = 3000L
 
+        // The camera's clock (CameraClock) is read this long after the camera starts answering
+        // and after each recording, once GPS time is known, waiting this long at most for a fix.
+        // It is asked for this many times this far apart, across its ticks, and the reading is
+        // kept when it is good to this much.
+        private const val CLOCK_SYNC_DELAY_MS = 3000L
+        private const val CLOCK_WAIT_FOR_GPS_MS = 120_000L
+        private const val CLOCK_READINGS = 24
+        private const val CLOCK_READING_INTERVAL_MS = 150L
+        private const val CLOCK_LAST_ANSWER_MS = 1000L
+        private const val CLOCK_MAX_UNCERTAINTY_MS = 150L
+
+        // A clock further than this from GPS time is set, while nothing is recording. The set is
+        // planned this far ahead and written this long before the camera should handle it.
+        private const val CLOCK_SET_THRESHOLD_MS = 600L
+        private const val CLOCK_SET_LEAD_MS = 400L
+        private const val CLOCK_SET_WRITE_AHEAD_MS = 60L
+        private const val CLOCK_SET_SETTLE_MS = 1500L
+
         val CCCD_UUID: UUID = UUID.fromString("00002902-0000-1000-8000-00805f9b34fb")
     }
 
@@ -306,6 +330,17 @@ class GpsRemoteBleManager(private val context: Context) {
     private var answeringSinceMs: Long? = null
     @Volatile
     private var linkIsReconnect = false
+
+    // GPS time of a moment on the elapsedRealtime clock, from the phone's fixes; null before any
+    @Volatile
+    private var gpsTimeAt: ((Long) -> Long?)? = null
+
+    // Requests for the camera's clock in flight, by sequence number, with when each was sent,
+    // and what their answers gave
+    private data class ClockAnswer(val sentAtMs: Long, val answeredAtMs: Long, val utcSeconds: Long)
+    private val clockQueries = ConcurrentHashMap<Int, Long>()
+    private val clockAnswers = ConcurrentLinkedQueue<ClockAnswer>()
+    private var clockJob: Job? = null
 
     private val reconnectPolicy = ReconnectPolicy(EARLY_DROP_MS, MAX_AUTO_RECONNECTS)
     private var reconnectJob: Job? = null
@@ -550,7 +585,10 @@ class GpsRemoteBleManager(private val context: Context) {
                 queuePacket(Go2BleProtocol.buildKeepAlivePacket())
                 if (_state.value.isCameraAwake && SystemClock.elapsedRealtime() - lastHeardAtMs > CAMERA_SILENT_MS) {
                     Log.w(TAG, "Camera has stopped answering")
-                    _state.update { it.copy(isCameraAwake = false, batteryPercent = null, isCharging = false) }
+                    clockJob?.cancel()
+                    _state.update {
+                        it.copy(isCameraAwake = false, batteryPercent = null, isCharging = false, cameraClockOffsetMs = null)
+                    }
                 }
             }
         }
@@ -665,6 +703,7 @@ class GpsRemoteBleManager(private val context: Context) {
                 stopKeepAlive()
                 markRecordingStop()
                 registrationJob?.cancel()
+                clockJob?.cancel()
                 val reconnect = shouldReconnect()
                 if (reconnect) reconnect(gatt.device)
                 _state.update {
@@ -680,6 +719,7 @@ class GpsRemoteBleManager(private val context: Context) {
                         isCaptureStopping = false,
                         batteryPercent = null,
                         isCharging = false,
+                        cameraClockOffsetMs = null,
                         details = CameraDetails(),
                         wakeUpRegistration = it.wakeUpRegistration.afterLinkDown()
                     )
@@ -1030,6 +1070,89 @@ class GpsRemoteBleManager(private val context: Context) {
         queryStatusOptions()
     }
 
+    /** Gives the GPS time of a moment on the elapsedRealtime clock, null before any fix. */
+    fun setGpsTimeSource(source: (Long) -> Long?) {
+        gpsTimeAt = source
+    }
+
+    /**
+     * Reads the camera's clock against GPS time, sets it when it is further than
+     * [CLOCK_SET_THRESHOLD_MS] out and nothing is recording, and keeps how far ahead it is
+     * ([BleCameraState.cameraClockOffsetMs]) for stamping the GPS records.
+     */
+    private fun scheduleClockSync() {
+        clockJob?.cancel()
+        clockJob = scope.launch {
+            delay(CLOCK_SYNC_DELAY_MS)
+            val giveUpAt = SystemClock.elapsedRealtime() + CLOCK_WAIT_FOR_GPS_MS
+            while (gpsTimeAt?.invoke(SystemClock.elapsedRealtime()) == null) {
+                if (!cameraIsOn() || SystemClock.elapsedRealtime() > giveUpAt) {
+                    Log.w(TAG, "Camera clock not read: no GPS time")
+                    return@launch
+                }
+                delay(2000)
+            }
+            var offset = readClock() ?: return@launch
+            val recording = _state.value.let { it.isRecording || it.recordingFirstFrameAtMs != null }
+            if (abs(offset.ms) > CLOCK_SET_THRESHOLD_MS && !recording) {
+                setClock(offset)
+                delay(CLOCK_SET_SETTLE_MS)
+                offset = readClock() ?: return@launch
+            }
+            _state.update { it.copy(cameraClockOffsetMs = offset.ms) }
+        }
+    }
+
+    /**
+     * Asks for the camera's clock [CLOCK_READINGS] times, across its ticks, and works out how far
+     * it is ahead of GPS time. Null when the answers do not pin it down.
+     */
+    private suspend fun readClock(): CameraClock.Offset? {
+        clockQueries.clear()
+        clockAnswers.clear()
+        repeat(CLOCK_READINGS) {
+            if (!cameraIsOn()) return null
+            val seq = nextSeq()
+            clockQueries[seq] = SystemClock.elapsedRealtime()
+            queuePacket(
+                Go2BleProtocol.encodeMessagePacket(
+                    Go2BleProtocol.encodeInnerMessage(Go2BleProtocol.CMD_GET_OPTIONS, seq, Go2BleProtocol.buildClockRequest())
+                )
+            )
+            delay(CLOCK_READING_INTERVAL_MS)
+        }
+        delay(CLOCK_LAST_ANSWER_MS)
+        clockQueries.clear()
+        val toGps = gpsTimeAt ?: return null
+        val readings = clockAnswers.mapNotNull { answer ->
+            val asked = toGps(answer.sentAtMs) ?: return@mapNotNull null
+            val answered = toGps(answer.answeredAtMs) ?: return@mapNotNull null
+            CameraClock.Reading(asked, answered, answer.utcSeconds)
+        }
+        val offset = CameraClock.offset(readings)
+        if (offset == null || offset.uncertaintyMs > CLOCK_MAX_UNCERTAINTY_MS) {
+            Log.w(TAG, "Camera clock not read: ${readings.size} answers, " +
+                (offset?.let { "${it.lowMs} to ${it.highMs} ms" } ?: "not agreeing"))
+            return null
+        }
+        Log.i(TAG, "Camera clock is ${offset.ms} ms ahead of GPS time (${offset.lowMs} to ${offset.highMs} ms, ${readings.size} answers)")
+        return offset
+    }
+
+    /** Sets the camera's clock as near GPS time as its own fraction of a second allows (CameraClock.planSet). */
+    private suspend fun setClock(measured: CameraClock.Offset) {
+        val toGps = gpsTimeAt ?: return
+        val nowUtc = toGps(SystemClock.elapsedRealtime()) ?: return
+        val plan = CameraClock.planSet(nowUtc, measured.ms, CLOCK_SET_LEAD_MS)
+        delay(plan.handleAtUtcMs - nowUtc - CLOCK_SET_WRITE_AHEAD_MS)
+        val zone = TimeZone.getDefault()
+        val payload = Go2BleProtocol.buildSetClockPayload(plan.utcSeconds, zone.getOffset(System.currentTimeMillis()) / 1000, zone.id)
+        queuePacket(
+            Go2BleProtocol.encodeMessagePacket(Go2BleProtocol.encodeInnerMessage(Go2BleProtocol.CMD_SET_OPTIONS, nextSeq(), payload))
+        )
+        Log.i(TAG, "Setting the camera's clock to ${plan.utcSeconds} UTC, to be ${plan.expectedOffsetMs} ms ahead of GPS time")
+    }
+
     private suspend fun answersWithin(timeoutMs: Long): Boolean =
         withTimeoutOrNull(timeoutMs) { state.first { it.isCameraAwake } } != null
 
@@ -1063,6 +1186,7 @@ class GpsRemoteBleManager(private val context: Context) {
             Log.i(TAG, "Camera is answering")
             _state.update { it.copy(isCameraAwake = true) }
             requestStatusOnce()
+            scheduleClockSync()
             // Shows whether Wake Up will work with this camera, and gets it to ask if not
             if (registrationJob?.isActive != true) getWakeAuthorizationId()?.let { registerWakeUpId(it) }
         }
@@ -1199,6 +1323,11 @@ class GpsRemoteBleManager(private val context: Context) {
                         wifiInfoQuerySeq = -1
                         wifiInfoReply?.complete(Go2BleProtocol.parseWifiInfoReply(inner.payload))
                     }
+                    clockQueries.remove(inner.sequence)?.let { sentAt ->
+                        Go2BleProtocol.parseClockReply(inner.payload)?.let { seconds ->
+                            clockAnswers.add(ClockAnswer(sentAt, SystemClock.elapsedRealtime(), seconds))
+                        }
+                    }
                     if (inner.sequence == stopCaptureSeq) {
                         stopCaptureSeq = -1
                         Go2BleProtocol.parseCapturedFilePath(inner.payload)?.let { path ->
@@ -1320,7 +1449,11 @@ class GpsRemoteBleManager(private val context: Context) {
     }
 
     private fun markRecordingStop() {
-        if (_state.value.recordingFirstFrameAtMs != null) Log.i(TAG, "Recording stop")
+        if (_state.value.recordingFirstFrameAtMs != null) {
+            Log.i(TAG, "Recording stop")
+            // Read again for the next recording, in case the clock has drifted or been set
+            if (cameraIsOn()) scheduleClockSync()
+        }
         _state.update {
             it.copy(
                 recordingFirstFrameAtMs = null,
@@ -1565,6 +1698,7 @@ class GpsRemoteBleManager(private val context: Context) {
         // Cleared first, so that the link ending here is not taken for one that dropped
         reconnectJob?.cancel()
         idleLinkJob?.cancel()
+        clockJob?.cancel()
         wakeJob?.cancel()
         wakeJob = null
         wakeOnNextConnect = false
@@ -1590,6 +1724,7 @@ class GpsRemoteBleManager(private val context: Context) {
                 isCaptureStopping = false,
                 batteryPercent = null,
                 isCharging = false,
+                cameraClockOffsetMs = null,
                 details = CameraDetails(),
                 wakeUpRegistration = it.wakeUpRegistration.afterLinkDown()
             )
