@@ -73,9 +73,9 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.State
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
-import androidx.compose.ui.BiasAlignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.rotate
@@ -145,6 +145,11 @@ fun CameraScreen(
     }
 
     val deviceSubtitle = when {
+        uiState.isRecording -> {
+            val mins = uiState.recordingDurationSeconds / 60
+            val secs = uiState.recordingDurationSeconds % 60
+            String.format(Locale.US, "Recording %02d:%02d", mins, secs)
+        }
         uiState.isConnected && !ble.isCameraAwake -> "Standby"
         uiState.isConnected -> "Connected"
         server.isAdvertising -> "Broadcasting"
@@ -165,6 +170,7 @@ fun CameraScreen(
                     ) {
                         // Live status indicator dot
                         val statusDotColor = when {
+                            uiState.isRecording -> Color(0xFFFF3B30)
                             uiState.isConnected && ble.isCameraAwake -> Color(0xFF34C759)
                             isAsleep -> Color(0xFFFF9500)
                             ble.connectionStatus == BleConnectionStatus.SCANNING ||
@@ -187,7 +193,8 @@ fun CameraScreen(
                             Text(
                                 text = deviceSubtitle,
                                 style = MaterialTheme.typography.labelSmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                                color = if (uiState.isRecording) Color(0xFFFF3B30) else MaterialTheme.colorScheme.onSurfaceVariant,
+                                fontWeight = if (uiState.isRecording) FontWeight.Bold else FontWeight.Normal
                             )
                         }
                     }
@@ -303,19 +310,30 @@ fun CameraStatusCard(
         shape = RoundedCornerShape(20.dp)
     ) {
         Column(modifier = Modifier.padding(16.dp)) {
-            // Header Row: Status Title and Battery / Mode Readouts
+            // Header Row: Device Identity & Readouts / Restrained Disconnect
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                Text(
-                    text = "Camera Status",
-                    style = MaterialTheme.typography.titleMedium,
-                    fontWeight = FontWeight.SemiBold
-                )
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.Videocam,
+                        contentDescription = null,
+                        modifier = Modifier.size(18.dp),
+                        tint = MaterialTheme.colorScheme.primary
+                    )
+                    Text(
+                        text = "Camera",
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.SemiBold
+                    )
+                }
 
-                // Readouts: Mode string or Battery Level
+                // Readouts: Mode string, Battery Level & Compact Disconnect
                 Row(
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.spacedBy(8.dp)
@@ -360,42 +378,50 @@ fun CameraStatusCard(
                             )
                         }
                     }
+
+                    // Compact, restrained Disconnect pill button when connected
+                    if (isReady) {
+                        val disconnectInteraction = remember { MutableInteractionSource() }
+                        val disconnectScale by rememberPressScale(disconnectInteraction, targetScale = 0.95f)
+
+                        Box(
+                            modifier = Modifier
+                                .graphicsLayer {
+                                    scaleX = disconnectScale
+                                    scaleY = disconnectScale
+                                }
+                                .clip(RoundedCornerShape(8.dp))
+                                .border(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f), RoundedCornerShape(8.dp))
+                                .clickable(
+                                    interactionSource = disconnectInteraction,
+                                    indication = null
+                                ) { onCameraButton(button) }
+                                .padding(horizontal = 8.dp, vertical = 3.dp)
+                        ) {
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(4.dp)
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.BluetoothDisabled,
+                                    contentDescription = "Disconnect",
+                                    modifier = Modifier.size(13.dp),
+                                    tint = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                                Text(
+                                    text = "Disconnect",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
+                        }
+                    }
                 }
             }
 
             if (isReady) {
                 // When connected and awake: Show vitals cleanly in structured tiles
                 CameraDetailRows(ble = ble)
-
-                Spacer(modifier = Modifier.height(14.dp))
-
-                // Restrained, clean Disconnect button
-                val disconnectInteraction = remember { MutableInteractionSource() }
-                val disconnectScale by rememberPressScale(disconnectInteraction, targetScale = 0.97f)
-
-                OutlinedButton(
-                    onClick = { onCameraButton(button) },
-                    interactionSource = disconnectInteraction,
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .height(38.dp)
-                        .graphicsLayer {
-                            scaleX = disconnectScale
-                            scaleY = disconnectScale
-                        },
-                    shape = RoundedCornerShape(12.dp)
-                ) {
-                    Icon(
-                        imageVector = Icons.Default.BluetoothDisabled,
-                        contentDescription = null,
-                        modifier = Modifier.size(16.dp)
-                    )
-                    Spacer(modifier = Modifier.width(6.dp))
-                    Text(
-                        text = "Disconnect",
-                        style = MaterialTheme.typography.labelMedium
-                    )
-                }
             } else {
                 // When not ready (disconnected, searching, asleep, connecting)
                 Spacer(modifier = Modifier.height(12.dp))
@@ -698,31 +724,6 @@ fun GpsTelemetryCard(
     val collapseEasing = EaseOutCubic
     val transition = updateTransition(targetState = isMinimized, label = "GpsCardTransition")
 
-    val speedFontSize by transition.animateFloat(
-        transitionSpec = {
-            if (targetState) {
-                tween(durationMillis = 200, easing = collapseEasing)
-            } else {
-                tween(durationMillis = 260, delayMillis = 30, easing = expandEasing)
-            }
-        },
-        label = "speedFontSize"
-    ) { minimized ->
-        if (minimized) 36f else 54f
-    }
-
-    val horizontalBias by transition.animateFloat(
-        transitionSpec = {
-            if (targetState) {
-                tween(durationMillis = 220, easing = collapseEasing)
-            } else {
-                tween(durationMillis = 260, delayMillis = 30, easing = expandEasing)
-            }
-        },
-        label = "speedHorizontalBias"
-    ) { minimized ->
-        if (minimized) -1f else 0f
-    }
 
     val chevronRotation by transition.animateFloat(
         transitionSpec = {
@@ -847,17 +848,17 @@ fun GpsTelemetryCard(
                 val unitScale by rememberPressScale(unitInteraction, targetScale = 0.94f)
 
                 Row(
-                    modifier = Modifier.align(BiasAlignment(horizontalBias, 0f)),
+                    modifier = Modifier.align(Alignment.CenterStart),
                     verticalAlignment = Alignment.Bottom,
                     horizontalArrangement = Arrangement.spacedBy(6.dp)
                 ) {
                     Text(
                         text = speedDisplay,
                         style = MaterialTheme.typography.displayLarge.copy(
-                            fontSize = speedFontSize.sp,
+                            fontSize = 42.sp,
                             fontWeight = FontWeight.Bold,
                             fontFamily = FontFamily.Monospace,
-                            lineHeight = speedFontSize.sp
+                            lineHeight = 42.sp
                         ),
                         color = MaterialTheme.colorScheme.primary
                     )
@@ -885,34 +886,28 @@ fun GpsTelemetryCard(
                     }
                 }
 
-                // Compact streaming status badge (appears on right when minimized)
-                transition.AnimatedVisibility(
-                    visible = { it },
-                    modifier = Modifier.align(Alignment.CenterEnd),
-                    enter = fadeIn(tween(140, delayMillis = 80, easing = EaseOutCubic)),
-                    exit = fadeOut(tween(60, easing = EaseOutCubic))
+                // Streaming status badge (anchored on right, clear and stable)
+                Row(
+                    modifier = Modifier
+                        .align(Alignment.CenterEnd)
+                        .clip(RoundedCornerShape(8.dp))
+                        .background(badgeBg)
+                        .padding(horizontal = 8.dp, vertical = 4.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(5.dp)
                 ) {
-                    Row(
-                        modifier = Modifier
-                            .clip(RoundedCornerShape(8.dp))
-                            .background(badgeBg)
-                            .padding(horizontal = 8.dp, vertical = 4.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(5.dp)
-                    ) {
-                        Icon(
-                            imageVector = if (streamActive) Icons.Default.CheckCircle else Icons.Default.Sync,
-                            contentDescription = "GPS Status",
-                            modifier = Modifier.size(14.dp),
-                            tint = badgeColor
-                        )
-                        Text(
-                            text = compactStreamText,
-                            style = MaterialTheme.typography.labelSmall,
-                            fontWeight = FontWeight.Medium,
-                            color = badgeColor
-                        )
-                    }
+                    Icon(
+                        imageVector = if (streamActive) Icons.Default.CheckCircle else Icons.Default.Sync,
+                        contentDescription = "GPS Status",
+                        modifier = Modifier.size(14.dp),
+                        tint = badgeColor
+                    )
+                    Text(
+                        text = compactStreamText,
+                        style = MaterialTheme.typography.labelSmall,
+                        fontWeight = FontWeight.Medium,
+                        color = badgeColor
+                    )
                 }
             }
 
@@ -1098,7 +1093,7 @@ fun ModeSegmentedControl(
             .height(44.dp)
             .clip(RoundedCornerShape(22.dp))
             .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f))
-            .padding(4.dp)
+            .padding(3.dp)
     ) {
         val tabWidth = maxWidth / modes.size
 
@@ -1107,11 +1102,10 @@ fun ModeSegmentedControl(
             modifier = Modifier
                 .width(tabWidth)
                 .fillMaxHeight()
-                .padding(horizontal = 2.dp)
                 .graphicsLayer {
                     translationX = targetOffset * tabWidth.toPx()
                 }
-                .clip(RoundedCornerShape(18.dp))
+                .clip(RoundedCornerShape(19.dp))
                 .background(MaterialTheme.colorScheme.primaryContainer)
         )
 
@@ -1119,11 +1113,17 @@ fun ModeSegmentedControl(
             modes.forEach { mode ->
                 val isSelected = currentMode == mode
                 val interactionSource = remember { MutableInteractionSource() }
+                val tabScale by rememberPressScale(interactionSource, targetScale = 0.96f)
+
                 Box(
                     modifier = Modifier
                         .weight(1f)
                         .fillMaxHeight()
-                        .clip(RoundedCornerShape(18.dp))
+                        .graphicsLayer {
+                            scaleX = tabScale
+                            scaleY = tabScale
+                        }
+                        .clip(RoundedCornerShape(19.dp))
                         .clickable(
                             interactionSource = interactionSource,
                             indication = null,
@@ -1193,9 +1193,20 @@ fun TactileShutterButton(
         label = "innerSize"
     )
 
-    val ringColor = when {
-        isRecording || currentMode == CaptureMode.VIDEO -> Color(0xFFFF3B30)
-        else -> MaterialTheme.colorScheme.primary
+    val isVideo = currentMode == CaptureMode.VIDEO || isRecording
+    val ringColor = if (isVideo) Color(0xFFFF3B30) else MaterialTheme.colorScheme.outline.copy(alpha = 0.8f)
+    val innerColor = if (isVideo) Color(0xFFFF3B30) else Color.White
+
+    val busyTransition = rememberInfiniteTransition(label = "busyPulse")
+    val busyAlpha by if (isStarting || isStopping) {
+        busyTransition.animateFloat(
+            initialValue = 0.4f,
+            targetValue = 1f,
+            animationSpec = infiniteRepeatable(tween(400, easing = FastOutSlowInEasing), RepeatMode.Reverse),
+            label = "busyAlpha"
+        )
+    } else {
+        remember { mutableFloatStateOf(1f) }
     }
 
     Box(
@@ -1204,7 +1215,7 @@ fun TactileShutterButton(
             .graphicsLayer {
                 scaleX = pressScale
                 scaleY = pressScale
-                alpha = if (enabled) 1f else 0.45f
+                alpha = if (!enabled) 0.4f else busyAlpha
             }
             .clip(CircleShape)
             .background(ringColor.copy(alpha = 0.08f))
@@ -1217,29 +1228,17 @@ fun TactileShutterButton(
             ),
         contentAlignment = Alignment.Center
     ) {
-        if (currentMode == CaptureMode.PHOTO && !isRecording) {
-            Box(
-                modifier = Modifier
-                    .size(56.dp)
-                    .clip(CircleShape)
-                    .background(MaterialTheme.colorScheme.primary),
-                contentAlignment = Alignment.Center
-            ) {
-                Icon(
-                    imageVector = Icons.Default.CameraAlt,
-                    contentDescription = "Take Photo",
-                    tint = MaterialTheme.colorScheme.onPrimary,
-                    modifier = Modifier.size(28.dp)
+        Box(
+            modifier = Modifier
+                .size(innerSize)
+                .clip(RoundedCornerShape(innerCornerRadius))
+                .background(innerColor)
+                .border(
+                    width = if (!isVideo) 0.5.dp else 0.dp,
+                    color = if (!isVideo) Color.Black.copy(alpha = 0.15f) else Color.Transparent,
+                    shape = RoundedCornerShape(innerCornerRadius)
                 )
-            }
-        } else {
-            Box(
-                modifier = Modifier
-                    .size(innerSize)
-                    .clip(RoundedCornerShape(innerCornerRadius))
-                    .background(Color(0xFFFF3B30))
-            )
-        }
+        )
     }
 }
 
@@ -1258,6 +1257,7 @@ fun CameraControlCard(
     onShutterClick: () -> Unit
 ) {
     val modeLocked = isRecording || isStarting || isStopping
+    val shownMode = cameraMode?.takeIf { it.isPhoto == (currentMode == CaptureMode.PHOTO) }
 
     ElevatedCard(
         modifier = Modifier.fillMaxWidth(),
@@ -1267,7 +1267,7 @@ fun CameraControlCard(
             modifier = Modifier.padding(16.dp),
             horizontalAlignment = Alignment.CenterHorizontally
         ) {
-            // Apple-style Mode Segmented Control (Video / Photo)
+            // Mode Segmented Control (Video / Photo)
             ModeSegmentedControl(
                 currentMode = currentMode,
                 enabled = !modeLocked,
@@ -1275,7 +1275,6 @@ fun CameraControlCard(
             )
 
             // Sub-mode pills (FreeFrame Video, TimeShift, Timelapse, etc.)
-            val shownMode = cameraMode?.takeIf { it.isPhoto == (currentMode == CaptureMode.PHOTO) }
             if (cameraMode != null) {
                 Spacer(modifier = Modifier.height(10.dp))
                 Row(
@@ -1295,7 +1294,7 @@ fun CameraControlCard(
                                     scaleX = chipScale
                                     scaleY = chipScale
                                 }
-                                .clip(RoundedCornerShape(12.dp))
+                                .clip(RoundedCornerShape(14.dp))
                                 .background(
                                     if (isSelected) MaterialTheme.colorScheme.primaryContainer
                                     else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.45f)
@@ -1304,7 +1303,7 @@ fun CameraControlCard(
                                     width = 1.dp,
                                     color = if (isSelected) MaterialTheme.colorScheme.primary.copy(alpha = 0.4f)
                                             else MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.2f),
-                                    shape = RoundedCornerShape(12.dp)
+                                    shape = RoundedCornerShape(14.dp)
                                 )
                                 .clickable(
                                     interactionSource = chipInteraction,
@@ -1313,7 +1312,7 @@ fun CameraControlCard(
                                 ) {
                                     onCameraModeSelected(mode)
                                 }
-                                .padding(horizontal = 14.dp, vertical = 7.dp)
+                                .padding(horizontal = 14.dp, vertical = 8.dp)
                         ) {
                             Text(
                                 text = mode.label,
@@ -1329,7 +1328,19 @@ fun CameraControlCard(
 
             Spacer(modifier = Modifier.height(24.dp))
 
-            // Live Recording Timer Display (when active)
+            // Primary Shutter Button: Position is 100% INVARIANT (never displaced by recording HUD)
+            TactileShutterButton(
+                currentMode = currentMode,
+                isRecording = isRecording,
+                isStarting = isStarting,
+                isStopping = isStopping,
+                enabled = isConnected && !isAsleep,
+                onClick = onShutterClick
+            )
+
+            Spacer(modifier = Modifier.height(14.dp))
+
+            // Live Recording Timer Display (placed below shutter, expanding downward)
             AnimatedVisibility(
                 visible = isRecording,
                 enter = fadeIn(tween(160, easing = EaseOutCubic)) + expandVertically(animationSpec = tween(200, easing = EaseOutCubic)),
@@ -1351,7 +1362,7 @@ fun CameraControlCard(
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.spacedBy(8.dp),
                     modifier = Modifier
-                        .padding(bottom = 14.dp)
+                        .padding(bottom = 8.dp)
                         .clip(RoundedCornerShape(12.dp))
                         .background(Color(0xFFFF3B30).copy(alpha = 0.12f))
                         .border(1.dp, Color(0xFFFF3B30).copy(alpha = 0.25f), RoundedCornerShape(12.dp))
@@ -1372,18 +1383,6 @@ fun CameraControlCard(
                     )
                 }
             }
-
-            // Tactile Shutter Button
-            TactileShutterButton(
-                currentMode = currentMode,
-                isRecording = isRecording,
-                isStarting = isStarting,
-                isStopping = isStopping,
-                enabled = isConnected && !isAsleep,
-                onClick = onShutterClick
-            )
-
-            Spacer(modifier = Modifier.height(12.dp))
 
             val actionLabel = if (isStopping) {
                 "Stopping..."
@@ -1419,3 +1418,4 @@ fun CameraControlCard(
         }
     }
 }
+
