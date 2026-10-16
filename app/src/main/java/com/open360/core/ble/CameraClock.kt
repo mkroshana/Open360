@@ -25,8 +25,8 @@ object CameraClock {
     private const val READ_BEFORE_FIRST_FRAME_VIDEO_MS = 1000L
     private const val READ_BEFORE_FIRST_FRAME_OTHER_MS = 200L
 
-    // CameraCaptureState of a normal Video recording
-    private const val CAPTURE_STATE_VIDEO = 1
+    /** CameraCaptureState of a normal Video recording. */
+    const val CAPTURE_STATE_VIDEO = 1
 
     /**
      * One reading of option 12: the GPS times at which it was asked for and answered, and the

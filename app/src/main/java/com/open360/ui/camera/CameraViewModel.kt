@@ -8,6 +8,7 @@ import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.open360.core.ble.BleCameraState
 import com.open360.core.ble.BleConnectionStatus
+import com.open360.core.ble.CameraClock
 import com.open360.core.ble.CameraMode
 import com.open360.core.ble.Go2BleProtocol
 import com.open360.core.ble.GpsRemoteBleManager
@@ -98,6 +99,10 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
         // GPS time is counted from a fix at most this far from the moment, as the phone's clock
         // drifts from it by about 30 ppm
         private const val GPS_TIME_FROM_FIX_WITHIN_MS = 60_000L
+
+        // How long a recording's GPS records wait for the camera's clock to be read; it takes
+        // about 8 s from the camera starting to answer, and 15 s when the clock is also set
+        private const val WAIT_FOR_CAMERA_CLOCK_MS = 15_000L
     }
 
     val bleManager = GpsRemoteBleManager(application)
@@ -122,6 +127,11 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
     private var recordingTimerJob: Job? = null
     private var gpsStreamJob: Job? = null
     private var trackedFirstFrameAtMs: Long? = null
+    // The recording whose GPS records are being stamped, when the app first saw it, and how much
+    // later than their moments its records are stamped (CameraClock.stampOffsetMs), fixed once known
+    private var stampedStreamStartMs: Long? = null
+    private var streamSeenAtMs = 0L
+    private var stampOffsetMs: Long? = null
     // The camera's mode as last reported, so the Video and Photo choice follows each new report
     private var followedSubModes: Go2BleProtocol.SubModes? = null
     private var backgroundServiceRunning = false
@@ -549,13 +559,31 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
     private fun startGpsTelemetryInjection() {
         gpsStreamJob?.cancel()
         gpsStreamJob = viewModelScope.launch {
-            // The clip stores when the first GPS record arrived, not when each one did, and
-            // Insta360 Studio shows that first record on the first frame and the rest 100 ms
-            // apart by counting. So the samples sent are the positions at the first frame, 100 ms
-            // later, 200 ms later and so on, each interpolated between the fixes around it.
-            // They go out in a batch each time a new fix makes the next ones known.
+            // Insta360 Studio shows at each video moment the record whose time is the clip's
+            // first_gps_timestamp plus the video time, and that is the camera's clock reading
+            // from just before the first frame (CameraClock). So the samples sent are the
+            // positions at moments 100 ms apart, each interpolated between the fixes around it
+            // and stamped with its moment moved onto the camera's clock. They go out in a batch
+            // each time a new fix makes the next ones known.
             runAtFixedRate(GPS_SAMPLE_INTERVAL_MS, MAX_CATCH_UP_MS, SystemClock::elapsedRealtime) { scheduledMs ->
-                gpsSchedule.setFirstFrame(bleManager.state.value.recordingFirstFrameAtMs)
+                val ble = bleManager.state.value
+                val streamStart = ble.recordingFirstFrameAtMs
+                gpsSchedule.setFirstFrame(streamStart)
+                if (streamStart != stampedStreamStartMs) {
+                    stampedStreamStartMs = streamStart
+                    streamSeenAtMs = scheduledMs
+                    stampOffsetMs = null
+                }
+                // The stamps need the camera's clock, which is read once the camera answers, so
+                // a recording started straight away waits a little for it
+                if (streamStart != null && stampOffsetMs == null) {
+                    val clockOffset = ble.cameraClockOffsetMs
+                    if (clockOffset == null && scheduledMs - streamSeenAtMs < WAIT_FOR_CAMERA_CLOCK_MS) return@runAtFixedRate
+                    // Fixed for the whole recording. Without a reading the clock is taken as right,
+                    // as it was set on an earlier connection.
+                    stampOffsetMs = CameraClock.stampOffsetMs(clockOffset ?: 0L, ble.recordingCaptureState())
+                    Log.i(TAG, "GPS records stamped ${stampOffsetMs} ms after their moments (camera clock ${clockOffset ?: "not read"})")
+                }
                 // A video moment uses the GPS from GPS_BEHIND_PICTURE_MS later, so it is ready
                 // once a fix that late has arrived
                 val coveredUpTo = gpsTimeline.newestFixMs()?.let { it - GPS_BEHIND_PICTURE_MS }
@@ -563,10 +591,11 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
                 if (room <= 0) return@runAtFixedRate
                 for (moment in gpsSchedule.due(scheduledMs, coveredUpTo, max = room)) {
                     val sample = gpsTimeline.sampleAt(moment + GPS_BEHIND_PICTURE_MS)
+                    // With no fix near, the phone's own clock gives the moment's time
+                    val momentUtc = gpsTimeline.utcAt(moment, GPS_TIME_FROM_FIX_WITHIN_MS)
+                        ?: (System.currentTimeMillis() - (SystemClock.elapsedRealtime() - moment))
                     bleManager.addGpsFix(
-                        // With no fix at all the sample still carries the time of its moment
-                        timestampMs = sample?.utcMs
-                            ?: (System.currentTimeMillis() - (SystemClock.elapsedRealtime() - moment)),
+                        timestampMs = momentUtc + (stampOffsetMs ?: 0L),
                         latitude = sample?.latitude ?: 0.0,
                         longitude = sample?.longitude ?: 0.0,
                         speedMps = sample?.speedMps ?: 0.0,
@@ -584,6 +613,11 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
         gpsStreamJob?.cancel()
         gpsStreamJob = null
     }
+
+    /** The CameraCaptureState of the recording, or, before the camera says, normal Video if that is its mode. */
+    private fun BleCameraState.recordingCaptureState(): Int? =
+        details.recordingState
+            ?: CameraClock.CAPTURE_STATE_VIDEO.takeIf { details.subModes?.let { CameraMode.of(it) } == CameraMode.VIDEO }
 
     /** The fix this telemetry holds, or null before the first position has arrived. */
     private fun GpsTelemetry.toFix(): GpsFix? {
