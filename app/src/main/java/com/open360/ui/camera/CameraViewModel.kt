@@ -8,6 +8,7 @@ import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.open360.core.ble.BleCameraState
 import com.open360.core.ble.BleConnectionStatus
+import com.open360.core.ble.CameraMode
 import com.open360.core.ble.Go2BleProtocol
 import com.open360.core.ble.GpsRemoteBleManager
 import com.open360.core.ble.InstaGpsRemoteGattServer
@@ -336,6 +337,16 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
         }
     }
 
+    /** Switches a camera that is on to [mode], from the row of modes. Held while a recording runs. */
+    fun setCameraMode(mode: CameraMode) {
+        val current = _uiState.value
+        val ble = current.bleState
+        if (current.isRecording || ble.isCaptureStarting || ble.isCaptureStopping) return
+        if (ble.connectionStatus != BleConnectionStatus.CONNECTED || !ble.isCameraAwake) return
+        _uiState.update { it.copy(currentMode = if (mode.isPhoto) CaptureMode.PHOTO else CaptureMode.VIDEO) }
+        bleManager.setCameraMode(mode)
+    }
+
     fun toggleSpeedUnit() {
         _uiState.update { it.copy(isSpeedMph = !it.isSpeedMph) }
     }
@@ -480,18 +491,21 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
         // A camera that is switched off holds on to commands and acts on them when it next
         // wakes, so nothing is sent until it is answering
         if (current.bleState.connectionStatus == BleConnectionStatus.CONNECTED && current.bleState.isCameraAwake) {
-            when (current.currentMode) {
-                CaptureMode.PHOTO -> bleManager.takePhoto()
-                CaptureMode.VIDEO -> {
-                    val ble = current.bleState
-                    if (ble.isCaptureStarting || ble.isCaptureStopping) {
-                        // Waiting for the camera to confirm the last tap
-                    } else if (ble.isRecording) {
-                        bleManager.stopRecording()
-                    } else {
-                        bleManager.startRecording()
-                    }
-                }
+            val ble = current.bleState
+            // Each of the camera's modes is captured with its own command. Its mode is used when
+            // it is one of those the Video and Photo choice shows; otherwise normal video or a
+            // single photo.
+            val mode = CameraMode.inGroup(ble.details.subModes, photo = current.currentMode == CaptureMode.PHOTO)
+            val singleShot = mode?.let { !it.isContinuous } ?: (current.currentMode == CaptureMode.PHOTO)
+            if (ble.isCaptureStarting || ble.isCaptureStopping) {
+                // Waiting for the camera to confirm the last tap
+            } else if (ble.isRecording) {
+                // A recording, or a timelapse, interval or starlapse run
+                bleManager.stopRecording()
+            } else if (singleShot) {
+                bleManager.takePhoto(mode)
+            } else {
+                bleManager.startRecording(mode)
             }
         }
     }

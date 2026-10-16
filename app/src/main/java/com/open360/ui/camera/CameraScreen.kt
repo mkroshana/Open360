@@ -19,6 +19,7 @@ import androidx.compose.animation.shrinkVertically
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -88,6 +89,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.open360.core.ble.BleCameraState
 import com.open360.core.ble.BleConnectionStatus
+import com.open360.core.ble.CameraMode
 import com.open360.core.gps.GpxTrackState
 import com.open360.core.model.CaptureMode
 import java.util.Locale
@@ -218,7 +220,9 @@ fun CameraScreen(
                 durationSeconds = uiState.recordingDurationSeconds,
                 isConnected = uiState.isConnected,
                 isAsleep = ble.connectionStatus == BleConnectionStatus.CONNECTED && !ble.isCameraAwake,
+                cameraMode = ble.details.subModes?.let { CameraMode.of(it) },
                 onModeSelected = { viewModel.setMode(it) },
+                onCameraModeSelected = { viewModel.setCameraMode(it) },
                 onShutterClick = {
                     haptic.performHapticFeedback(HapticFeedbackType.LongPress)
                     viewModel.onShutterClicked()
@@ -921,7 +925,10 @@ fun CameraControlCard(
     durationSeconds: Long,
     isConnected: Boolean,
     isAsleep: Boolean = false,
+    // The mode the camera reports it is in, null until it has
+    cameraMode: CameraMode? = null,
     onModeSelected: (CaptureMode) -> Unit,
+    onCameraModeSelected: (CameraMode) -> Unit = {},
     onShutterClick: () -> Unit
 ) {
     ElevatedCard(
@@ -969,6 +976,27 @@ fun CameraControlCard(
                     leadingIcon = { Icon(Icons.Default.CameraAlt, contentDescription = null, modifier = Modifier.size(18.dp)) },
                     modifier = Modifier.padding(horizontal = 8.dp)
                 )
+            }
+
+            // The camera's own modes in the chosen group, once it has said which it is in
+            val shownMode = cameraMode?.takeIf { it.isPhoto == (currentMode == CaptureMode.PHOTO) }
+            if (cameraMode != null) {
+                Spacer(modifier = Modifier.height(8.dp))
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .horizontalScroll(rememberScrollState()),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    CameraMode.group(photo = currentMode == CaptureMode.PHOTO).forEach { mode ->
+                        FilterChip(
+                            selected = mode == shownMode,
+                            onClick = { onCameraModeSelected(mode) },
+                            enabled = !modeLocked,
+                            label = { Text(mode.label) }
+                        )
+                    }
+                }
             }
 
             Spacer(modifier = Modifier.height(20.dp))
@@ -1056,11 +1084,16 @@ fun CameraControlCard(
             val actionLabel = if (isStopping) {
                 "Stopping..."
             } else if (isRecording) {
-                "Stop Recording"
+                // An interval or starlapse run is stopped by its name
+                if (shownMode?.isPhoto == true) "Stop ${shownMode.label}" else "Stop Recording"
             } else if (isStarting) {
                 "Starting..."
             } else if (currentMode == CaptureMode.PHOTO) {
-                "Take Photo"
+                when {
+                    shownMode == null || shownMode == CameraMode.PHOTO -> "Take Photo"
+                    shownMode.isContinuous -> "Start ${shownMode.label}"
+                    else -> "Take ${shownMode.label}"
+                }
             } else {
                 "Start Recording"
             }

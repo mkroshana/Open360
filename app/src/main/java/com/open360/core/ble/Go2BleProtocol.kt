@@ -41,6 +41,8 @@ object Go2BleProtocol {
     const val CMD_GET_OPTIONS = 0x08
     const val CMD_GET_FILE_LIST = 0x0D
     const val CMD_GET_CURRENT_CAPTURE_STATUS = 0x0F
+    const val CMD_START_TIMELAPSE = 0x16
+    const val CMD_STOP_TIMELAPSE = 0x17
     const val CMD_CHECK_AUTHORIZATION = 0x27
     // 0x19 is CALIBRATE_GYRO in the published definitions and must not be sent. Earlier
     // versions sent it on every connect as a "battery query": the reply was always 100, even

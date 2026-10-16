@@ -1377,7 +1377,15 @@ class GpsRemoteBleManager(private val context: Context) {
      * for that mode. The camera confirms with the sub-mode notification about 0.9 s later.
      */
     fun setCameraMode(photo: Boolean) {
-        val subMode = if (photo) lastPhotoSubMode else lastVideoSubMode
+        sendSubMode(photo, if (photo) lastPhotoSubMode else lastVideoSubMode)
+    }
+
+    /** Switches the camera to [mode]. The camera confirms with the sub-mode notification. */
+    fun setCameraMode(mode: CameraMode) {
+        sendSubMode(mode.isPhoto, mode.subMode)
+    }
+
+    private fun sendSubMode(photo: Boolean, subMode: Int) {
         val seq = nextSeq()
         Log.i(TAG, "Switching the camera to ${if (photo) "Photo" else "Video"}, sub-mode $subMode, seq=$seq")
         val payload = Go2BleProtocol.buildSetSubModePayload(photo, subMode)
@@ -1385,10 +1393,12 @@ class GpsRemoteBleManager(private val context: Context) {
     }
 
     /**
-     * Triggers a photo capture.
+     * Takes a photo, or an HDR set when [mode] is HDR Photo. A plain take-picture command puts
+     * a GO 3S back in single Photo first.
      */
-    fun takePhoto() {
-        val inner = Go2BleProtocol.encodeInnerMessage(Go2BleProtocol.CMD_TAKE_PICTURE, nextSeq())
+    fun takePhoto(mode: CameraMode? = null) {
+        val command = mode?.startCommand ?: Go2BleProtocol.CMD_TAKE_PICTURE
+        val inner = Go2BleProtocol.encodeInnerMessage(command, nextSeq(), mode?.startPayload() ?: ByteArray(0))
         val packet = Go2BleProtocol.encodeMessagePacket(inner)
         queuePacket(packet)
 
@@ -1399,10 +1409,12 @@ class GpsRemoteBleManager(private val context: Context) {
     }
 
     /**
-     * Starts normal video recording.
+     * Starts a recording in [mode], or a timelapse, interval or starlapse run; normal video when
+     * it is null. A plain start command puts a GO 3S back in normal Video first.
      */
-    fun startRecording() {
-        val inner = Go2BleProtocol.encodeInnerMessage(Go2BleProtocol.CMD_START_CAPTURE, nextSeq())
+    fun startRecording(mode: CameraMode? = null) {
+        val command = mode?.startCommand ?: Go2BleProtocol.CMD_START_CAPTURE
+        val inner = Go2BleProtocol.encodeInnerMessage(command, nextSeq(), mode?.startPayload() ?: ByteArray(0))
         val packet = Go2BleProtocol.encodeMessagePacket(inner)
         queuePacket(packet)
 
@@ -1424,13 +1436,16 @@ class GpsRemoteBleManager(private val context: Context) {
     }
 
     /**
-     * Stops video recording.
+     * Stops the recording or run, with the stop command of the mode the camera is in, so one
+     * started with the camera's own button stops too.
      */
     fun stopRecording() {
+        val mode = _state.value.details.subModes?.let { CameraMode.of(it) }?.takeIf { it.isContinuous }
         // The camera's reply to this command carries the name of the video file
         val seq = nextSeq()
         stopCaptureSeq = seq
-        val inner = Go2BleProtocol.encodeInnerMessage(Go2BleProtocol.CMD_STOP_CAPTURE, seq)
+        val command = mode?.stopCommand ?: Go2BleProtocol.CMD_STOP_CAPTURE
+        val inner = Go2BleProtocol.encodeInnerMessage(command, seq, mode?.stopPayload() ?: ByteArray(0))
         val packet = Go2BleProtocol.encodeMessagePacket(inner)
         queuePacket(packet)
 
