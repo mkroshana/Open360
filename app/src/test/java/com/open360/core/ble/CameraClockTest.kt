@@ -65,8 +65,8 @@ class CameraClockTest {
 
     @Test
     fun stampsAllowForWhenTheClockIsRead() {
-        // Video reads the clock about 1 s before the first frame, PRO Video and the rest 0.2 s
-        assertEquals(-890L, CameraClock.stampOffsetMs(110L, captureState = 1))
+        // Video reads the clock about 0.85 s before the first frame, PRO Video and the rest 0.2 s
+        assertEquals(-740L, CameraClock.stampOffsetMs(110L, captureState = 1))
         assertEquals(-90L, CameraClock.stampOffsetMs(110L, captureState = 17))
         assertEquals(2910L, CameraClock.stampOffsetMs(3110L, captureState = null))
     }

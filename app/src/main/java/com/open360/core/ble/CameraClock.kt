@@ -19,10 +19,11 @@ object CameraClock {
     const val READING_BEHIND_CLIP_CLOCK_MS = 10_000L
 
     // How long before the first frame the camera reads its clock for first_gps_timestamp, by
-    // recording. PRO Video: 0.15, 0.25 and 0.15 s on three clips. Video: 0.64, 0.82, 1.46 and
-    // 0.98 s on four, following nothing found, so a Video clip can be about 0.4 s out either way.
-    // Other modes have not been measured and are taken as PRO Video.
-    private const val READ_BEFORE_FIRST_FRAME_VIDEO_MS = 1000L
+    // recording. PRO Video: 0.15, 0.25, 0.15 and 0.16 s on four clips. Video: 0.64, 0.82, 1.46,
+    // 0.98, 0.55 and 0.61 s on six, following nothing found; their average is taken, so a Video
+    // clip can be 0.3 s out, and on one of the six 0.6 s. Other modes have not been measured and
+    // are taken as PRO Video.
+    private const val READ_BEFORE_FIRST_FRAME_VIDEO_MS = 850L
     private const val READ_BEFORE_FIRST_FRAME_OTHER_MS = 200L
 
     /** CameraCaptureState of a normal Video recording. */
