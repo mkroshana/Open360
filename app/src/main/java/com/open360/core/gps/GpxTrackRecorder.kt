@@ -8,6 +8,7 @@ import android.os.Environment
 import android.os.ParcelFileDescriptor
 import android.provider.MediaStore
 import android.util.Log
+import com.open360.core.sensors.SensorTrack
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
@@ -46,7 +47,11 @@ data class GpxTrackState(
  * recording ends the file is rewritten with the video's file name and its start and end times,
  * and renamed to match the video.
  */
-class GpxTrackRecorder(private val context: Context) {
+class GpxTrackRecorder(
+    private val context: Context,
+    // The sports sensors' readings between two monotonic times, for the FIT file
+    private val sensorReadings: ((fromElapsedMs: Long, toElapsedMs: Long) -> SensorTrack)? = null
+) {
 
     companion object {
         private const val TAG = "GpxTrackRecorder"
@@ -56,6 +61,9 @@ class GpxTrackRecorder(private val context: Context) {
         // can still arrive after it. The camera's reply with the video file name also comes
         // about a second after the stop.
         private const val FINALIZE_AFTER_STOP_MS = 2500L
+
+        // Sensor readings this far outside the first and last fix still count for them
+        private const val SENSOR_MARGIN_MS = 3_000L
 
         // A first-frame time this close to the current one is a correction, not a new recording
         private const val SAME_RECORDING_MS = 500L
@@ -267,7 +275,9 @@ class GpxTrackRecorder(private val context: Context) {
     private fun saveFit(s: Session) {
         val name = (s.fileName ?: return).substringBeforeLast('.') + ".fit"
         try {
-            val content = FitWriter.activity(s.fixes, TimeZone.getDefault().getOffset(s.fixes.first().utcMs))
+            val sensors = sensorReadings?.invoke(s.fixes.first().elapsedMs - SENSOR_MARGIN_MS, s.fixes.last().elapsedMs + SENSOR_MARGIN_MS)
+                ?: SensorTrack()
+            val content = FitWriter.activity(s.fixes, TimeZone.getDefault().getOffset(s.fixes.first().utcMs), sensors)
             val uri = s.fitUri
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
                 val resolver = context.contentResolver
@@ -294,7 +304,8 @@ class GpxTrackRecorder(private val context: Context) {
                 s.fitFile = target
             }
             s.fitName = name
-            Log.i(TAG, "FIT track saved: ${s.folder}/$name (${content.size} bytes)")
+            Log.i(TAG, "FIT track saved: ${s.folder}/$name (${content.size} bytes; readings: ${sensors.heartRateBpm.size} heart rate, " +
+                "${sensors.cadenceRpm.size} cadence, ${sensors.powerWatts.size} power)")
         } catch (e: Exception) {
             Log.e(TAG, "Could not save FIT track", e)
         }

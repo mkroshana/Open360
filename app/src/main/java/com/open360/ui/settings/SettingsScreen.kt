@@ -25,11 +25,12 @@ import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import com.open360.core.ble.WakeUpRegistration
+import com.open360.core.sensors.SportsSensorsState
 import com.open360.ui.camera.CameraStatusText
 
 /**
  * The settings: what is set once and then left alone. Wake Up, with its set-up and the ID behind
- * it, and whether GPS keeps going with the display off.
+ * it, whether GPS keeps going with the display off, and the sports sensors.
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -40,6 +41,9 @@ fun SettingsScreen(
     onSetUpWakeUp: () -> Unit,
     onWakeUpId: () -> Unit,
     onToggleBackgroundGps: () -> Unit,
+    sensors: SportsSensorsState,
+    onAddSensor: () -> Unit,
+    onRemoveSensor: (String) -> Unit,
     onBack: () -> Unit
 ) {
     Scaffold(
@@ -102,6 +106,9 @@ fun SettingsScreen(
                     onValueChange = { onToggleBackgroundGps() }
                 )
             )
+
+            SectionHeader("Sports Sensors")
+            SportsSensorsSection(sensors = sensors, onAddSensor = onAddSensor, onRemoveSensor = onRemoveSensor)
         }
     }
 }

@@ -21,6 +21,7 @@ import com.open360.core.gps.GpsTimeline
 import com.open360.core.gps.GpsTrackerEngine
 import com.open360.core.gps.GpsTrackerService
 import com.open360.core.gps.GpxTrackRecorder
+import com.open360.core.sensors.SportsSensorManager
 import com.open360.core.gps.GpxTrackState
 import com.open360.core.gps.runAtFixedRate
 import com.open360.core.model.CaptureMode
@@ -98,7 +99,9 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
     val bleManager = GpsRemoteBleManager(application)
     val gattServer = InstaGpsRemoteGattServer(application)
     val gpsEngine = GpsTrackerEngine(application)
-    private val trackRecorder = GpxTrackRecorder(application)
+    // Heart rate, cadence and power sensors, whose readings go into each recording's FIT file
+    val sportsSensors = SportsSensorManager(application)
+    private val trackRecorder = GpxTrackRecorder(application) { from, to -> sportsSensors.readings(from, to) }
     private val gpsTimeline = GpsTimeline(keepMs = GPS_HISTORY_MS)
     private val gpsSchedule = GpsStreamSchedule(GPS_SAMPLE_INTERVAL_MS, MAX_WAIT_FOR_NEXT_FIX_MS)
 
@@ -265,6 +268,7 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
 
         // Look for the camera straight away
         bleManager.startScanAndConnect()
+        sportsSensors.start()
     }
 
     fun wakeUpCamera(serialSuffix: String? = null) {
@@ -592,6 +596,7 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
         super.onCleared()
         gpsEngine.stopTracking()
         trackRecorder.stop(SystemClock.elapsedRealtime())
+        sportsSensors.stop()
         gattServer.stopServer()
         bleManager.disconnect()
         recordingTimerJob?.cancel()

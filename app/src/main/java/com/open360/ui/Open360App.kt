@@ -28,6 +28,7 @@ import com.open360.ui.camera.WakeUpIdDialog
 import com.open360.ui.camera.WakeUpSetupDialog
 import com.open360.ui.footage.FootageScreen
 import com.open360.ui.footage.FootageViewModel
+import com.open360.ui.settings.AddSensorDialog
 import com.open360.ui.settings.SettingsScreen
 
 enum class MainNavTab(val title: String) {
@@ -52,6 +53,9 @@ fun Open360App(
     // Keeps the screen scroll positions and state intact while switching
     val screens = rememberSaveableStateHolder()
 
+    val sensors by cameraViewModel.sportsSensors.state.collectAsState()
+    var addSensorOpen by rememberSaveable { mutableStateOf(false) }
+
     if (settingsOpen) {
         BackHandler { settingsOpen = false }
         SettingsScreen(
@@ -61,8 +65,31 @@ fun Open360App(
             onSetUpWakeUp = { cameraViewModel.openWakeUpSetup() },
             onWakeUpId = { cameraViewModel.openWakeUpId() },
             onToggleBackgroundGps = { cameraViewModel.toggleKeepGpsInBackground() },
+            sensors = sensors,
+            onAddSensor = {
+                addSensorOpen = true
+                // Links to saved sensors too, in case Bluetooth permission came after the app started
+                cameraViewModel.sportsSensors.start()
+                cameraViewModel.sportsSensors.startScan()
+            },
+            onRemoveSensor = { cameraViewModel.sportsSensors.remove(it) },
             onBack = { settingsOpen = false }
         )
+        if (addSensorOpen) {
+            AddSensorDialog(
+                sensors = sensors,
+                onScan = { cameraViewModel.sportsSensors.startScan() },
+                onPick = {
+                    cameraViewModel.sportsSensors.add(it)
+                    cameraViewModel.sportsSensors.stopScan()
+                    addSensorOpen = false
+                },
+                onDismiss = {
+                    cameraViewModel.sportsSensors.stopScan()
+                    addSensorOpen = false
+                }
+            )
+        }
     } else {
         Scaffold(
             contentWindowInsets = WindowInsets(0, 0, 0, 0),
