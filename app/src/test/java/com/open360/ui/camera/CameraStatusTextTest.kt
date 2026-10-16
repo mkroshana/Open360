@@ -51,7 +51,14 @@ class CameraStatusTextTest {
     @Test
     fun testRecordingModeNames() {
         assertEquals("Video", CameraStatusText.recordingMode(1))
-        assertEquals("PRO Video", CameraStatusText.recordingMode(17))
+        // Capture states a GO 3S reported in each of its modes, by the names its pod shows
+        assertEquals("FreeFrame Video (PRO)", CameraStatusText.recordingMode(17))
+        assertEquals("TimeShift", CameraStatusText.recordingMode(13))
+        assertEquals("Timelapse", CameraStatusText.recordingMode(2))
+        assertEquals("Slow Motion", CameraStatusText.recordingMode(7))
+        assertEquals("Loop Recording", CameraStatusText.recordingMode(18))
+        assertEquals("Interval Photo", CameraStatusText.recordingMode(3))
+        assertEquals("Starlapse", CameraStatusText.recordingMode(19))
         assertNull(CameraStatusText.recordingMode(null))
         assertNull(CameraStatusText.recordingMode(0))
         assertNull(CameraStatusText.recordingMode(99))

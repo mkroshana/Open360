@@ -1,5 +1,6 @@
 package com.open360.ui.camera
 
+import com.open360.core.ble.CameraMode
 import com.open360.core.ble.Go2BleProtocol.CardState
 import com.open360.core.ble.Go2BleProtocol.ChargeBoxStatus
 import com.open360.core.ble.WakeUpRegistration
@@ -39,18 +40,21 @@ object CameraStatusText {
 
     /**
      * The name of a recording mode from its CameraCaptureState, or null for one with no name
-     * here. Only Video (1) and PRO Video (17) have been seen from a GO 3S; the rest follow the
-     * names in the published definitions.
+     * here. The GO 3S reported 1, 2, 3, 7, 13, 17, 18 and 19 for its modes, named here as its
+     * Action Pod names them; it records slow motion as 7, which the published definitions call
+     * bullet time. The rest follow those definitions.
      */
     fun recordingMode(captureState: Int?): String? = when (captureState) {
-        1 -> "Video"
-        2 -> "Timelapse"
-        7 -> "Bullet Time"
+        1 -> CameraMode.VIDEO.label
+        2 -> CameraMode.TIMELAPSE.label
+        3 -> CameraMode.INTERVAL_PHOTO.label
+        7 -> CameraMode.SLOW_MOTION.label
         9 -> "HDR Video"
         12 -> "Interval Video"
-        13 -> "TimeShift"
-        17 -> "PRO Video"
-        18 -> "Loop Recording"
+        13 -> CameraMode.TIMESHIFT.label
+        17 -> CameraMode.FREEFRAME_PRO.label
+        18 -> CameraMode.LOOP_RECORDING.label
+        19 -> CameraMode.STARLAPSE.label
         20 -> "FPV"
         22 -> "Slow Motion"
         else -> null
