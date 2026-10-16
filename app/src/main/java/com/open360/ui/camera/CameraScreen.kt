@@ -458,7 +458,12 @@ private fun CameraDetailRows(ble: BleCameraState) {
     if (storageProblem != null) {
         rows.add(StatusLine("Storage", storageProblem, isProblem = true))
     } else if (details.captureSecondsLeft != null) {
-        rows.add(StatusLine("Recording Time Left", CameraStatusText.timeLeft(details.captureSecondsLeft)))
+        // In Photo mode the camera gives the photos left in the same place
+        if (details.subModes?.isPhoto == true) {
+            rows.add(StatusLine("Photos Left", CameraStatusText.photosLeft(details.captureSecondsLeft)))
+        } else {
+            rows.add(StatusLine("Recording Time Left", CameraStatusText.timeLeft(details.captureSecondsLeft)))
+        }
     }
 
     details.pod?.let { pod ->

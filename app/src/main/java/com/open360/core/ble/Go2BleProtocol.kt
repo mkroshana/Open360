@@ -238,10 +238,13 @@ object Go2BleProtocol {
 
     /**
      * Reads the recording time left on the storage, in seconds, from notification 0x2021
-     * (field 1). The code is not in the published definitions, but its value tracks the
-     * REMAINING_CAPTURE_TIME option: on a GO 3S the notification read 5668 and the option read
-     * 5652 after two more short clips. It falls while a clip records and differs between
-     * capture modes on the same storage (6552 in Video, 4796 in PRO Video).
+     * (field 1). Its value tracks the REMAINING_CAPTURE_TIME option: on a GO 3S the
+     * notification read 5668 and the option read 5652 after two more short clips. It falls
+     * while a clip records and differs between capture modes on the same storage (6552 in
+     * Video, 4796 in PRO Video). In Photo mode it is the photos left instead: it read 1106, as
+     * did the REMAINING_PICTURES option, and 1105 after one photo. The newer published
+     * definitions name the notification ENC_STORAGE_REMAIN, with the photos left in field 2,
+     * but a GO 3S sent 0 there in both modes.
      */
     fun parseCaptureTimeLeft(payload: ByteArray): Int? =
         (readProtoFields(payload)[1] as? Long)?.takeIf { it in 0..Int.MAX_VALUE }?.toInt()

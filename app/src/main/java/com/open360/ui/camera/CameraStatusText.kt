@@ -3,6 +3,7 @@ package com.open360.ui.camera
 import com.open360.core.ble.Go2BleProtocol.CardState
 import com.open360.core.ble.Go2BleProtocol.ChargeBoxStatus
 import com.open360.core.ble.WakeUpRegistration
+import java.util.Locale
 
 /**
  * Wording for what the camera reports about itself. Kept apart from the screen so it can be
@@ -22,6 +23,9 @@ object CameraStatusText {
 
     /** A concise time left label for the top bar, such as "1 h 20 min left", "42 min left" or "Under 1 min left". */
     fun timeLeftLabel(seconds: Int): String = "${timeLeft(seconds)} left"
+
+    /** A number of photos left, such as "1,105". */
+    fun photosLeft(count: Int): String = String.format(Locale.US, "%,d", count)
 
     /** What is wrong with the camera's storage, or null when nothing is. */
     fun storageProblem(state: CardState?): String? = when (state) {

@@ -56,7 +56,8 @@ enum class BleConnectionStatus {
  * null until the camera has sent it, and all are forgotten when the link ends.
  */
 data class CameraDetails(
-    // Recording time left on the storage at the current mode's bitrate
+    // Recording time left on the storage at the current mode's bitrate, in seconds. In Photo
+    // mode the camera gives the photos left here instead.
     val captureSecondsLeft: Int? = null,
     val cardState: Go2BleProtocol.CardState? = null,
     val pod: Go2BleProtocol.ChargeBoxStatus? = null,

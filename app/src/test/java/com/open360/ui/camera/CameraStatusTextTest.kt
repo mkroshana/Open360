@@ -30,6 +30,14 @@ class CameraStatusTextTest {
     }
 
     @Test
+    fun testPhotosLeft() {
+        // A GO 3S in Photo mode gave 1105 after one photo
+        assertEquals("1,105", CameraStatusText.photosLeft(1105))
+        assertEquals("42", CameraStatusText.photosLeft(42))
+        assertEquals("0", CameraStatusText.photosLeft(0))
+    }
+
+    @Test
     fun testStorageProblemOnlyWhenSomethingIsWrong() {
         assertNull(CameraStatusText.storageProblem(null))
         assertNull(CameraStatusText.storageProblem(CardState.OK))
