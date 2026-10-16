@@ -385,6 +385,41 @@ object Go2BleProtocol {
         return WifiInfo(ssid, password)
     }
 
+    // The camera's clock: LOCAL_TIME, TIME_ZONE and GEOGRAPHIC_TIME_ZONE in the published definitions
+    private const val OPTION_LOCAL_TIME = 12
+    private const val OPTION_TIME_ZONE = 13
+    private const val OPTION_GEOGRAPHIC_TIME_ZONE = 175
+
+    /** Builds the payload of a GetOptions request for the camera's clock and time zone. */
+    fun buildClockRequest(): ByteArray =
+        byteArrayOf(0x0A, 0x02, OPTION_LOCAL_TIME.toByte(), OPTION_TIME_ZONE.toByte())
+
+    /**
+     * Decodes the reply to [buildClockRequest]: field 2 is an Options message whose option 12 is
+     * the camera's clock in whole seconds of local time and option 13 its zone in seconds east of
+     * UTC. Returns the clock in whole UTC seconds, or null when the reply has no clock in it.
+     */
+    fun parseClockReply(payload: ByteArray): Long? {
+        val options = readProtoFields(payload)[2] as? ByteArray ?: return null
+        val fields = readProtoFields(options)
+        val local = fields[OPTION_LOCAL_TIME] as? Long ?: return null
+        return local - (fields[OPTION_TIME_ZONE] as? Long ?: 0L)
+    }
+
+    /**
+     * Builds the payload of a SetOptions request that sets the camera's clock, as the Insta360 app
+     * does when it connects: options 12 (whole UTC seconds), 13 (the zone in seconds east of UTC)
+     * and 175 (the zone's name, such as Asia/Colombo).
+     */
+    fun buildSetClockPayload(utcSeconds: Long, zoneOffsetSeconds: Int, zoneId: String): ByteArray {
+        val name = zoneId.toByteArray(Charsets.UTF_8)
+        val options = byteArrayOf((OPTION_LOCAL_TIME shl 3).toByte()) + encodeVarint(utcSeconds) +
+            byteArrayOf((OPTION_TIME_ZONE shl 3).toByte()) + encodeVarint(zoneOffsetSeconds.toLong()) +
+            encodeVarint((OPTION_GEOGRAPHIC_TIME_ZONE shl 3) or 2) + encodeVarint(name.size) + name
+        return byteArrayOf(0x08, OPTION_LOCAL_TIME.toByte(), 0x08, OPTION_TIME_ZONE.toByte(), 0x08) +
+            encodeVarint(OPTION_GEOGRAPHIC_TIME_ZONE) + byteArrayOf(0x12) + encodeVarint(options.size) + options
+    }
+
     // MediaType in the published definitions: videos and photos together
     private const val MEDIA_TYPE_VIDEO_AND_PHOTO = 2
 
@@ -417,6 +452,18 @@ object Go2BleProtocol {
         val out = ArrayList<Byte>()
         var v = value.toLong() and 0xFFFFFFFFL
         while (v >= 0x80) {
+            out += ((v and 0x7F) or 0x80).toByte()
+            v = v ushr 7
+        }
+        out += v.toByte()
+        return out.toByteArray()
+    }
+
+    /** A 64-bit varint, as protobuf writes int64 fields and negative int32 ones. */
+    private fun encodeVarint(value: Long): ByteArray {
+        val out = ArrayList<Byte>()
+        var v = value
+        while (v and 0x7FL.inv() != 0L) {
             out += ((v and 0x7F) or 0x80).toByte()
             v = v ushr 7
         }

@@ -333,6 +333,32 @@ class Go2BleProtocolTest {
     }
 
     @Test
+    fun testClockRequestAndReply() {
+        // The request asks for options 12 and 13
+        assertTrue(hex("0a020c0d").contentEquals(Go2BleProtocol.buildClockRequest()))
+
+        // A GO 3S's answer: local time 1792199056 in zone 19800, which is 1792179256 UTC
+        assertEquals(1792179256L, Go2BleProtocol.parseClockReply(hex("080c120a609093cbd60668d89a01")))
+        // Without the zone, the local time is taken as UTC
+        assertEquals(1792199056L, Go2BleProtocol.parseClockReply(hex("080c1206609093cbd606")))
+        // An OK with no clock in it
+        assertNull(Go2BleProtocol.parseClockReply(hex("080c1200")))
+        assertNull(Go2BleProtocol.parseClockReply(ByteArray(0)))
+    }
+
+    @Test
+    fun testSetClockPayloadMatchesTheInsta360App() {
+        // Byte for byte what the Insta360 app sent a GO 3S on connecting, at 1792097733 UTC
+        assertTrue(
+            hex("080c080d08af01121960c5fbc4d60668d89a01fa0a0c417369612f436f6c6f6d626f")
+                .contentEquals(Go2BleProtocol.buildSetClockPayload(1792097733L, 19800, "Asia/Colombo"))
+        )
+        // A zone west of UTC is a negative int32, written as ten bytes
+        val west = Go2BleProtocol.buildSetClockPayload(1792097733L, -18000, "America/New_York")
+        assertTrue(hex("68b0f3feffffffffffff01").let { zone -> west.toList().windowed(zone.size).any { it == zone.toList() } })
+    }
+
+    @Test
     fun testFileListRequestAndReply() {
         // Videos and photos, from the start, up to 500; and a later page
         assertTrue(hex("08021000" + "18f403").contentEquals(Go2BleProtocol.buildFileListRequest(0, 500)))
