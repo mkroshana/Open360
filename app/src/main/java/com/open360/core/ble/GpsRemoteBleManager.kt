@@ -1093,15 +1093,17 @@ class GpsRemoteBleManager(private val context: Context) {
                 delay(2000)
             }
             var offset = readClock() ?: return@launch
-            val recording = _state.value.let { it.isRecording || it.recordingFirstFrameAtMs != null }
-            if (abs(offset.ms) > CLOCK_SET_THRESHOLD_MS && !recording) {
-                setClock(offset)
+            if (abs(offset.ms) > CLOCK_SET_THRESHOLD_MS && !isCapturing() && setClock(offset)) {
                 delay(CLOCK_SET_SETTLE_MS)
                 offset = readClock() ?: return@launch
             }
             _state.update { it.copy(cameraClockOffsetMs = offset.ms) }
         }
     }
+
+    /** Whether a recording is starting or running, when the camera's clock must not be changed. */
+    private fun isCapturing(): Boolean =
+        _state.value.let { it.isRecording || it.isCaptureStarting || it.recordingFirstFrameAtMs != null }
 
     /**
      * Asks for the camera's clock [CLOCK_READINGS] times, across its ticks, and works out how far
@@ -1139,18 +1141,23 @@ class GpsRemoteBleManager(private val context: Context) {
         return offset
     }
 
-    /** Sets the camera's clock as near GPS time as its own fraction of a second allows (CameraClock.planSet). */
-    private suspend fun setClock(measured: CameraClock.Offset) {
-        val toGps = gpsTimeAt ?: return
-        val nowUtc = toGps(SystemClock.elapsedRealtime()) ?: return
+    /**
+     * Sets the camera's clock as near GPS time as its own fraction of a second allows
+     * (CameraClock.planSet). False when it was not sent, as a recording started meanwhile.
+     */
+    private suspend fun setClock(measured: CameraClock.Offset): Boolean {
+        val toGps = gpsTimeAt ?: return false
+        val nowUtc = toGps(SystemClock.elapsedRealtime()) ?: return false
         val plan = CameraClock.planSet(nowUtc, measured.ms, CLOCK_SET_LEAD_MS)
         delay(plan.handleAtUtcMs - nowUtc - CLOCK_SET_WRITE_AHEAD_MS)
+        if (isCapturing() || !cameraIsOn()) return false
         val zone = TimeZone.getDefault()
         val payload = Go2BleProtocol.buildSetClockPayload(plan.utcSeconds, zone.getOffset(System.currentTimeMillis()) / 1000, zone.id)
         queuePacket(
             Go2BleProtocol.encodeMessagePacket(Go2BleProtocol.encodeInnerMessage(Go2BleProtocol.CMD_SET_OPTIONS, nextSeq(), payload))
         )
         Log.i(TAG, "Setting the camera's clock to ${plan.utcSeconds} UTC, to be ${plan.expectedOffsetMs} ms ahead of GPS time")
+        return true
     }
 
     private suspend fun answersWithin(timeoutMs: Long): Boolean =
