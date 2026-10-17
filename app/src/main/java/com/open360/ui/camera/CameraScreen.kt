@@ -1,6 +1,7 @@
 package com.open360.ui.camera
 
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.animateContentSize
 import androidx.compose.animation.core.CubicBezierEasing
 import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.RepeatMode
@@ -134,68 +135,80 @@ fun CameraScreen(
     val isAsleep = ble.connectionStatus == BleConnectionStatus.CONNECTED && !ble.isCameraAwake
 
     Column(
-        modifier = modifier
-            .fillMaxSize()
-            .verticalScroll(rememberScrollState())
-            .padding(horizontal = 16.dp, vertical = 12.dp),
-        verticalArrangement = Arrangement.spacedBy(16.dp)
+        modifier = modifier.fillMaxSize()
     ) {
-        // Shown until Wake Up is set up or the card is dismissed
-        if (!uiState.wakeUpSetupCardDismissed &&
-            WakeUpSetup.needed(hasId = uiState.wakeUpId != null, registration = ble.wakeUpRegistration)
+        // Upper scrollable column
+        Column(
+            modifier = Modifier
+                .weight(1f)
+                .fillMaxWidth()
+                .verticalScroll(rememberScrollState())
+                .padding(horizontal = 16.dp, vertical = 12.dp),
+            verticalArrangement = Arrangement.spacedBy(16.dp)
         ) {
-            WakeUpSetupCard(
-                registration = ble.wakeUpRegistration,
-                onSetUp = { viewModel.openWakeUpSetup() },
-                onDismiss = { viewModel.dismissWakeUpSetupCard() }
+            // Shown until Wake Up is set up or the card is dismissed
+            if (!uiState.wakeUpSetupCardDismissed &&
+                WakeUpSetup.needed(hasId = uiState.wakeUpId != null, registration = ble.wakeUpRegistration)
+            ) {
+                WakeUpSetupCard(
+                    registration = ble.wakeUpRegistration,
+                    onSetUp = { viewModel.openWakeUpSetup() },
+                    onDismiss = { viewModel.dismissWakeUpSetupCard() }
+                )
+            }
+
+            // Camera Status Card
+            CameraStatusCard(
+                uiState = uiState,
+                onCameraButton = { button ->
+                    if (button == CameraButton.CONNECT || button == CameraButton.WAKE_UP) {
+                        haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                    }
+                    viewModel.onCameraButton(button)
+                }
             )
+
+            // Live GPS Telemetry Card
+            val lastGpsSentTime = if (server.lastGpsSentTimeMs > 0) server.lastGpsSentTimeMs else ble.lastGpsSentTimeMs
+            GpsTelemetryCard(
+                gps = gps,
+                isSpeedMph = uiState.isSpeedMph,
+                isRecording = uiState.isRecording,
+                isCameraConnected = uiState.isConnected,
+                isMinimized = uiState.isGpsCardMinimized,
+                joinedLateSeconds = ble.joinedRecordingSeconds,
+                lastGpsSentTimeMs = lastGpsSentTime,
+                track = uiState.trackState,
+                onToggleSpeedUnit = { viewModel.toggleSpeedUnit() },
+                onToggleMinimize = { viewModel.toggleGpsCardMinimized() }
+            )
+
+            Spacer(modifier = Modifier.height(4.dp))
         }
 
-        // Camera Status Card
-        CameraStatusCard(
-            uiState = uiState,
-            onCameraButton = { button ->
-                if (button == CameraButton.CONNECT || button == CameraButton.WAKE_UP) {
+        // Pinned bottom container holding CameraControlCard right above the bottom navigation bar
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(start = 16.dp, end = 16.dp, top = 4.dp, bottom = 12.dp)
+        ) {
+            CameraControlCard(
+                currentMode = uiState.currentMode,
+                isRecording = uiState.isRecording,
+                isStarting = uiState.bleState.isCaptureStarting,
+                isStopping = uiState.bleState.isCaptureStopping,
+                durationSeconds = uiState.recordingDurationSeconds,
+                isConnected = uiState.isConnected,
+                isAsleep = isAsleep,
+                cameraMode = ble.details.subModes?.let { CameraMode.of(it) },
+                onModeSelected = { viewModel.setMode(it) },
+                onCameraModeSelected = { viewModel.setCameraMode(it) },
+                onShutterClick = {
                     haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                    viewModel.onShutterClicked()
                 }
-                viewModel.onCameraButton(button)
-            }
-        )
-
-        // Live GPS Telemetry Card
-        val lastGpsSentTime = if (server.lastGpsSentTimeMs > 0) server.lastGpsSentTimeMs else ble.lastGpsSentTimeMs
-        GpsTelemetryCard(
-            gps = gps,
-            isSpeedMph = uiState.isSpeedMph,
-            isRecording = uiState.isRecording,
-            isCameraConnected = uiState.isConnected,
-            isMinimized = uiState.isGpsCardMinimized,
-            joinedLateSeconds = ble.joinedRecordingSeconds,
-            lastGpsSentTimeMs = lastGpsSentTime,
-            track = uiState.trackState,
-            onToggleSpeedUnit = { viewModel.toggleSpeedUnit() },
-            onToggleMinimize = { viewModel.toggleGpsCardMinimized() }
-        )
-
-        // Primary Camera Shutter & Mode Controller
-        CameraControlCard(
-            currentMode = uiState.currentMode,
-            isRecording = uiState.isRecording,
-            isStarting = uiState.bleState.isCaptureStarting,
-            isStopping = uiState.bleState.isCaptureStopping,
-            durationSeconds = uiState.recordingDurationSeconds,
-            isConnected = uiState.isConnected,
-            isAsleep = isAsleep,
-            cameraMode = ble.details.subModes?.let { CameraMode.of(it) },
-            onModeSelected = { viewModel.setMode(it) },
-            onCameraModeSelected = { viewModel.setCameraMode(it) },
-            onShutterClick = {
-                haptic.performHapticFeedback(HapticFeedbackType.LongPress)
-                viewModel.onShutterClicked()
-            }
-        )
-
-        Spacer(modifier = Modifier.height(16.dp))
+            )
+        }
     }
 }
 
@@ -741,12 +754,13 @@ fun GpsTelemetryCard(
             val streamActive = isCameraConnected && gps.hasFix
             val badgeBg = if (streamActive) Color(0xFF34C759).copy(alpha = 0.12f) else MaterialTheme.colorScheme.surfaceVariant
             val badgeColor = if (streamActive) Color(0xFF34C759) else MaterialTheme.colorScheme.onSurfaceVariant
-            val compactStreamText = when {
-                streamActive && isRecording -> if (track.pointCount > 0) "Sending (${track.pointCount})" else "Sending GPS"
-                streamActive -> "GPS Ready"
-                isCameraConnected && !gps.hasFix -> "Waiting for GPS"
-                else -> "No Camera"
-            }
+            val compactStreamText = if (streamActive) {
+                if (isRecording) {
+                    if (track.pointCount > 0) "Sending (${track.pointCount})" else "Sending GPS"
+                } else {
+                    "GPS Ready"
+                }
+            } else null
 
             Box(modifier = Modifier.fillMaxWidth()) {
                 val unitInteraction = remember { MutableInteractionSource() }
@@ -791,28 +805,54 @@ fun GpsTelemetryCard(
                     }
                 }
 
-                // Streaming status badge (anchored on right, clear and stable)
-                Row(
-                    modifier = Modifier
-                        .align(Alignment.CenterEnd)
-                        .clip(RoundedCornerShape(8.dp))
-                        .background(badgeBg)
-                        .padding(horizontal = 8.dp, vertical = 4.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(5.dp)
-                ) {
-                    Icon(
-                        imageVector = if (streamActive) Icons.Default.CheckCircle else Icons.Default.Sync,
-                        contentDescription = "GPS Status",
-                        modifier = Modifier.size(14.dp),
-                        tint = badgeColor
-                    )
-                    Text(
-                        text = compactStreamText,
-                        style = MaterialTheme.typography.labelSmall,
-                        fontWeight = FontWeight.Medium,
-                        color = badgeColor
-                    )
+                // Streaming status badge when active/ready, or live altitude readout when searching or idle
+                if (streamActive && compactStreamText != null) {
+                    Row(
+                        modifier = Modifier
+                            .align(Alignment.CenterEnd)
+                            .clip(RoundedCornerShape(8.dp))
+                            .background(Color(0xFF34C759).copy(alpha = 0.12f))
+                            .padding(horizontal = 8.dp, vertical = 4.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(5.dp)
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.CheckCircle,
+                            contentDescription = "GPS Status",
+                            modifier = Modifier.size(14.dp),
+                            tint = Color(0xFF34C759)
+                        )
+                        Text(
+                            text = compactStreamText,
+                            style = MaterialTheme.typography.labelSmall,
+                            fontWeight = FontWeight.Medium,
+                            color = Color(0xFF34C759)
+                        )
+                    }
+                } else {
+                    val altitudeDisplay = if (gps.hasFix) String.format(Locale.US, "%.0f m", gps.altitudeMeters) else "— m"
+                    Row(
+                        modifier = Modifier
+                            .align(Alignment.CenterEnd)
+                            .clip(RoundedCornerShape(8.dp))
+                            .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f))
+                            .padding(horizontal = 8.dp, vertical = 4.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(4.dp)
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Height,
+                            contentDescription = "Altitude",
+                            modifier = Modifier.size(14.dp),
+                            tint = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                        Text(
+                            text = altitudeDisplay,
+                            style = MaterialTheme.typography.labelSmall,
+                            fontWeight = FontWeight.Medium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
                 }
             }
 
@@ -1165,18 +1205,26 @@ fun CameraControlCard(
     val shownMode = cameraMode?.takeIf { it.isPhoto == (currentMode == CaptureMode.PHOTO) }
 
     ElevatedCard(
-        modifier = Modifier.fillMaxWidth(),
+        modifier = Modifier
+            .fillMaxWidth()
+            .animateContentSize(
+                animationSpec = spring(
+                    dampingRatio = 0.82f,
+                    stiffness = Spring.StiffnessMediumLow
+                )
+            ),
         shape = RoundedCornerShape(20.dp)
     ) {
         Column(
-            modifier = Modifier.padding(16.dp),
+            modifier = Modifier.padding(vertical = 16.dp),
             horizontalAlignment = Alignment.CenterHorizontally
         ) {
             // Mode Segmented Control (Video / Photo)
             ModeSegmentedControl(
                 currentMode = currentMode,
                 enabled = !modeLocked,
-                onModeSelected = onModeSelected
+                onModeSelected = onModeSelected,
+                modifier = Modifier.padding(horizontal = 16.dp)
             )
 
             // Sub-mode pills (FreeFrame Video, TimeShift, Timelapse, etc.)
@@ -1185,7 +1233,8 @@ fun CameraControlCard(
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .horizontalScroll(rememberScrollState()),
+                        .horizontalScroll(rememberScrollState())
+                        .padding(horizontal = 16.dp),
                     horizontalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
                     CameraMode.group(photo = currentMode == CaptureMode.PHOTO).forEach { mode ->
@@ -1309,7 +1358,8 @@ fun CameraControlCard(
                 text = actionLabel,
                 style = MaterialTheme.typography.titleSmall,
                 fontWeight = FontWeight.SemiBold,
-                color = if (!isConnected || isAsleep) MaterialTheme.colorScheme.onSurfaceVariant else MaterialTheme.colorScheme.onSurface
+                color = if (!isConnected || isAsleep) MaterialTheme.colorScheme.onSurfaceVariant else MaterialTheme.colorScheme.onSurface,
+                modifier = Modifier.padding(horizontal = 16.dp)
             )
 
             if (!isConnected || isAsleep) {
@@ -1317,7 +1367,9 @@ fun CameraControlCard(
                     text = if (isAsleep) "Switch the camera on to control it" else "Connect the camera to control it",
                     style = MaterialTheme.typography.labelSmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    modifier = Modifier.padding(top = 4.dp)
+                    modifier = Modifier
+                        .padding(horizontal = 16.dp)
+                        .padding(top = 4.dp)
                 )
             }
         }
