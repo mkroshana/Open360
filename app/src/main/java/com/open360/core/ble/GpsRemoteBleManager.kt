@@ -1297,7 +1297,8 @@ class GpsRemoteBleManager(private val context: Context) {
                                 ?.takeIf { Go2BleProtocol.isRecordingCaptureState(it) }
                                 ?.let { mode -> updateDetails { it.copy(recordingState = mode) } }
                         }
-                        Go2BleProtocol.CAPTURE_STEP_STOPPING, Go2BleProtocol.CAPTURE_STEP_DONE -> markRecordingStop()
+                        Go2BleProtocol.CAPTURE_STEP_STOPPING, Go2BleProtocol.CAPTURE_STEP_DONE ->
+                            if (Go2BleProtocol.captureStepEndsRecording(inner.payload)) markRecordingStop()
                     }
                 }
 

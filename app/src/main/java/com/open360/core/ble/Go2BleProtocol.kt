@@ -150,15 +150,31 @@ object Go2BleProtocol {
 
     // Values of field 1 in notification 0x2026, the camera's capture progress. Seen on a GO 3S:
     // 2 when a video start is accepted, 3 once it is capturing, 8 then 4 for a photo,
-    // 5 when stopping, 6 when done.
+    // 5 when stopping, 6 when done. An Interval Photo or Starlapse run sends 4, 5 and 6 for
+    // every photo it takes, and 7, 5, 6 once stopped.
     const val CAPTURE_STEP_VIDEO_STARTING = 2
     const val CAPTURE_STEP_STOPPING = 5
     const val CAPTURE_STEP_DONE = 6
+
+    // CameraCaptureState of runs that take photos until stopped: INTERVAL_SHOOTING (Interval
+    // Photo) and 19 (Starlapse)
+    private val PHOTO_RUN_CAPTURE_STATES = setOf(3, 19)
 
     /**
      * Reads the capture step (field 1) from notification 0x2026.
      */
     fun parseCaptureStep(payload: ByteArray): Int? = (readProtoFields(payload)[1] as? Long)?.toInt()
+
+    /**
+     * Whether a capture step notice (0x2026) ends the recording: the stopping or done step,
+     * except in an Interval Photo or Starlapse run, which sends them after every photo and ends
+     * with the capture status notification reading NOT_CAPTURE.
+     */
+    fun captureStepEndsRecording(payload: ByteArray): Boolean {
+        val step = parseCaptureStep(payload)
+        if (step != CAPTURE_STEP_STOPPING && step != CAPTURE_STEP_DONE) return false
+        return parseCaptureStepState(payload) !in PHOTO_RUN_CAPTURE_STATES
+    }
 
     /**
      * Reads the CameraCaptureState the capture step belongs to (field 4 of notification 0x2026).

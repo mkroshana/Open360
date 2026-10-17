@@ -158,6 +158,29 @@ class Go2BleProtocolTest {
     }
 
     @Test
+    fun testCaptureStepsThatEndTheRecording() {
+        // Captured from a GO 3S: stopping a Video clip and a Timelapse run end the recording
+        assertTrue(Go2BleProtocol.captureStepEndsRecording(hex("080518b6e30320012802")))
+        assertTrue(Go2BleProtocol.captureStepEndsRecording(hex("08051898961620022805")))
+        assertTrue(Go2BleProtocol.captureStepEndsRecording(hex("080618979a1620022805")))
+
+        // The stopping and done steps an Interval Photo run (state 3) and a Starlapse run
+        // (state 19) send after every photo do not
+        assertEquals(false, Go2BleProtocol.captureStepEndsRecording(hex("08051892892420032805")))
+        assertEquals(false, Go2BleProtocol.captureStepEndsRecording(hex("080618f19c2420032805")))
+        assertEquals(false, Go2BleProtocol.captureStepEndsRecording(hex("080518df872920132805")))
+        assertEquals(false, Go2BleProtocol.captureStepEndsRecording(hex("080618979b2920132805")))
+
+        // Nor do the other steps
+        assertEquals(false, Go2BleProtocol.captureStepEndsRecording(hex("0804100018df8324200328054000")))
+        assertEquals(false, Go2BleProtocol.captureStepEndsRecording(hex("080218f0e70220012805")))
+        assertEquals(false, Go2BleProtocol.captureStepEndsRecording(ByteArray(0)))
+
+        // A stopping step that does not say its state ends the recording, as before
+        assertTrue(Go2BleProtocol.captureStepEndsRecording(hex("0805")))
+    }
+
+    @Test
     fun testVideoFilePathFromStopCaptureReply() {
         // Captured from a GO 3S after a 41 s clip
         val reply = "0a360a2d2f4443494d2f43616d65726130312f5649445f32303236313031325f3136333034395f30305f3036362e6d7034108080800a1829"
