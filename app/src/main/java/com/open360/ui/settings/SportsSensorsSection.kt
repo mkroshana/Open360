@@ -12,15 +12,18 @@ import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.MonitorHeart
 import androidx.compose.material.icons.filled.PedalBike
 import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.ListItem
+import androidx.compose.material3.ListItemDefaults
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.unit.dp
 import com.open360.core.sensors.SensorDevice
@@ -52,8 +55,10 @@ fun SportsSensorsSection(
                 IconButton(onClick = { onRemoveSensor(status.device.address) }) {
                     Icon(Icons.Default.Delete, contentDescription = "Remove ${status.device.name}")
                 }
-            }
+            },
+            colors = ListItemDefaults.colors(containerColor = Color.Transparent)
         )
+        HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
     }
     ListItem(
         leadingContent = { Icon(Icons.Default.Add, contentDescription = null) },
@@ -64,6 +69,7 @@ fun SportsSensorsSection(
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
         },
+        colors = ListItemDefaults.colors(containerColor = Color.Transparent),
         modifier = Modifier.clickable(onClick = onAddSensor)
     )
 }
