@@ -8,23 +8,28 @@ import android.graphics.Bitmap
 import android.net.Uri
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.spring
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Check
@@ -39,6 +44,7 @@ import androidx.compose.material.icons.filled.Share
 import androidx.compose.material.icons.filled.Straighten
 import androidx.compose.material.icons.filled.Timer
 import androidx.compose.material.icons.filled.Usb
+import androidx.compose.material.icons.filled.VideoLibrary
 import androidx.compose.material.icons.filled.Wifi
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
@@ -61,6 +67,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.produceState
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import com.open360.core.ble.BleCameraState
@@ -69,15 +76,102 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.open360.core.model.CameraMediaFile
+import com.open360.ui.camera.rememberPressScale
 
 import com.open360.core.network.CameraWifiStatus
+
+/**
+ * Text-only sliding pill segmented switcher (Camera, Downloaded, USB) matching ModeSegmentedControl.
+ */
+@Composable
+fun FootageTabSegmentedControl(
+    currentTab: FootageTab,
+    onTabSelected: (FootageTab) -> Unit,
+    modifier: Modifier = Modifier
+) {
+    val tabs = FootageTab.entries
+    val selectedIndex = tabs.indexOf(currentTab)
+
+    val targetOffset by animateFloatAsState(
+        targetValue = selectedIndex.toFloat(),
+        animationSpec = spring(
+            dampingRatio = 0.82f,
+            stiffness = 450f
+        ),
+        label = "footageTabIndicator"
+    )
+
+    BoxWithConstraints(
+        modifier = modifier
+            .fillMaxWidth()
+            .height(44.dp)
+            .clip(RoundedCornerShape(22.dp))
+            .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f))
+            .padding(3.dp)
+    ) {
+        val tabWidth = maxWidth / tabs.size
+
+        // Sliding indicator pill
+        Box(
+            modifier = Modifier
+                .width(tabWidth)
+                .fillMaxHeight()
+                .graphicsLayer {
+                    translationX = targetOffset * tabWidth.toPx()
+                }
+                .clip(RoundedCornerShape(19.dp))
+                .background(MaterialTheme.colorScheme.primaryContainer)
+        )
+
+        Row(modifier = Modifier.fillMaxSize()) {
+            tabs.forEach { tab ->
+                val isSelected = currentTab == tab
+                val interactionSource = remember { MutableInteractionSource() }
+                val tabScale by rememberPressScale(interactionSource, targetScale = 0.96f)
+
+                val label = when (tab) {
+                    FootageTab.CAMERA -> "Camera"
+                    FootageTab.DOWNLOADED -> "Downloaded"
+                    FootageTab.USB -> "USB"
+                }
+
+                Box(
+                    modifier = Modifier
+                        .weight(1f)
+                        .fillMaxHeight()
+                        .graphicsLayer {
+                            scaleX = tabScale
+                            scaleY = tabScale
+                        }
+                        .clip(RoundedCornerShape(19.dp))
+                        .clickable(
+                            interactionSource = interactionSource,
+                            indication = null
+                        ) {
+                            if (!isSelected) onTabSelected(tab)
+                        },
+                    contentAlignment = Alignment.Center
+                ) {
+                    Text(
+                        text = label,
+                        style = MaterialTheme.typography.labelLarge,
+                        fontWeight = if (isSelected) FontWeight.SemiBold else FontWeight.Medium,
+                        color = if (isSelected) MaterialTheme.colorScheme.onPrimaryContainer else MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+            }
+        }
+    }
+}
 
 @Composable
 fun FootageScreen(
@@ -119,18 +213,11 @@ fun FootageScreen(
     }
 
     Column(modifier = modifier.fillMaxSize()) {
-        androidx.compose.material3.TabRow(
-            selectedTabIndex = uiState.currentTab.ordinal,
-            modifier = Modifier.fillMaxWidth()
-        ) {
-            FootageTab.entries.forEach { tab ->
-                Tab(
-                    selected = uiState.currentTab == tab,
-                    onClick = { viewModel.selectTab(tab) },
-                    text = { Text(text = tab.title) }
-                )
-            }
-        }
+        FootageTabSegmentedControl(
+            currentTab = uiState.currentTab,
+            onTabSelected = { viewModel.selectTab(it) },
+            modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp)
+        )
 
         Box(
             modifier = Modifier
@@ -361,12 +448,36 @@ private fun CameraWifiTabContent(
     }
 
     if (files.isEmpty()) {
-        Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-            Text(
-                text = "No Media Files Found on Camera",
-                style = MaterialTheme.typography.bodyLarge,
-                color = MaterialTheme.colorScheme.onSurfaceVariant
-            )
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(32.dp),
+            contentAlignment = Alignment.Center
+        ) {
+            Column(
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.Center
+            ) {
+                Icon(
+                    imageVector = Icons.Default.VideoLibrary,
+                    contentDescription = null,
+                    modifier = Modifier.size(56.dp),
+                    tint = MaterialTheme.colorScheme.primary.copy(alpha = 0.7f)
+                )
+                Spacer(modifier = Modifier.height(16.dp))
+                Text(
+                    text = "No Media Files Found",
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.SemiBold
+                )
+                Spacer(modifier = Modifier.height(6.dp))
+                Text(
+                    text = "Record videos or photos with the camera to view them here.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    textAlign = TextAlign.Center
+                )
+            }
         }
         return
     }
@@ -408,14 +519,33 @@ private fun DownloadedTabContent(
         Box(
             modifier = Modifier
                 .fillMaxSize()
-                .padding(24.dp),
+                .padding(32.dp),
             contentAlignment = Alignment.Center
         ) {
-            Text(
-                text = "No Downloaded Footage. Download clips over Wi-Fi or import from USB.",
-                style = MaterialTheme.typography.bodyMedium,
-                color = MaterialTheme.colorScheme.onSurfaceVariant
-            )
+            Column(
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.Center
+            ) {
+                Icon(
+                    imageVector = Icons.Default.VideoLibrary,
+                    contentDescription = null,
+                    modifier = Modifier.size(56.dp),
+                    tint = MaterialTheme.colorScheme.primary.copy(alpha = 0.7f)
+                )
+                Spacer(modifier = Modifier.height(16.dp))
+                Text(
+                    text = "No Downloaded Footage",
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.SemiBold
+                )
+                Spacer(modifier = Modifier.height(6.dp))
+                Text(
+                    text = "Download clips over Wi-Fi from the Camera tab or import footage directly from USB storage.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    textAlign = TextAlign.Center
+                )
+            }
         }
         return
     }
@@ -498,24 +628,28 @@ private fun UsbTabContent(
                     .padding(32.dp),
                 contentAlignment = Alignment.Center
             ) {
-                Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                Column(
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    verticalArrangement = Arrangement.Center
+                ) {
                     Icon(
                         imageVector = Icons.Default.Usb,
                         contentDescription = "USB",
                         modifier = Modifier.size(56.dp),
-                        tint = MaterialTheme.colorScheme.primary
+                        tint = MaterialTheme.colorScheme.primary.copy(alpha = 0.7f)
                     )
                     Spacer(modifier = Modifier.height(16.dp))
                     Text(
                         text = "Connect Camera Over USB-C",
                         style = MaterialTheme.typography.titleMedium,
-                        fontWeight = FontWeight.Bold
+                        fontWeight = FontWeight.SemiBold
                     )
                     Spacer(modifier = Modifier.height(8.dp))
                     Text(
                         text = "Plug the camera into your phone with a USB-C cable and tap Select to grant access to DCIM/Camera01 for high-speed importing without Wi-Fi battery drain.",
                         style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        textAlign = TextAlign.Center
                     )
                 }
             }
@@ -523,12 +657,36 @@ private fun UsbTabContent(
         }
 
         if (files.isEmpty()) {
-            Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                Text(
-                    text = "No Media Files Found in Selected Folder",
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(32.dp),
+                contentAlignment = Alignment.Center
+            ) {
+                Column(
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    verticalArrangement = Arrangement.Center
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.Usb,
+                        contentDescription = null,
+                        modifier = Modifier.size(56.dp),
+                        tint = MaterialTheme.colorScheme.primary.copy(alpha = 0.7f)
+                    )
+                    Spacer(modifier = Modifier.height(16.dp))
+                    Text(
+                        text = "No Media Files Found in Folder",
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.SemiBold
+                    )
+                    Spacer(modifier = Modifier.height(6.dp))
+                    Text(
+                        text = "Make sure the camera's DCIM or Camera01 directory is selected.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        textAlign = TextAlign.Center
+                    )
+                }
             }
             return
         }
@@ -567,18 +725,21 @@ private fun MediaFileCard(
     onDelete: (() -> Unit)? = null,
     loadThumbnail: (suspend (CameraMediaFile) -> Bitmap?)? = null
 ) {
-    Card(
+    ElevatedCard(
         modifier = Modifier.fillMaxWidth(),
-        shape = RoundedCornerShape(12.dp),
-        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)
+        shape = RoundedCornerShape(20.dp)
     ) {
-        Column(modifier = Modifier.padding(12.dp)) {
+        Column(modifier = Modifier.padding(16.dp)) {
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                // Thumbnail or Type Icon
-                ThumbnailBox(file = file, loadThumbnail = loadThumbnail)
+                // Thumbnail with subtle play overlay for video playback
+                ThumbnailBox(
+                    file = file,
+                    onClick = if (file.isVideo) onPrimaryAction else null,
+                    loadThumbnail = loadThumbnail
+                )
 
                 Spacer(modifier = Modifier.width(12.dp))
 
@@ -653,58 +814,77 @@ private fun MediaFileCard(
                 )
             }
 
-            Spacer(modifier = Modifier.height(8.dp))
+            Spacer(modifier = Modifier.height(10.dp))
 
-            // Action Buttons
+            // Compact Action Buttons
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.End,
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 if (onShare != null) {
-                    IconButton(onClick = onShare) {
+                    IconButton(
+                        onClick = onShare,
+                        modifier = Modifier.size(36.dp)
+                    ) {
                         Icon(
                             imageVector = Icons.Default.Share,
                             contentDescription = "Share",
+                            modifier = Modifier.size(18.dp),
                             tint = MaterialTheme.colorScheme.primary
                         )
                     }
-                    Spacer(modifier = Modifier.width(8.dp))
+                    Spacer(modifier = Modifier.width(6.dp))
                 }
 
                 if (secondaryActionLabel != null && onSecondaryAction != null) {
                     OutlinedButton(
                         onClick = onSecondaryAction,
-                        enabled = secondaryActionEnabled
+                        enabled = secondaryActionEnabled,
+                        contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 12.dp, vertical = 4.dp),
+                        modifier = Modifier.height(36.dp),
+                        shape = RoundedCornerShape(10.dp)
                     ) {
                         if (!secondaryActionEnabled && file.isImported) {
                             Icon(
                                 imageVector = Icons.Default.Check,
                                 contentDescription = "Imported",
-                                modifier = Modifier.size(16.dp)
+                                modifier = Modifier.size(15.dp)
                             )
                             Spacer(modifier = Modifier.width(4.dp))
                         } else {
                             Icon(
                                 imageVector = Icons.Default.Download,
                                 contentDescription = secondaryActionLabel,
-                                modifier = Modifier.size(16.dp)
+                                modifier = Modifier.size(15.dp)
                             )
                             Spacer(modifier = Modifier.width(4.dp))
                         }
-                        Text(text = secondaryActionLabel)
+                        Text(
+                            text = secondaryActionLabel,
+                            style = MaterialTheme.typography.labelMedium
+                        )
                     }
                     Spacer(modifier = Modifier.width(8.dp))
                 }
 
-                FilledTonalButton(onClick = onPrimaryAction) {
+                FilledTonalButton(
+                    onClick = onPrimaryAction,
+                    contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 14.dp, vertical = 4.dp),
+                    modifier = Modifier.height(36.dp),
+                    shape = RoundedCornerShape(10.dp)
+                ) {
                     Icon(
                         imageVector = Icons.Default.PlayArrow,
                         contentDescription = primaryActionLabel,
                         modifier = Modifier.size(16.dp)
                     )
                     Spacer(modifier = Modifier.width(4.dp))
-                    Text(text = primaryActionLabel)
+                    Text(
+                        text = primaryActionLabel,
+                        style = MaterialTheme.typography.labelMedium,
+                        fontWeight = FontWeight.SemiBold
+                    )
                 }
             }
         }
@@ -723,16 +903,36 @@ internal fun mediaSummary(file: CameraMediaFile): String =
     ).joinToString(" • ")
 
 @Composable
-private fun ThumbnailBox(file: CameraMediaFile, loadThumbnail: (suspend (CameraMediaFile) -> Bitmap?)?) {
+private fun ThumbnailBox(
+    file: CameraMediaFile,
+    onClick: (() -> Unit)? = null,
+    loadThumbnail: (suspend (CameraMediaFile) -> Bitmap?)? = null
+) {
     val bitmap by produceState<ImageBitmap?>(initialValue = null, file.fileUrl, loadThumbnail) {
         value = loadThumbnail?.invoke(file)?.asImageBitmap()
     }
 
+    val interactionSource = remember { MutableInteractionSource() }
+    val pressScale by rememberPressScale(interactionSource, targetScale = 0.95f)
+
     Box(
         modifier = Modifier
-            .size(64.dp)
-            .clip(RoundedCornerShape(8.dp))
-            .background(MaterialTheme.colorScheme.surfaceContainerHighest),
+            .size(68.dp)
+            .graphicsLayer {
+                scaleX = pressScale
+                scaleY = pressScale
+            }
+            .clip(RoundedCornerShape(14.dp))
+            .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f))
+            .then(
+                if (onClick != null) {
+                    Modifier.clickable(
+                        interactionSource = interactionSource,
+                        indication = null,
+                        onClick = onClick
+                    )
+                } else Modifier
+            ),
         contentAlignment = Alignment.Center
     ) {
         val loaded = bitmap
@@ -743,6 +943,30 @@ private fun ThumbnailBox(file: CameraMediaFile, loadThumbnail: (suspend (CameraM
                 modifier = Modifier.fillMaxSize(),
                 contentScale = ContentScale.Crop
             )
+            // Subtle play overlay for video playback
+            if (file.isVideo) {
+                Box(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .background(Color.Black.copy(alpha = 0.25f)),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Box(
+                        modifier = Modifier
+                            .size(28.dp)
+                            .clip(CircleShape)
+                            .background(Color.Black.copy(alpha = 0.55f)),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.PlayArrow,
+                            contentDescription = "Play",
+                            modifier = Modifier.size(18.dp),
+                            tint = Color.White
+                        )
+                    }
+                }
+            }
         } else {
             Icon(
                 imageVector = if (file.isVideo) Icons.Default.Movie else Icons.Default.Photo,
