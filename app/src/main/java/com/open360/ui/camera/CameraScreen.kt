@@ -118,10 +118,10 @@ internal fun rememberPressScale(
     )
 }
 
-@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun CameraScreen(
     viewModel: CameraViewModel,
+    modifier: Modifier = Modifier,
     onWakeUpClick: () -> Unit = {},
     onOpenSettings: () -> Unit = {}
 ) {
@@ -131,166 +131,71 @@ fun CameraScreen(
     val gps = uiState.gpsState
     val haptic = LocalHapticFeedback.current
 
-    val deviceTitle = when {
-        server.isCameraConnected -> {
-            server.cameraSerial?.let { "Insta360 ($it)" } ?: "Insta360 GO 3S"
-        }
-        ble.connectionStatus == BleConnectionStatus.CONNECTED -> {
-            ble.deviceName ?: "Insta360 GO 3S"
-        }
-        server.isAdvertising -> {
-            "Insta360 GPS Remote"
-        }
-        else -> "Not Connected"
-    }
-
-    val deviceSubtitle = when {
-        uiState.isRecording -> {
-            val mins = uiState.recordingDurationSeconds / 60
-            val secs = uiState.recordingDurationSeconds % 60
-            String.format(Locale.US, "Recording %02d:%02d", mins, secs)
-        }
-        uiState.isConnected && !ble.isCameraAwake -> "Standby"
-        uiState.isConnected -> "Connected"
-        server.isAdvertising -> "Broadcasting"
-        ble.connectionStatus == BleConnectionStatus.SCANNING -> "Scanning..."
-        ble.connectionStatus == BleConnectionStatus.CONNECTING -> "Connecting..."
-        else -> "Disconnected"
-    }
-
     val isAsleep = ble.connectionStatus == BleConnectionStatus.CONNECTED && !ble.isCameraAwake
 
-    Scaffold(
-        topBar = {
-            TopAppBar(
-                title = {
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(10.dp)
-                    ) {
-                        // Live status indicator dot
-                        val statusDotColor = when {
-                            uiState.isRecording -> Color(0xFFFF3B30)
-                            uiState.isConnected && ble.isCameraAwake -> Color(0xFF34C759)
-                            isAsleep -> Color(0xFFFF9500)
-                            ble.connectionStatus == BleConnectionStatus.SCANNING ||
-                                ble.connectionStatus == BleConnectionStatus.CONNECTING -> Color(0xFF007AFF)
-                            else -> MaterialTheme.colorScheme.outline.copy(alpha = 0.5f)
-                        }
-
-                        Box(
-                            modifier = Modifier
-                                .size(9.dp)
-                                .clip(CircleShape)
-                                .background(statusDotColor)
-                        )
-                        Column {
-                            Text(
-                                text = deviceTitle,
-                                style = MaterialTheme.typography.titleMedium,
-                                fontWeight = FontWeight.SemiBold
-                            )
-                            Text(
-                                text = deviceSubtitle,
-                                style = MaterialTheme.typography.labelSmall,
-                                color = if (uiState.isRecording) Color(0xFFFF3B30) else MaterialTheme.colorScheme.onSurfaceVariant,
-                                fontWeight = if (uiState.isRecording) FontWeight.Bold else FontWeight.Normal
-                            )
-                        }
-                    }
-                },
-                actions = {
-                    IconButton(
-                        onClick = {
-                            if (uiState.isConnected) {
-                                viewModel.disconnectBle()
-                            } else {
-                                viewModel.connectBle()
-                            }
-                        }
-                    ) {
-                        val icon = when {
-                            uiState.isConnected -> Icons.Default.BluetoothConnected
-                            server.isAdvertising || ble.connectionStatus == BleConnectionStatus.SCANNING -> Icons.Default.Sync
-                            else -> Icons.Default.Bluetooth
-                        }
-                        Icon(icon, contentDescription = "Bluetooth Status")
-                    }
-                    IconButton(onClick = onOpenSettings) {
-                        Icon(Icons.Default.Settings, contentDescription = "Settings")
-                    }
-                },
-                colors = TopAppBarDefaults.topAppBarColors(
-                    containerColor = MaterialTheme.colorScheme.surface
-                )
-            )
-        }
-    ) { innerPadding ->
-        Column(
-            modifier = Modifier
-                .fillMaxSize()
-                .padding(innerPadding)
-                .verticalScroll(rememberScrollState())
-                .padding(horizontal = 16.dp, vertical = 12.dp),
-            verticalArrangement = Arrangement.spacedBy(16.dp)
+    Column(
+        modifier = modifier
+            .fillMaxSize()
+            .verticalScroll(rememberScrollState())
+            .padding(horizontal = 16.dp, vertical = 12.dp),
+        verticalArrangement = Arrangement.spacedBy(16.dp)
+    ) {
+        // Shown until Wake Up is set up or the card is dismissed
+        if (!uiState.wakeUpSetupCardDismissed &&
+            WakeUpSetup.needed(hasId = uiState.wakeUpId != null, registration = ble.wakeUpRegistration)
         ) {
-            // Shown until Wake Up is set up or the card is dismissed
-            if (!uiState.wakeUpSetupCardDismissed &&
-                WakeUpSetup.needed(hasId = uiState.wakeUpId != null, registration = ble.wakeUpRegistration)
-            ) {
-                WakeUpSetupCard(
-                    registration = ble.wakeUpRegistration,
-                    onSetUp = { viewModel.openWakeUpSetup() },
-                    onDismiss = { viewModel.dismissWakeUpSetupCard() }
-                )
-            }
-
-            // Camera Status Card
-            CameraStatusCard(
-                uiState = uiState,
-                onCameraButton = { button ->
-                    if (button == CameraButton.CONNECT || button == CameraButton.WAKE_UP) {
-                        haptic.performHapticFeedback(HapticFeedbackType.LongPress)
-                    }
-                    viewModel.onCameraButton(button)
-                }
+            WakeUpSetupCard(
+                registration = ble.wakeUpRegistration,
+                onSetUp = { viewModel.openWakeUpSetup() },
+                onDismiss = { viewModel.dismissWakeUpSetupCard() }
             )
-
-            // Live GPS Telemetry Card
-            val lastGpsSentTime = if (server.lastGpsSentTimeMs > 0) server.lastGpsSentTimeMs else ble.lastGpsSentTimeMs
-            GpsTelemetryCard(
-                gps = gps,
-                isSpeedMph = uiState.isSpeedMph,
-                isRecording = uiState.isRecording,
-                isCameraConnected = uiState.isConnected,
-                isMinimized = uiState.isGpsCardMinimized,
-                joinedLateSeconds = ble.joinedRecordingSeconds,
-                lastGpsSentTimeMs = lastGpsSentTime,
-                track = uiState.trackState,
-                onToggleSpeedUnit = { viewModel.toggleSpeedUnit() },
-                onToggleMinimize = { viewModel.toggleGpsCardMinimized() }
-            )
-
-            // Primary Camera Shutter & Mode Controller
-            CameraControlCard(
-                currentMode = uiState.currentMode,
-                isRecording = uiState.isRecording,
-                isStarting = uiState.bleState.isCaptureStarting,
-                isStopping = uiState.bleState.isCaptureStopping,
-                durationSeconds = uiState.recordingDurationSeconds,
-                isConnected = uiState.isConnected,
-                isAsleep = isAsleep,
-                cameraMode = ble.details.subModes?.let { CameraMode.of(it) },
-                onModeSelected = { viewModel.setMode(it) },
-                onCameraModeSelected = { viewModel.setCameraMode(it) },
-                onShutterClick = {
-                    haptic.performHapticFeedback(HapticFeedbackType.LongPress)
-                    viewModel.onShutterClicked()
-                }
-            )
-
-            Spacer(modifier = Modifier.height(16.dp))
         }
+
+        // Camera Status Card
+        CameraStatusCard(
+            uiState = uiState,
+            onCameraButton = { button ->
+                if (button == CameraButton.CONNECT || button == CameraButton.WAKE_UP) {
+                    haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                }
+                viewModel.onCameraButton(button)
+            }
+        )
+
+        // Live GPS Telemetry Card
+        val lastGpsSentTime = if (server.lastGpsSentTimeMs > 0) server.lastGpsSentTimeMs else ble.lastGpsSentTimeMs
+        GpsTelemetryCard(
+            gps = gps,
+            isSpeedMph = uiState.isSpeedMph,
+            isRecording = uiState.isRecording,
+            isCameraConnected = uiState.isConnected,
+            isMinimized = uiState.isGpsCardMinimized,
+            joinedLateSeconds = ble.joinedRecordingSeconds,
+            lastGpsSentTimeMs = lastGpsSentTime,
+            track = uiState.trackState,
+            onToggleSpeedUnit = { viewModel.toggleSpeedUnit() },
+            onToggleMinimize = { viewModel.toggleGpsCardMinimized() }
+        )
+
+        // Primary Camera Shutter & Mode Controller
+        CameraControlCard(
+            currentMode = uiState.currentMode,
+            isRecording = uiState.isRecording,
+            isStarting = uiState.bleState.isCaptureStarting,
+            isStopping = uiState.bleState.isCaptureStopping,
+            durationSeconds = uiState.recordingDurationSeconds,
+            isConnected = uiState.isConnected,
+            isAsleep = isAsleep,
+            cameraMode = ble.details.subModes?.let { CameraMode.of(it) },
+            onModeSelected = { viewModel.setMode(it) },
+            onCameraModeSelected = { viewModel.setCameraMode(it) },
+            onShutterClick = {
+                haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                viewModel.onShutterClicked()
+            }
+        )
+
+        Spacer(modifier = Modifier.height(16.dp))
     }
 }
 

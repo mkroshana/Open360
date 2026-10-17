@@ -118,73 +118,24 @@ fun FootageScreen(
         }
     }
 
-    Scaffold(
-        modifier = modifier.fillMaxSize(),
-        topBar = {
-            Column(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .statusBarsPadding()
-            ) {
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(start = 16.dp, end = 8.dp, top = 4.dp, bottom = 4.dp),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    val title = if (bleState?.connectionStatus == BleConnectionStatus.CONNECTED && !bleState.deviceName.isNullOrBlank()) {
-                        bleState.deviceName
-                    } else {
-                        "Footage"
-                    }
-                    Text(
-                        text = title,
-                        style = MaterialTheme.typography.titleMedium,
-                        fontWeight = FontWeight.SemiBold
-                    )
-
-                    IconButton(
-                        onClick = {
-                            when (uiState.currentTab) {
-                                FootageTab.CAMERA -> {
-                                    if (viewModel.wifiConnector.boundNetwork != null) {
-                                        viewModel.loadCameraFiles()
-                                    } else {
-                                        viewModel.connectCameraWifi()
-                                    }
-                                }
-                                FootageTab.DOWNLOADED -> viewModel.loadDownloadedFiles()
-                                FootageTab.USB -> uiState.usbTreeUri?.let { viewModel.loadUsbFiles(it) }
-                            }
-                        }
-                    ) {
-                        Icon(
-                            imageVector = Icons.Default.Refresh,
-                            contentDescription = "Refresh"
-                        )
-                    }
-                }
-
-                androidx.compose.material3.TabRow(
-                    selectedTabIndex = uiState.currentTab.ordinal,
-                    modifier = Modifier.fillMaxWidth()
-                ) {
-                    FootageTab.entries.forEach { tab ->
-                        Tab(
-                            selected = uiState.currentTab == tab,
-                            onClick = { viewModel.selectTab(tab) },
-                            text = { Text(text = tab.title) }
-                        )
-                    }
-                }
+    Column(modifier = modifier.fillMaxSize()) {
+        androidx.compose.material3.TabRow(
+            selectedTabIndex = uiState.currentTab.ordinal,
+            modifier = Modifier.fillMaxWidth()
+        ) {
+            FootageTab.entries.forEach { tab ->
+                Tab(
+                    selected = uiState.currentTab == tab,
+                    onClick = { viewModel.selectTab(tab) },
+                    text = { Text(text = tab.title) }
+                )
             }
         }
-    ) { innerPadding ->
+
         Box(
             modifier = Modifier
-                .fillMaxSize()
-                .padding(innerPadding)
+                .weight(1f)
+                .fillMaxWidth()
         ) {
             when (uiState.currentTab) {
                 FootageTab.CAMERA -> CameraWifiTabContent(

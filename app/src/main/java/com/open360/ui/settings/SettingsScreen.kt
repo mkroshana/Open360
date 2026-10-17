@@ -52,8 +52,8 @@ fun SettingsScreen(
                 title = {
                     Text(
                         text = "Settings",
-                        style = MaterialTheme.typography.titleLarge,
-                        fontWeight = FontWeight.Bold
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.SemiBold
                     )
                 },
                 navigationIcon = {

@@ -100,6 +100,23 @@ class FootageViewModel(application: Application) : AndroidViewModel(application)
     }
 
     /**
+     * Refreshes the media list for whichever tab is currently active.
+     */
+    fun refreshCurrentTab() {
+        when (_uiState.value.currentTab) {
+            FootageTab.CAMERA -> {
+                if (wifiConnector.boundNetwork != null) {
+                    loadCameraFiles()
+                } else {
+                    connectCameraWifi()
+                }
+            }
+            FootageTab.DOWNLOADED -> loadDownloadedFiles()
+            FootageTab.USB -> _uiState.value.usbTreeUri?.let { loadUsbFiles(it) }
+        }
+    }
+
+    /**
      * Joins the camera's Wi-Fi with the name and password the camera gives over Bluetooth, or
      * the ones it gave last time when it is not connected.
      */
