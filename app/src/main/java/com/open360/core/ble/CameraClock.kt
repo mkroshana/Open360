@@ -21,13 +21,19 @@ object CameraClock {
     // How long before the first frame the camera reads its clock for first_gps_timestamp, by
     // recording. PRO Video: 0.15, 0.25, 0.15 and 0.16 s on four clips. Video: 0.64, 0.82, 1.46,
     // 0.98, 0.55 and 0.61 s on six, following nothing found; their average is taken, so a Video
-    // clip can be 0.3 s out, and on one of the six 0.6 s. Other modes have not been measured and
-    // are taken as PRO Video.
+    // clip can be 0.3 s out, and on one of the six 0.6 s. Slow Motion: 0.41, 0.25, 0.05 and
+    // 0.54 s on four, again following nothing found; their average is taken, so a clip can be
+    // 0.25 s out, which Studio's eightfold slow playback shows as 2 s. Other modes have not been
+    // measured and are taken as PRO Video.
     private const val READ_BEFORE_FIRST_FRAME_VIDEO_MS = 850L
+    private const val READ_BEFORE_FIRST_FRAME_SLOW_MOTION_MS = 300L
     private const val READ_BEFORE_FIRST_FRAME_OTHER_MS = 200L
 
     /** CameraCaptureState of a normal Video recording. */
     const val CAPTURE_STATE_VIDEO = 1
+
+    /** CameraCaptureState of a Slow Motion recording (Capture_MODE_BULLETTIME on a GO 3S). */
+    const val CAPTURE_STATE_SLOW_MOTION = 7
 
     /**
      * One reading of option 12: the GPS times at which it was asked for and answered, and the
@@ -86,5 +92,9 @@ object CameraClock {
      * recording in [captureState].
      */
     fun stampOffsetMs(clockOffsetMs: Long, captureState: Int?): Long =
-        clockOffsetMs - if (captureState == CAPTURE_STATE_VIDEO) READ_BEFORE_FIRST_FRAME_VIDEO_MS else READ_BEFORE_FIRST_FRAME_OTHER_MS
+        clockOffsetMs - when (captureState) {
+            CAPTURE_STATE_VIDEO -> READ_BEFORE_FIRST_FRAME_VIDEO_MS
+            CAPTURE_STATE_SLOW_MOTION -> READ_BEFORE_FIRST_FRAME_SLOW_MOTION_MS
+            else -> READ_BEFORE_FIRST_FRAME_OTHER_MS
+        }
 }

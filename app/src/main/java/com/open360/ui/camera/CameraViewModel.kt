@@ -614,10 +614,17 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
         gpsStreamJob = null
     }
 
-    /** The CameraCaptureState of the recording, or, before the camera says, normal Video if that is its mode. */
+    /**
+     * The CameraCaptureState of the recording, or, before the camera says, normal Video or Slow
+     * Motion if that is its mode.
+     */
     private fun BleCameraState.recordingCaptureState(): Int? =
         details.recordingState
-            ?: CameraClock.CAPTURE_STATE_VIDEO.takeIf { details.subModes?.let { CameraMode.of(it) } == CameraMode.VIDEO }
+            ?: when (details.subModes?.let { CameraMode.of(it) }) {
+                CameraMode.VIDEO -> CameraClock.CAPTURE_STATE_VIDEO
+                CameraMode.SLOW_MOTION -> CameraClock.CAPTURE_STATE_SLOW_MOTION
+                else -> null
+            }
 
     /** The fix this telemetry holds, or null before the first position has arrived. */
     private fun GpsTelemetry.toFix(): GpsFix? {
