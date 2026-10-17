@@ -105,7 +105,7 @@ class FootageViewModel(application: Application) : AndroidViewModel(application)
     fun refreshCurrentTab() {
         when (_uiState.value.currentTab) {
             FootageTab.CAMERA -> {
-                if (wifiConnector.boundNetwork != null) {
+                if (wifiConnector.boundNetwork != null || wifiConnector.checkAndBindExistingCameraNetwork()) {
                     loadCameraFiles()
                 } else {
                     connectCameraWifi()

@@ -4,6 +4,8 @@ import com.open360.core.ble.CameraMode
 import com.open360.core.ble.Go2BleProtocol.CardState
 import com.open360.core.ble.Go2BleProtocol.ChargeBoxStatus
 import com.open360.core.ble.WakeUpRegistration
+import com.open360.core.network.CameraWifiStatus
+import com.open360.ui.footage.FootageTab
 import java.util.Locale
 
 /**
@@ -139,6 +141,77 @@ object CameraStatusText {
         registration == WakeUpRegistration.AUTHORIZED -> "Ready"
         registration == WakeUpRegistration.NONE -> null
         else -> wakeUpRegistration(registration)
+    }
+
+    enum class StatusDotState {
+        DISCONNECTED,
+        RECORDING,
+        CONNECTED,
+        STANDBY,
+        CONNECTING
+    }
+
+    /** The camera identity displayed in the top bar title. */
+    fun topBarTitle(
+        serverConnected: Boolean,
+        serverSerial: String?,
+        bleConnected: Boolean,
+        bleDeviceName: String?,
+        isAdvertising: Boolean
+    ): String = when {
+        serverConnected -> serverSerial?.let { "Insta360 ($it)" } ?: "Insta360 GO 3S"
+        bleConnected -> bleDeviceName ?: "Insta360 GO 3S"
+        isAdvertising -> "Insta360 GPS Remote"
+        else -> "Not Connected"
+    }
+
+    /** Contextual subtitle displayed in the top bar. */
+    fun topBarSubtitle(
+        isRecording: Boolean,
+        recordingDurationSeconds: Long,
+        isFootageTab: Boolean,
+        footageTab: FootageTab?,
+        wifiStatus: CameraWifiStatus?,
+        isAsleep: Boolean,
+        isConnected: Boolean,
+        isAdvertising: Boolean,
+        bleScanning: Boolean,
+        bleConnecting: Boolean
+    ): String = when {
+        isRecording -> {
+            val mins = recordingDurationSeconds / 60
+            val secs = recordingDurationSeconds % 60
+            String.format(Locale.US, "Recording %02d:%02d", mins, secs)
+        }
+        isFootageTab && footageTab != null -> {
+            when (footageTab) {
+                FootageTab.CAMERA -> if (wifiStatus == CameraWifiStatus.CONNECTED) "Wi-Fi Connected" else "Camera Wi-Fi"
+                FootageTab.DOWNLOADED -> "Downloaded Clips"
+                FootageTab.USB -> "Local Storage"
+            }
+        }
+        isAsleep -> "Standby"
+        isConnected -> "Connected"
+        isAdvertising -> "Broadcasting"
+        bleScanning -> "Scanning..."
+        bleConnecting -> "Connecting..."
+        else -> "Disconnected"
+    }
+
+    /** Resolves the status dot state for both Architecture A (GATT server) and Architecture B (BLE client). */
+    fun statusDotState(
+        isRecording: Boolean,
+        isConnected: Boolean,
+        isAsleep: Boolean,
+        isAdvertising: Boolean,
+        bleScanning: Boolean,
+        bleConnecting: Boolean
+    ): StatusDotState = when {
+        isRecording -> StatusDotState.RECORDING
+        isConnected && !isAsleep -> StatusDotState.CONNECTED
+        isAsleep -> StatusDotState.STANDBY
+        isAdvertising || bleScanning || bleConnecting -> StatusDotState.CONNECTING
+        else -> StatusDotState.DISCONNECTED
     }
 
     const val LOW_BATTERY_PERCENT = 20

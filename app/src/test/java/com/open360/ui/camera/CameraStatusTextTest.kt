@@ -4,6 +4,9 @@ import com.open360.core.ble.Go2BleProtocol.BatteryStatus
 import com.open360.core.ble.Go2BleProtocol.CardState
 import com.open360.core.ble.Go2BleProtocol.ChargeBoxStatus
 import com.open360.core.ble.WakeUpRegistration
+import com.open360.core.network.CameraWifiStatus
+import com.open360.ui.camera.CameraStatusText.StatusDotState
+import com.open360.ui.footage.FootageTab
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
@@ -171,5 +174,328 @@ class CameraStatusTextTest {
             CameraStatusText.wakeUpSetupStatus(hasId = true, WakeUpRegistration.CONFIRM_ON_CAMERA)
         )
         assertEquals("Declined on the Camera", CameraStatusText.wakeUpSetupStatus(hasId = true, WakeUpRegistration.REJECTED))
+    }
+
+    @Test
+    fun testStatusDotState() {
+        // Recording always takes precedence (Red)
+        assertEquals(
+            StatusDotState.RECORDING,
+            CameraStatusText.statusDotState(
+                isRecording = true,
+                isConnected = true,
+                isAsleep = false,
+                isAdvertising = false,
+                bleScanning = false,
+                bleConnecting = false
+            )
+        )
+
+        // Architecture A: GATT Server connected -> Green
+        assertEquals(
+            StatusDotState.CONNECTED,
+            CameraStatusText.statusDotState(
+                isRecording = false,
+                isConnected = true,
+                isAsleep = false,
+                isAdvertising = false,
+                bleScanning = false,
+                bleConnecting = false
+            )
+        )
+
+        // Architecture B: BLE Client connected and awake -> Green
+        assertEquals(
+            StatusDotState.CONNECTED,
+            CameraStatusText.statusDotState(
+                isRecording = false,
+                isConnected = true,
+                isAsleep = false,
+                isAdvertising = false,
+                bleScanning = false,
+                bleConnecting = false
+            )
+        )
+
+        // Standby / Asleep -> Orange
+        assertEquals(
+            StatusDotState.STANDBY,
+            CameraStatusText.statusDotState(
+                isRecording = false,
+                isConnected = true,
+                isAsleep = true,
+                isAdvertising = false,
+                bleScanning = false,
+                bleConnecting = false
+            )
+        )
+
+        // Architecture A: Advertising / Broadcasting -> Blue
+        assertEquals(
+            StatusDotState.CONNECTING,
+            CameraStatusText.statusDotState(
+                isRecording = false,
+                isConnected = false,
+                isAsleep = false,
+                isAdvertising = true,
+                bleScanning = false,
+                bleConnecting = false
+            )
+        )
+
+        // Architecture B: Scanning or Connecting -> Blue
+        assertEquals(
+            StatusDotState.CONNECTING,
+            CameraStatusText.statusDotState(
+                isRecording = false,
+                isConnected = false,
+                isAsleep = false,
+                isAdvertising = false,
+                bleScanning = true,
+                bleConnecting = false
+            )
+        )
+        assertEquals(
+            StatusDotState.CONNECTING,
+            CameraStatusText.statusDotState(
+                isRecording = false,
+                isConnected = false,
+                isAsleep = false,
+                isAdvertising = false,
+                bleScanning = false,
+                bleConnecting = true
+            )
+        )
+
+        // Disconnected -> Disconnected outline
+        assertEquals(
+            StatusDotState.DISCONNECTED,
+            CameraStatusText.statusDotState(
+                isRecording = false,
+                isConnected = false,
+                isAsleep = false,
+                isAdvertising = false,
+                bleScanning = false,
+                bleConnecting = false
+            )
+        )
+    }
+
+    @Test
+    fun testTopBarTitle() {
+        // Server connected with serial
+        assertEquals(
+            "Insta360 (IA123)",
+            CameraStatusText.topBarTitle(
+                serverConnected = true,
+                serverSerial = "IA123",
+                bleConnected = false,
+                bleDeviceName = null,
+                isAdvertising = false
+            )
+        )
+        // Server connected without serial
+        assertEquals(
+            "Insta360 GO 3S",
+            CameraStatusText.topBarTitle(
+                serverConnected = true,
+                serverSerial = null,
+                bleConnected = false,
+                bleDeviceName = null,
+                isAdvertising = false
+            )
+        )
+        // BLE connected with device name
+        assertEquals(
+            "My GO 3S",
+            CameraStatusText.topBarTitle(
+                serverConnected = false,
+                serverSerial = null,
+                bleConnected = true,
+                bleDeviceName = "My GO 3S",
+                isAdvertising = false
+            )
+        )
+        // Advertising
+        assertEquals(
+            "Insta360 GPS Remote",
+            CameraStatusText.topBarTitle(
+                serverConnected = false,
+                serverSerial = null,
+                bleConnected = false,
+                bleDeviceName = null,
+                isAdvertising = true
+            )
+        )
+        // Disconnected
+        assertEquals(
+            "Not Connected",
+            CameraStatusText.topBarTitle(
+                serverConnected = false,
+                serverSerial = null,
+                bleConnected = false,
+                bleDeviceName = null,
+                isAdvertising = false
+            )
+        )
+    }
+
+    @Test
+    fun testTopBarSubtitle() {
+        // Recording has highest precedence on both Remote and Footage tabs
+        assertEquals(
+            "Recording 02:45",
+            CameraStatusText.topBarSubtitle(
+                isRecording = true,
+                recordingDurationSeconds = 165L,
+                isFootageTab = false,
+                footageTab = null,
+                wifiStatus = null,
+                isAsleep = false,
+                isConnected = true,
+                isAdvertising = false,
+                bleScanning = false,
+                bleConnecting = false
+            )
+        )
+        assertEquals(
+            "Recording 01:05",
+            CameraStatusText.topBarSubtitle(
+                isRecording = true,
+                recordingDurationSeconds = 65L,
+                isFootageTab = true,
+                footageTab = FootageTab.CAMERA,
+                wifiStatus = CameraWifiStatus.CONNECTED,
+                isAsleep = false,
+                isConnected = true,
+                isAdvertising = false,
+                bleScanning = false,
+                bleConnecting = false
+            )
+        )
+
+        // Footage tab contextual sources
+        assertEquals(
+            "Wi-Fi Connected",
+            CameraStatusText.topBarSubtitle(
+                isRecording = false,
+                recordingDurationSeconds = 0L,
+                isFootageTab = true,
+                footageTab = FootageTab.CAMERA,
+                wifiStatus = CameraWifiStatus.CONNECTED,
+                isAsleep = false,
+                isConnected = true,
+                isAdvertising = false,
+                bleScanning = false,
+                bleConnecting = false
+            )
+        )
+        assertEquals(
+            "Camera Wi-Fi",
+            CameraStatusText.topBarSubtitle(
+                isRecording = false,
+                recordingDurationSeconds = 0L,
+                isFootageTab = true,
+                footageTab = FootageTab.CAMERA,
+                wifiStatus = CameraWifiStatus.DISCONNECTED,
+                isAsleep = false,
+                isConnected = true,
+                isAdvertising = false,
+                bleScanning = false,
+                bleConnecting = false
+            )
+        )
+        assertEquals(
+            "Downloaded Clips",
+            CameraStatusText.topBarSubtitle(
+                isRecording = false,
+                recordingDurationSeconds = 0L,
+                isFootageTab = true,
+                footageTab = FootageTab.DOWNLOADED,
+                wifiStatus = null,
+                isAsleep = false,
+                isConnected = true,
+                isAdvertising = false,
+                bleScanning = false,
+                bleConnecting = false
+            )
+        )
+        assertEquals(
+            "Local Storage",
+            CameraStatusText.topBarSubtitle(
+                isRecording = false,
+                recordingDurationSeconds = 0L,
+                isFootageTab = true,
+                footageTab = FootageTab.USB,
+                wifiStatus = null,
+                isAsleep = false,
+                isConnected = true,
+                isAdvertising = false,
+                bleScanning = false,
+                bleConnecting = false
+            )
+        )
+
+        // Remote tab states
+        assertEquals(
+            "Standby",
+            CameraStatusText.topBarSubtitle(
+                isRecording = false,
+                recordingDurationSeconds = 0L,
+                isFootageTab = false,
+                footageTab = null,
+                wifiStatus = null,
+                isAsleep = true,
+                isConnected = true,
+                isAdvertising = false,
+                bleScanning = false,
+                bleConnecting = false
+            )
+        )
+        assertEquals(
+            "Connected",
+            CameraStatusText.topBarSubtitle(
+                isRecording = false,
+                recordingDurationSeconds = 0L,
+                isFootageTab = false,
+                footageTab = null,
+                wifiStatus = null,
+                isAsleep = false,
+                isConnected = true,
+                isAdvertising = false,
+                bleScanning = false,
+                bleConnecting = false
+            )
+        )
+        assertEquals(
+            "Broadcasting",
+            CameraStatusText.topBarSubtitle(
+                isRecording = false,
+                recordingDurationSeconds = 0L,
+                isFootageTab = false,
+                footageTab = null,
+                wifiStatus = null,
+                isAsleep = false,
+                isConnected = false,
+                isAdvertising = true,
+                bleScanning = false,
+                bleConnecting = false
+            )
+        )
+        assertEquals(
+            "Disconnected",
+            CameraStatusText.topBarSubtitle(
+                isRecording = false,
+                recordingDurationSeconds = 0L,
+                isFootageTab = false,
+                footageTab = null,
+                wifiStatus = null,
+                isAsleep = false,
+                isConnected = false,
+                isAdvertising = false,
+                bleScanning = false,
+                bleConnecting = false
+            )
+        )
     }
 }

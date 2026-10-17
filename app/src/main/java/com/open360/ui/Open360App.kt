@@ -43,6 +43,7 @@ import androidx.compose.ui.unit.dp
 import com.open360.core.ble.BleConnectionStatus
 import com.open360.core.network.CameraWifiStatus
 import com.open360.ui.camera.CameraScreen
+import com.open360.ui.camera.CameraStatusText
 import com.open360.ui.camera.CameraViewModel
 import com.open360.ui.camera.WakeUpIdDialog
 import com.open360.ui.camera.WakeUpSetupDialog
@@ -83,39 +84,35 @@ fun Open360App(
 
     val isAsleep = ble.connectionStatus == BleConnectionStatus.CONNECTED && !ble.isCameraAwake
 
-    val deviceTitle = when {
-        server.isCameraConnected -> {
-            server.cameraSerial?.let { "Insta360 ($it)" } ?: "Insta360 GO 3S"
-        }
-        ble.connectionStatus == BleConnectionStatus.CONNECTED -> {
-            ble.deviceName ?: "Insta360 GO 3S"
-        }
-        server.isAdvertising -> {
-            "Insta360 GPS Remote"
-        }
-        else -> "Not Connected"
-    }
+    val dotState = CameraStatusText.statusDotState(
+        isRecording = uiState.isRecording,
+        isConnected = uiState.isConnected,
+        isAsleep = isAsleep,
+        isAdvertising = server.isAdvertising,
+        bleScanning = ble.connectionStatus == BleConnectionStatus.SCANNING,
+        bleConnecting = ble.connectionStatus == BleConnectionStatus.CONNECTING
+    )
 
-    val deviceSubtitle = when {
-        uiState.isRecording -> {
-            val mins = uiState.recordingDurationSeconds / 60
-            val secs = uiState.recordingDurationSeconds % 60
-            String.format(Locale.US, "Recording %02d:%02d", mins, secs)
-        }
-        currentTab == MainNavTab.FOOTAGE -> {
-            when (footageUiState.currentTab) {
-                FootageTab.CAMERA -> if (footageUiState.wifiStatus == CameraWifiStatus.CONNECTED) "Wi-Fi Connected" else "Camera Wi-Fi"
-                FootageTab.DOWNLOADED -> "Downloaded Clips"
-                FootageTab.USB -> "Local Storage"
-            }
-        }
-        isAsleep -> "Standby"
-        uiState.isConnected -> "Connected"
-        server.isAdvertising -> "Broadcasting"
-        ble.connectionStatus == BleConnectionStatus.SCANNING -> "Scanning..."
-        ble.connectionStatus == BleConnectionStatus.CONNECTING -> "Connecting..."
-        else -> "Disconnected"
-    }
+    val deviceTitle = CameraStatusText.topBarTitle(
+        serverConnected = server.isCameraConnected,
+        serverSerial = server.cameraSerial,
+        bleConnected = ble.connectionStatus == BleConnectionStatus.CONNECTED,
+        bleDeviceName = ble.deviceName,
+        isAdvertising = server.isAdvertising
+    )
+
+    val deviceSubtitle = CameraStatusText.topBarSubtitle(
+        isRecording = uiState.isRecording,
+        recordingDurationSeconds = uiState.recordingDurationSeconds,
+        isFootageTab = currentTab == MainNavTab.FOOTAGE,
+        footageTab = footageUiState.currentTab,
+        wifiStatus = footageUiState.wifiStatus,
+        isAsleep = isAsleep,
+        isConnected = uiState.isConnected,
+        isAdvertising = server.isAdvertising,
+        bleScanning = ble.connectionStatus == BleConnectionStatus.SCANNING,
+        bleConnecting = ble.connectionStatus == BleConnectionStatus.CONNECTING
+    )
 
     if (settingsOpen) {
         BackHandler { settingsOpen = false }
@@ -161,36 +158,33 @@ fun Open360App(
                             verticalAlignment = Alignment.CenterVertically,
                             horizontalArrangement = Arrangement.spacedBy(10.dp)
                         ) {
-                            val isDisconnected = !uiState.isRecording && !uiState.isConnected &&
-                                ble.connectionStatus != BleConnectionStatus.SCANNING &&
-                                ble.connectionStatus != BleConnectionStatus.CONNECTING &&
-                                !server.isAdvertising
-
-                            if (isDisconnected) {
-                                Box(
-                                    modifier = Modifier
-                                        .size(9.dp)
-                                        .border(
-                                            width = 1.dp,
-                                            color = MaterialTheme.colorScheme.outline.copy(alpha = 0.5f),
-                                            shape = CircleShape
-                                        )
-                                )
-                            } else {
-                                val statusDotColor = when {
-                                    uiState.isRecording -> Color(0xFFFF3B30)
-                                    uiState.isConnected && ble.isCameraAwake -> Color(0xFF34C759)
-                                    isAsleep -> Color(0xFFFF9500)
-                                    ble.connectionStatus == BleConnectionStatus.SCANNING ||
-                                        ble.connectionStatus == BleConnectionStatus.CONNECTING -> Color(0xFF007AFF)
-                                    else -> MaterialTheme.colorScheme.outline.copy(alpha = 0.5f)
+                            when (dotState) {
+                                CameraStatusText.StatusDotState.DISCONNECTED -> {
+                                    Box(
+                                        modifier = Modifier
+                                            .size(9.dp)
+                                            .border(
+                                                width = 1.dp,
+                                                color = MaterialTheme.colorScheme.outline.copy(alpha = 0.5f),
+                                                shape = CircleShape
+                                            )
+                                    )
                                 }
-                                Box(
-                                    modifier = Modifier
-                                        .size(9.dp)
-                                        .clip(CircleShape)
-                                        .background(statusDotColor)
-                                )
+                                else -> {
+                                    val statusDotColor = when (dotState) {
+                                        CameraStatusText.StatusDotState.RECORDING -> Color(0xFFFF3B30)
+                                        CameraStatusText.StatusDotState.CONNECTED -> Color(0xFF34C759)
+                                        CameraStatusText.StatusDotState.STANDBY -> Color(0xFFFF9500)
+                                        CameraStatusText.StatusDotState.CONNECTING -> Color(0xFF007AFF)
+                                        CameraStatusText.StatusDotState.DISCONNECTED -> Color.Transparent
+                                    }
+                                    Box(
+                                        modifier = Modifier
+                                            .size(9.dp)
+                                            .clip(CircleShape)
+                                            .background(statusDotColor)
+                                    )
+                                }
                             }
 
                             Column {

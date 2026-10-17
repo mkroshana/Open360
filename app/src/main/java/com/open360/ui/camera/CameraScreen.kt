@@ -66,10 +66,7 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
-import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
-import androidx.compose.material3.TopAppBar
-import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.State
 import androidx.compose.runtime.collectAsState
@@ -722,7 +719,9 @@ fun GpsTelemetryCard(
                                 .background(fixColor)
                         )
                         Text(
-                            text = if (gps.hasFix) "${gps.satellitesInFix} Satellites" else "Searching...",
+                            text = if (gps.hasFix) {
+                                if (gps.satellitesInFix == 1) "1 Satellite" else "${gps.satellitesInFix} Satellites"
+                            } else "Searching...",
                             style = MaterialTheme.typography.labelSmall,
                             fontWeight = FontWeight.Medium,
                             color = fixColor

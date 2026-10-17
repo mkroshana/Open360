@@ -29,6 +29,7 @@ import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.font.FontWeight
@@ -92,19 +93,21 @@ fun SettingsScreen(
                         .fillMaxWidth()
                         .padding(horizontal = 16.dp)
                 ) {
-                    val setupStatus = CameraStatusText.wakeUpSetupStatus(hasWakeUpId, wakeUpRegistration)
-                    SettingsRow(
-                        title = "Set Up Wake Up",
-                        detail = setupStatus ?: "Lets the Wake Up button switch your camera on when it is off",
-                        detailIsProblem = setupStatus != null && CameraStatusText.wakeUpRegistrationIsProblem(wakeUpRegistration),
-                        onClick = onSetUpWakeUp
-                    )
-                    HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
-                    SettingsRow(
-                        title = "Wake-Up ID",
-                        detail = "The ID your camera knows this app by",
-                        onClick = onWakeUpId
-                    )
+                    Column(modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(20.dp))) {
+                        val setupStatus = CameraStatusText.wakeUpSetupStatus(hasWakeUpId, wakeUpRegistration)
+                        SettingsRow(
+                            title = "Set Up Wake Up",
+                            detail = setupStatus ?: "Lets the Wake Up button switch your camera on when it is off",
+                            detailIsProblem = setupStatus != null && CameraStatusText.wakeUpRegistrationIsProblem(wakeUpRegistration),
+                            onClick = onSetUpWakeUp
+                        )
+                        HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
+                        SettingsRow(
+                            title = "Wake-Up ID",
+                            detail = "The ID your camera knows this app by",
+                            onClick = onWakeUpId
+                        )
+                    }
                 }
             }
 
@@ -116,22 +119,24 @@ fun SettingsScreen(
                         .fillMaxWidth()
                         .padding(horizontal = 16.dp)
                 ) {
-                    ListItem(
-                        headlineContent = { Text("Background GPS Tracking") },
-                        supportingContent = {
-                            Text(
-                                text = "Keeps sending GPS to the camera when the screen is off",
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                    Column(modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(20.dp))) {
+                        ListItem(
+                            headlineContent = { Text("Background GPS Tracking") },
+                            supportingContent = {
+                                Text(
+                                    text = "Keeps sending GPS to the camera when the screen is off",
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            },
+                            trailingContent = { Switch(checked = keepGpsActiveInBackground, onCheckedChange = null) },
+                            colors = ListItemDefaults.colors(containerColor = Color.Transparent),
+                            modifier = Modifier.toggleable(
+                                value = keepGpsActiveInBackground,
+                                role = Role.Switch,
+                                onValueChange = { onToggleBackgroundGps() }
                             )
-                        },
-                        trailingContent = { Switch(checked = keepGpsActiveInBackground, onCheckedChange = null) },
-                        colors = ListItemDefaults.colors(containerColor = Color.Transparent),
-                        modifier = Modifier.toggleable(
-                            value = keepGpsActiveInBackground,
-                            role = Role.Switch,
-                            onValueChange = { onToggleBackgroundGps() }
                         )
-                    )
+                    }
                 }
             }
 
@@ -143,11 +148,13 @@ fun SettingsScreen(
                         .fillMaxWidth()
                         .padding(horizontal = 16.dp)
                 ) {
-                    SportsSensorsSection(
-                        sensors = sensors,
-                        onAddSensor = onAddSensor,
-                        onRemoveSensor = onRemoveSensor
-                    )
+                    Column(modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(20.dp))) {
+                        SportsSensorsSection(
+                            sensors = sensors,
+                            onAddSensor = onAddSensor,
+                            onRemoveSensor = onRemoveSensor
+                        )
+                    }
                 }
             }
 
