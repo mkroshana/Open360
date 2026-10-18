@@ -253,7 +253,8 @@ fun CameraStatusCard(
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
-                    if (server.cameraDisplayString != null) {
+                    val cameraDisplayString = server.cameraDisplayString
+                    if (cameraDisplayString != null) {
                         Box(
                             modifier = Modifier
                                 .clip(RoundedCornerShape(8.dp))
@@ -261,7 +262,7 @@ fun CameraStatusCard(
                                 .padding(horizontal = 8.dp, vertical = 3.dp)
                         ) {
                             Text(
-                                text = server.cameraDisplayString,
+                                text = cameraDisplayString,
                                 style = MaterialTheme.typography.labelSmall,
                                 fontWeight = FontWeight.Bold,
                                 color = MaterialTheme.colorScheme.onSecondaryContainer
@@ -269,8 +270,9 @@ fun CameraStatusCard(
                         }
                     }
 
-                    if (ble.batteryPercent != null) {
-                        val batteryColor = if (ble.batteryPercent > 20) Color(0xFF34C759) else MaterialTheme.colorScheme.error
+                    val batteryPercent = ble.batteryPercent
+                    if (batteryPercent != null) {
+                        val batteryColor = if (batteryPercent > 20) Color(0xFF34C759) else MaterialTheme.colorScheme.error
                         Row(
                             verticalAlignment = Alignment.CenterVertically,
                             horizontalArrangement = Arrangement.spacedBy(4.dp),
@@ -503,11 +505,12 @@ private fun CameraDetailRows(ble: BleCameraState) {
     }
 
     // Normal vitals
-    if (storageProblem == null && details.captureSecondsLeft != null) {
+    val captureSecondsLeft = details.captureSecondsLeft
+    if (storageProblem == null && captureSecondsLeft != null) {
         if (details.subModes?.isPhoto == true) {
-            vitals.add(StatusLine("Photos Left", CameraStatusText.photosLeft(details.captureSecondsLeft)))
+            vitals.add(StatusLine("Photos Left", CameraStatusText.photosLeft(captureSecondsLeft)))
         } else {
-            vitals.add(StatusLine("Time Left", CameraStatusText.timeLeft(details.captureSecondsLeft)))
+            vitals.add(StatusLine("Time Left", CameraStatusText.timeLeft(captureSecondsLeft)))
         }
     }
     details.pod?.let { pod ->
@@ -961,10 +964,11 @@ fun GpsTelemetryCard(
                 }
             }
 
-            if (track.lastError != null) {
+            val lastError = track.lastError
+            if (lastError != null) {
                 Spacer(modifier = Modifier.height(6.dp))
                 Text(
-                    text = track.lastError,
+                    text = lastError,
                     style = MaterialTheme.typography.labelSmall,
                     color = MaterialTheme.colorScheme.error
                 )

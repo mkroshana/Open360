@@ -22,3 +22,4 @@ dependencyResolutionManagement {
 
 rootProject.name = "Open360"
 include(":app")
+include(":core")

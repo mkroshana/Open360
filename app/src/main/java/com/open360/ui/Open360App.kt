@@ -47,6 +47,7 @@ import com.open360.ui.camera.CameraStatusText
 import com.open360.ui.camera.CameraViewModel
 import com.open360.ui.camera.WakeUpIdDialog
 import com.open360.ui.camera.WakeUpSetupDialog
+import com.open360.ui.camera.topBarSubtitle
 import com.open360.ui.footage.FootageScreen
 import com.open360.ui.footage.FootageTab
 import com.open360.ui.footage.FootageViewModel
