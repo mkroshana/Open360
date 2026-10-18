@@ -53,6 +53,7 @@ fun SettingsScreen(
     onToggleBackgroundGps: () -> Unit,
     sensors: SportsSensorsState,
     onAddSensor: () -> Unit,
+    onReconnectSensor: (String) -> Unit,
     onRemoveSensor: (String) -> Unit,
     onBack: () -> Unit
 ) {
@@ -152,6 +153,7 @@ fun SettingsScreen(
                         SportsSensorsSection(
                             sensors = sensors,
                             onAddSensor = onAddSensor,
+                            onReconnectSensor = onReconnectSensor,
                             onRemoveSensor = onRemoveSensor
                         )
                     }

@@ -38,6 +38,7 @@ data class SensorDevice(val address: String, val name: String, val kinds: Set<Se
 data class SensorStatus(
     val device: SensorDevice,
     val connected: Boolean = false,
+    val reconnecting: Boolean = false,
     val heartRateBpm: Int? = null,
     val cadenceRpm: Int? = null,
     val powerWatts: Int? = null
@@ -55,7 +56,8 @@ data class SportsSensorsState(
  * arrived, so a recording's FIT file can be given the readings taken during it.
  *
  * Each saved sensor gets its own link, opened with autoConnect so Android links again whenever
- * it is in range and sending. These are separate from the camera's link.
+ * it is in range and sending. These are separate from the camera's link. [reconnect] tries a
+ * direct link instead, which links within seconds when the sensor is sending.
  */
 class SportsSensorManager(private val context: Context) {
 
@@ -170,6 +172,18 @@ class SportsSensorManager(private val context: Context) {
         if (started) connect(device)
     }
 
+    /**
+     * Drops [address]'s link and opens a direct one, for a sensor that has not linked again by
+     * itself. If that fails (Android gives up after about 30 s) it goes back to waiting in the background.
+     */
+    fun reconnect(address: String) {
+        val device = _state.value.saved.firstOrNull { it.device.address == address }?.device ?: return
+        started = true
+        links.remove(address)?.close()
+        setConnected(address, false)
+        if (connect(device, direct = true)) setReconnecting(address, true)
+    }
+
     fun remove(address: String) {
         links.remove(address)?.close()
         _state.update { s -> s.copy(saved = s.saved.filterNot { it.device.address == address }) }
@@ -194,15 +208,17 @@ class SportsSensorManager(private val context: Context) {
         return needed.all { ContextCompat.checkSelfPermission(context, it) == PackageManager.PERMISSION_GRANTED }
     }
 
+    /** Opens a link to [device] unless one is open already; true if it opened one. */
     @SuppressLint("MissingPermission")
-    private fun connect(device: SensorDevice) {
-        if (!canUseBluetooth() || links.containsKey(device.address)) return
+    private fun connect(device: SensorDevice, direct: Boolean = false): Boolean {
+        if (!canUseBluetooth() || links.containsKey(device.address)) return false
         val remote = try {
             bluetoothManager?.adapter?.getRemoteDevice(device.address)
         } catch (e: IllegalArgumentException) {
             null
-        } ?: return
-        links[device.address] = Link(device, remote)
+        } ?: return false
+        links[device.address] = Link(device, remote, direct)
+        return true
     }
 
     private fun record(kind: SensorKind, address: String, value: Int) {
@@ -247,6 +263,14 @@ class SportsSensorManager(private val context: Context) {
         }
     }
 
+    private fun setReconnecting(address: String, reconnecting: Boolean) {
+        _state.update { s ->
+            s.copy(saved = s.saved.map {
+                if (it.device.address == address) it.copy(reconnecting = reconnecting) else it
+            })
+        }
+    }
+
     private fun loadSaved(): List<SensorDevice> =
         prefs.getStringSet(PREF_SAVED, emptySet()).orEmpty().mapNotNull { entry ->
             val parts = entry.split('|')
@@ -267,13 +291,17 @@ class SportsSensorManager(private val context: Context) {
      * as Android allows only one descriptor write at a time, and turns the notifications into readings.
      */
     @SuppressLint("MissingPermission")
-    private inner class Link(private val device: SensorDevice, remote: BluetoothDevice) : BluetoothGattCallback() {
-        private val gatt: BluetoothGatt? = remote.connectGatt(context, true, this, BluetoothDevice.TRANSPORT_LE)
+    private inner class Link(
+        private val device: SensorDevice,
+        private val remote: BluetoothDevice,
+        private val direct: Boolean
+    ) : BluetoothGattCallback() {
+        private val gatt: BluetoothGatt? = remote.connectGatt(context, !direct, this, BluetoothDevice.TRANSPORT_LE)
         private val pendingSubscriptions = ArrayDeque<BluetoothGattCharacteristic>()
         private val cadence = CadenceCalculator()
 
         init {
-            Log.i(TAG, "Linking to ${device.name} (${device.address})")
+            Log.i(TAG, "Linking to ${device.name} (${device.address})${if (direct) " directly" else ""}")
         }
 
         fun close() {
@@ -287,12 +315,21 @@ class SportsSensorManager(private val context: Context) {
             if (newState == BluetoothProfile.STATE_CONNECTED) {
                 Log.i(TAG, "${device.name} linked")
                 setConnected(device.address, true)
+                setReconnecting(device.address, false)
                 gatt.discoverServices()
             } else if (newState == BluetoothProfile.STATE_DISCONNECTED) {
                 Log.i(TAG, "${device.name} unlinked, status $status")
                 setConnected(device.address, false)
-                // With autoConnect the link is opened again when the sensor is back
-                if (started && links[device.address] === this) gatt.connect()
+                setReconnecting(device.address, false)
+                if (!started || links[device.address] !== this) return
+                if (direct) {
+                    // A direct link that failed or ended goes back to waiting in the background
+                    close()
+                    links[device.address] = Link(device, remote, direct = false)
+                } else {
+                    // With autoConnect the link is opened again when the sensor is back
+                    gatt.connect()
+                }
             }
         }
 

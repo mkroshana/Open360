@@ -2,6 +2,7 @@ package com.open360.ui.settings
 
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -22,6 +23,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
@@ -39,6 +41,7 @@ import com.open360.core.sensors.SportsSensorsState
 fun SportsSensorsSection(
     sensors: SportsSensorsState,
     onAddSensor: () -> Unit,
+    onReconnectSensor: (String) -> Unit,
     onRemoveSensor: (String) -> Unit
 ) {
     for (status in sensors.saved) {
@@ -52,8 +55,13 @@ fun SportsSensorsSection(
                 )
             },
             trailingContent = {
-                IconButton(onClick = { onRemoveSensor(status.device.address) }) {
-                    Icon(Icons.Default.Delete, contentDescription = "Remove ${status.device.name}")
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    if (!status.connected && !status.reconnecting) {
+                        TextButton(onClick = { onReconnectSensor(status.device.address) }) { Text("Reconnect") }
+                    }
+                    IconButton(onClick = { onRemoveSensor(status.device.address) }) {
+                        Icon(Icons.Default.Delete, contentDescription = "Remove ${status.device.name}")
+                    }
                 }
             },
             colors = ListItemDefaults.colors(containerColor = Color.Transparent)
@@ -139,8 +147,9 @@ private fun kindsText(kinds: Set<SensorKind>): String =
         "Power".takeIf { SensorKind.POWER in kinds }
     ).joinToString(", ")
 
-/** "Linked: 92 bpm, 85 rpm", "Linked, no readings yet" or "Not linked". */
+/** "Linked: 92 bpm, 85 rpm", "Linked, no readings yet", "Reconnecting" or "Not linked". */
 internal fun sensorStatusText(status: SensorStatus): String {
+    if (status.reconnecting) return "Reconnecting. Switch it on and keep it nearby."
     if (!status.connected) return "Not linked. Switch it on and keep it nearby."
     val values = listOfNotNull(
         status.heartRateBpm?.let { "$it bpm" },

@@ -130,6 +130,7 @@ fun Open360App(
                 cameraViewModel.sportsSensors.start()
                 cameraViewModel.sportsSensors.startScan()
             },
+            onReconnectSensor = { cameraViewModel.sportsSensors.reconnect(it) },
             onRemoveSensor = { cameraViewModel.sportsSensors.remove(it) },
             onBack = { settingsOpen = false }
         )
