@@ -17,6 +17,7 @@ import androidx.wear.compose.navigation.SwipeDismissableNavHost
 import androidx.wear.compose.navigation.composable
 import androidx.wear.compose.navigation.rememberSwipeDismissableNavController
 import com.open360.ui.camera.CameraViewModel
+import com.open360.wear.WatchHeartRate
 
 private object Routes {
     const val REMOTE = "remote"
@@ -31,7 +32,7 @@ private object Routes {
  * while the screen is dimmed, the remote's always-on version.
  */
 @Composable
-fun WearApp(viewModel: CameraViewModel, isAmbient: Boolean) {
+fun WearApp(viewModel: CameraViewModel, heartRate: WatchHeartRate, isAmbient: Boolean) {
     val context = LocalContext.current
     // The colours the watch face has picked, where the watch offers them
     MaterialTheme(colorScheme = dynamicColorScheme(context) ?: ColorScheme()) {
@@ -56,6 +57,7 @@ fun WearApp(viewModel: CameraViewModel, isAmbient: Boolean) {
                 composable(Routes.SETTINGS) {
                     SettingsScreen(
                         viewModel = viewModel,
+                        heartRate = heartRate,
                         onAddSensor = { nav.navigate(Routes.ADD_SENSOR) },
                         onOpenSensor = { address -> nav.navigate("${Routes.SENSOR}/${Uri.encode(address)}") }
                     )

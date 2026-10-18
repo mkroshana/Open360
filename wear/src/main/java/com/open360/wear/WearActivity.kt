@@ -12,10 +12,15 @@ import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.viewModels
 import androidx.compose.runtime.mutableStateOf
+import androidx.lifecycle.lifecycleScope
 import androidx.core.content.ContextCompat
 import androidx.wear.ambient.AmbientLifecycleObserver
+import com.open360.core.ble.BleConnectionStatus
 import com.open360.ui.camera.CameraViewModel
 import com.open360.wear.ui.WearApp
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.launch
 
 /**
  * The watch app. It links to the camera and sends it the watch's own GPS through the same
@@ -28,6 +33,7 @@ class WearActivity : ComponentActivity() {
 
     private val cameraViewModel: CameraViewModel by viewModels()
     private lateinit var phoneSettings: PhoneSettingsReceiver
+    private lateinit var heartRate: WatchHeartRate
 
     // When the screen dims the remote stays up in the watch's low-power always-on mode, so a
     // glance shows whether the camera is recording
@@ -48,7 +54,9 @@ class WearActivity : ComponentActivity() {
     private val permissionLauncher = registerForActivityResult(
         ActivityResultContracts.RequestMultiplePermissions()
     ) { results ->
-        if (results.values.all { it }) {
+        heartRate.onPermissionChanged()
+        // The heart rate is optional; the camera needs the rest
+        if (results.filterKeys { it != Manifest.permission.BODY_SENSORS }.values.all { it }) {
             // What the view model tried on starting, before it was allowed to. Opening the app
             // links to the camera but never switches it on.
             cameraViewModel.gpsEngine.startTracking()
@@ -63,6 +71,14 @@ class WearActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         lifecycle.addObserver(ambientObserver)
         phoneSettings = PhoneSettingsReceiver(this, ::applyPhoneSettings)
+        heartRate = WatchHeartRate(applicationContext, cameraViewModel.sportsSensors)
+        // The watch's heart rate is read while the camera is on, for the FIT file
+        lifecycleScope.launch {
+            cameraViewModel.uiState
+                .map { it.bleState.connectionStatus == BleConnectionStatus.CONNECTED && it.bleState.isCameraAwake }
+                .distinctUntilChanged()
+                .collect { heartRate.setWanted(it) }
+        }
         // The view model puts the Wake-Up set-up forward on a first run without an ID. On the
         // watch the ID comes from the phone, where the set-up is done, so it is not put forward
         // here; Wake Up pressed without an ID still says where to set it up.
@@ -75,7 +91,7 @@ class WearActivity : ComponentActivity() {
         runDebugRequest(intent)
 
         setContent {
-            WearApp(viewModel = cameraViewModel, isAmbient = isAmbient.value)
+            WearApp(viewModel = cameraViewModel, heartRate = heartRate, isAmbient = isAmbient.value)
         }
     }
 
@@ -89,6 +105,11 @@ class WearActivity : ComponentActivity() {
         super.onStop()
         cameraViewModel.setAppVisible(false)
         phoneSettings.stop()
+    }
+
+    override fun onDestroy() {
+        super.onDestroy()
+        heartRate.stop()
     }
 
     override fun onNewIntent(intent: Intent) {
@@ -144,6 +165,7 @@ class WearActivity : ComponentActivity() {
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
                 add(Manifest.permission.POST_NOTIFICATIONS)
             }
+            add(Manifest.permission.BODY_SENSORS)
         }
         val missing = wanted.filter { ContextCompat.checkSelfPermission(this, it) != PackageManager.PERMISSION_GRANTED }
         if (missing.isNotEmpty()) permissionLauncher.launch(missing.toTypedArray())

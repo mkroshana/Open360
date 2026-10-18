@@ -1,5 +1,8 @@
 package com.open360.wear.ui
 
+import android.Manifest
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
@@ -35,6 +38,8 @@ import com.open360.core.sensors.SensorStatus
 import com.open360.core.sensors.SportsSensorManager
 import com.open360.ui.camera.CameraStatusText
 import com.open360.ui.camera.CameraViewModel
+import com.open360.wear.WatchHeartRate
+import com.open360.wear.WatchHeartRateState
 
 /**
  * The watch's settings: where Wake Up stands with the ID from the phone, whether GPS keeps going
@@ -43,11 +48,16 @@ import com.open360.ui.camera.CameraViewModel
 @Composable
 fun SettingsScreen(
     viewModel: CameraViewModel,
+    heartRate: WatchHeartRate,
     onAddSensor: () -> Unit,
     onOpenSensor: (String) -> Unit
 ) {
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
     val sensors by viewModel.sportsSensors.state.collectAsStateWithLifecycle()
+    val watchHeartRate by heartRate.state.collectAsStateWithLifecycle()
+    val askForBodySensors = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) {
+        heartRate.onPermissionChanged()
+    }
     val listState = rememberTransformingLazyColumnState()
     val registration = uiState.bleState.wakeUpRegistration
 
@@ -84,6 +94,21 @@ fun SettingsScreen(
                 )
             }
             item { ListHeader { Text("Sports Sensors") } }
+            if (watchHeartRate.available) {
+                item {
+                    SwitchButton(
+                        checked = watchHeartRate.enabled && watchHeartRate.permitted,
+                        onCheckedChange = { on ->
+                            heartRate.setEnabled(on)
+                            if (on && !watchHeartRate.permitted) askForBodySensors.launch(Manifest.permission.BODY_SENSORS)
+                        },
+                        modifier = Modifier.fillMaxWidth(),
+                        icon = { Icon(Icons.Filled.MonitorHeart, contentDescription = null) },
+                        secondaryLabel = { Text(watchHeartRateStatus(watchHeartRate)) },
+                        label = { Text("Watch Heart Rate") }
+                    )
+                }
+            }
             sensors.saved.forEach { status ->
                 item {
                     FilledTonalButton(
@@ -215,6 +240,15 @@ fun SensorScreen(sensors: SportsSensorManager, address: String, onDone: () -> Un
             }
         }
     }
+}
+
+/** Where reading the watch's own heart rate stands, for its switch. */
+private fun watchHeartRateStatus(state: WatchHeartRateState): String = when {
+    !state.permitted -> "Allow body sensors to save it with each recording"
+    !state.enabled -> "Off"
+    state.bpm != null -> "${state.bpm} bpm, saved with each recording"
+    state.reading -> "Reading, no heart rate yet"
+    else -> "Read while the camera is on, saved with each recording"
 }
 
 private fun iconFor(kinds: Set<SensorKind>): ImageVector = when {

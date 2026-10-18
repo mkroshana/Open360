@@ -71,6 +71,14 @@ class GpsTrackerService : Service() {
         @Volatile
         var decorateNotification: ((Context, NotificationCompat.Builder, Int, PendingIntent) -> Unit)? = null
 
+        /**
+         * Foreground service types added to location, read each time the service starts. The
+         * watch app adds health while it reads the watch's heart rate, which Android only lets
+         * it do with the screen off from a service of that type.
+         */
+        @Volatile
+        var extraServiceTypes: () -> Int = { 0 }
+
         fun stop(context: Context) {
             val intent = Intent(context, GpsTrackerService::class.java).apply {
                 action = ACTION_STOP_TRACKING
@@ -124,7 +132,7 @@ class GpsTrackerService : Service() {
             startForeground(
                 NOTIFICATION_ID,
                 notification,
-                ServiceInfo.FOREGROUND_SERVICE_TYPE_LOCATION
+                ServiceInfo.FOREGROUND_SERVICE_TYPE_LOCATION or extraServiceTypes()
             )
         } else {
             startForeground(NOTIFICATION_ID, notification)

@@ -221,13 +221,25 @@ class SportsSensorManager(private val context: Context) {
         return true
     }
 
-    private fun record(kind: SensorKind, address: String, value: Int) {
+    /**
+     * Logs a reading from a sensor of the device itself, such as a watch's heart rate, with the
+     * Bluetooth sensors' readings, so a recording's FIT file is given it the same way.
+     */
+    fun recordOwn(kind: SensorKind, value: Int) {
+        addToLog(kind, value)
+    }
+
+    private fun addToLog(kind: SensorKind, value: Int) {
         val now = SystemClock.elapsedRealtime()
         synchronized(log) {
             val list = log.getValue(kind)
             list += SensorReading(now, value)
             while (list.isNotEmpty() && now - list.first().elapsedMs > KEEP_READINGS_MS) list.removeAt(0)
         }
+    }
+
+    private fun record(kind: SensorKind, address: String, value: Int) {
+        addToLog(kind, value)
         _state.update { s ->
             s.copy(saved = s.saved.map { status ->
                 if (status.device.address != address) status else when (kind) {
