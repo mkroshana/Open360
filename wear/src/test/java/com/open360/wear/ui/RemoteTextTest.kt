@@ -1,0 +1,57 @@
+package com.open360.wear.ui
+
+import com.open360.core.ble.BleCameraState
+import com.open360.core.ble.BleConnectionStatus
+import com.open360.core.ble.CameraMode
+import com.open360.core.model.CaptureMode
+import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNull
+import org.junit.Test
+
+class RemoteTextTest {
+
+    private val cameraOn = BleCameraState(connectionStatus = BleConnectionStatus.CONNECTED, isCameraAwake = true)
+    private val cameraOff = BleCameraState(connectionStatus = BleConnectionStatus.CONNECTED, isCameraAwake = false)
+
+    @Test
+    fun statusFollowsTheLinkAndTheCamera() {
+        assertEquals("Disconnected", RemoteText.status(BleCameraState(), false, 0))
+        assertEquals("Looking for Camera...", RemoteText.status(BleCameraState(connectionStatus = BleConnectionStatus.SCANNING), false, 0))
+        assertEquals("Camera Is Off", RemoteText.status(cameraOff, false, 0))
+        assertEquals("Switching Camera On...", RemoteText.status(cameraOff.copy(isWaking = true), false, 0))
+        assertEquals("Connected", RemoteText.status(cameraOn, false, 0))
+        assertEquals("Recording 02:45", RemoteText.status(cameraOn, true, 165))
+    }
+
+    @Test
+    fun elapsedShowsHoursOnlyWhenThereAreSome() {
+        assertEquals("00:00", RemoteText.elapsed(0))
+        assertEquals("59:59", RemoteText.elapsed(3599))
+        assertEquals("1:02:09", RemoteText.elapsed(3729))
+    }
+
+    @Test
+    fun shutterNamesTheCamerasModeAsThePhoneDoes() {
+        assertEquals("Start Recording", RemoteText.shutter(CaptureMode.VIDEO, null, false, false, false))
+        assertEquals("Start Recording", RemoteText.shutter(CaptureMode.VIDEO, CameraMode.VIDEO, false, false, false))
+        assertEquals("Start Recording", RemoteText.shutter(CaptureMode.VIDEO, CameraMode.TIMELAPSE, false, false, false))
+        assertEquals("Take Photo", RemoteText.shutter(CaptureMode.PHOTO, CameraMode.PHOTO, false, false, false))
+        assertEquals("Take HDR Photo", RemoteText.shutter(CaptureMode.PHOTO, CameraMode.HDR_PHOTO, false, false, false))
+        assertEquals("Start Interval Photo", RemoteText.shutter(CaptureMode.PHOTO, CameraMode.INTERVAL_PHOTO, false, false, false))
+        assertEquals("Stop Interval Photo", RemoteText.shutter(CaptureMode.PHOTO, CameraMode.INTERVAL_PHOTO, true, false, false))
+        assertEquals("Stop Recording", RemoteText.shutter(CaptureMode.VIDEO, CameraMode.FREEFRAME_PRO, true, false, false))
+        assertEquals("Starting...", RemoteText.shutter(CaptureMode.VIDEO, CameraMode.VIDEO, false, true, false))
+        assertEquals("Stopping...", RemoteText.shutter(CaptureMode.VIDEO, CameraMode.VIDEO, true, false, true))
+        // A camera not yet in the chosen group is not named
+        assertEquals("Take Photo", RemoteText.shutter(CaptureMode.PHOTO, CameraMode.FREEFRAME_PRO, false, false, false))
+    }
+
+    @Test
+    fun hintSaysWhatToDoUntilTheCameraIsOn() {
+        assertNull(RemoteText.hint(cameraOn, hasWakeUpId = true, isLookingForCamera = false))
+        assertEquals("The camera is switched off. Tap Wake Up or press its button.", RemoteText.hint(cameraOff, true, false))
+        assertEquals("Switching the camera on. It takes a few seconds.", RemoteText.hint(cameraOff.copy(isWaking = true), true, true))
+        assertEquals("Looking for the camera. Keep it nearby.", RemoteText.hint(BleCameraState(connectionStatus = BleConnectionStatus.SCANNING), true, true))
+        assertEquals("Turn the camera on, keep it nearby and tap Connect.", RemoteText.hint(BleCameraState(), false, false))
+    }
+}
