@@ -105,6 +105,8 @@ Insta360 cameras have two completely separate BLE architectures. Open360 uses Ar
 
 ## 4. Key Codebase Files & Responsibilities
 
+The code is in three Gradle modules: `:core` (the camera link, GPS, sensors and `CameraViewModel`, shared by both apps), `:app` (the phone app, with the footage browser) and `:wear` (the watch app). Files kept their package names when they moved into `:core` (2026-10-18), so `CameraViewModel` is still in `com.open360.ui.camera`.
+
 ### Core BLE & Camera Control
 - `GpsRemoteBleManager.kt`: The active BLE manager for Architecture B. Handles connection to `0xBE80`, sync packet processing, keep-alive transmission every 2 s, status/capture notifications (`0x2026`, `0x2010`, `0x2003`, etc.), `GET_OPTIONS` queries, reading and setting the camera's clock against GPS time, wake authorization messages, sequential write queue, 53-byte `UploadGps` streaming, reconnecting by itself after a drop soon after the camera starts answering, and letting go of a link the camera has not answered on within 3 s (held, idle and with no keep-alive, while the Wake-Up set-up is open).
 - `ReconnectPolicy.kt`: Decides whether a dropped link is opened again by itself: within 60 s of the camera starting to answer, or a reconnection that failed, at most three times in a row.
@@ -149,11 +151,20 @@ Insta360 cameras have two completely separate BLE architectures. Open360 uses Ar
 - `OscClient.kt`: OSC v2 client supporting `/osc/info`, `/osc/state` and capture commands. Not used for listing: the GO 3S refuses `camera.listFiles`.
 - `CameraMediaFile.kt`: Unified data model for camera clips across remote HTTP, local storage, and SAF content URIs, with `previewUrl` for a camera clip's `.lrv` copy.
 
+### Watch App (`:wear`, added 2026-10-18)
+- A standalone Wear OS app for the Pixel Watch 4. It runs the same `CameraViewModel` as the phone app, so it links to the camera itself, sends it the watch's own GPS, reads and sets the camera's clock, and saves each recording's GPX and FIT on the watch (`Download/Open360` there, reachable only over adb). It has no footage browser. Its application ID is `com.open360`, the phone app's, because the Data Layer only joins apps with the same package name and signing key; its namespace is `com.open360.wear`, minSdk 30.
+- Connection settings come from the phone, everything else is the watch's own. `WatchSettingsPublisher` (`:app`) puts the wake-up ID and the camera's serial suffix on the Wear OS Data Layer at `/open360/connection` (`SharedConnectionSettings`) whenever either changes while the phone app is open; `PhoneSettingsReceiver` (`:wear`) reads the copy kept on the watch when the app opens and follows changes while it is open. The watch has no Wake-Up set-up of its own and does not put one forward on its first run; Wake Up pressed without an ID says to set it up on the phone (`WakeUpOnPhoneDialog`). The ID can also be stored with `adb shell am start -n com.open360/com.open360.wear.WearActivity --es wake_authorization_id <id>`.
+- Screens (`WearApp`): `RemoteScreen` (status, shutter, mode, the one link button, what the camera reports, GPS; tapping GPS switches km/h and mph), `ModesScreen` (all ten modes once a camera that is on has reported its mode, otherwise Video and Photo; held while recording), `SettingsScreen` (Wake Up status, Background GPS, Watch Heart Rate, the Bluetooth sensors with `AddSensorScreen` and `SensorScreen`) and `AmbientRemote`, shown while the screen is dimmed. Wording is in `RemoteText`, worded as the phone app words it.
+- With the screen off: the location service's notification is made an ongoing activity (`WearApplication` through `GpsTrackerService.decorateNotification`), which the watch shows on its face, and the activity stays up in always-on mode (`AmbientLifecycleObserver`), where the status changes at most once a minute.
+- Heart rate: `WatchHeartRate` reads the watch's own sensor while the camera is on (Settings, Watch Heart Rate, on by default; needs body sensors) and logs it with the Bluetooth sensors' readings (`SportsSensorManager.recordOwn`), so each FIT file holds it. The location service also takes the health type then (`GpsTrackerService.extraServiceTypes`), which Android requires for reading it with the screen off; a setting changed while the service runs takes effect the next time it starts.
+- Not yet checked on the watch: any of it; it was built and unit-tested only. Open questions: whether the GO 3S accepts a link from the watch, and wakes for the phone's ID sent from another device; how far the watch's GPS lags the picture (`GPS_BEHIND_PICTURE_MS`, 550 ms, was measured with the phone); battery use; and both apps open at once, as the camera holds one link and whichever app links first has it. The debug APK is about 60 MB, mostly unshrunk Material icons.
+
 ### Testing & Debugging
 - `MainActivity.kt`: Supports debug intent triggers in debug builds:
   - `adb shell am start -n com.open360/.MainActivity --ez debug_wake true` (triggers Wake Up)
   - `adb shell am start -n com.open360/.MainActivity --ei debug_command <code> [--es debug_payload <hex>]` (sends test command to camera)
-- Unit test suite: `Go2BleProtocolTest.kt`, `CameraClockTest.kt`, `GpsTimelineTest.kt`, `GpsStreamScheduleTest.kt`, `GpsSendPacerTest.kt`, `FixedRateLoopTest.kt`, `GpxWriterTest.kt`, `GpxParserTest.kt`, `OscClientTest.kt`, `CameraStatusTextTest.kt`, `WakeUpSetupTest.kt`, `PacketFramerTest.kt`, `CameraFileListTest.kt`, `ReconnectPolicyTest.kt`, `FitWriterTest.kt`, `CameraButtonTest.kt`, `CameraModeTest.kt`, `SensorProfilesTest.kt`.
+  - The watch app takes the same two on `com.open360/com.open360.wear.WearActivity`.
+- Unit test suite: `Go2BleProtocolTest.kt`, `CameraClockTest.kt`, `GpsTimelineTest.kt`, `GpsStreamScheduleTest.kt`, `GpsSendPacerTest.kt`, `FixedRateLoopTest.kt`, `GpxWriterTest.kt`, `GpxParserTest.kt`, `OscClientTest.kt`, `CameraStatusTextTest.kt`, `WakeUpSetupTest.kt`, `PacketFramerTest.kt`, `CameraFileListTest.kt`, `ReconnectPolicyTest.kt`, `FitWriterTest.kt`, `CameraButtonTest.kt`, `CameraModeTest.kt`, `SensorProfilesTest.kt`, and for the watch `RemoteTextTest.kt`.
 
 ## 5. Connection Workflow
 
