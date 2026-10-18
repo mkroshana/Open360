@@ -26,14 +26,22 @@ private object Routes {
     const val SENSOR = "sensor"
 }
 
-/** The watch app's screens: the remote, the camera's modes, and the settings with the sensors. */
+/**
+ * The watch app's screens: the remote, the camera's modes, and the settings with the sensors;
+ * while the screen is dimmed, the remote's always-on version.
+ */
 @Composable
-fun WearApp(viewModel: CameraViewModel) {
+fun WearApp(viewModel: CameraViewModel, isAmbient: Boolean) {
     val context = LocalContext.current
     // The colours the watch face has picked, where the watch offers them
     MaterialTheme(colorScheme = dynamicColorScheme(context) ?: ColorScheme()) {
         AppScaffold {
             val nav = rememberSwipeDismissableNavController()
+            if (isAmbient) {
+                // Back on the screen that was open once the watch wakes
+                AmbientRemote(viewModel)
+                return@AppScaffold
+            }
             SwipeDismissableNavHost(navController = nav, startDestination = Routes.REMOTE) {
                 composable(Routes.REMOTE) {
                     RemoteScreen(

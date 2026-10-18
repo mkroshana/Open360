@@ -1,0 +1,50 @@
+package com.open360.wear.ui
+
+import androidx.compose.foundation.background
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.unit.dp
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import androidx.wear.compose.material3.MaterialTheme
+import androidx.wear.compose.material3.Text
+import com.open360.core.ble.CameraMode
+import com.open360.ui.camera.CameraViewModel
+
+/**
+ * The remote while the watch's screen is dimmed: a few lines of grey and white text on black,
+ * as always-on screens need, that change at most once a minute.
+ */
+@Composable
+fun AmbientRemote(viewModel: CameraViewModel) {
+    val uiState by viewModel.uiState.collectAsStateWithLifecycle()
+    val ble = uiState.bleState
+    val cameraMode = ble.details.subModes?.let { CameraMode.of(it) }
+
+    Column(
+        modifier = Modifier.fillMaxSize().background(Color.Black),
+        verticalArrangement = Arrangement.spacedBy(4.dp, Alignment.CenterVertically),
+        horizontalAlignment = Alignment.CenterHorizontally
+    ) {
+        Text(
+            text = RemoteText.ambientStatus(ble, uiState.isRecording, uiState.recordingDurationSeconds),
+            style = MaterialTheme.typography.titleMedium,
+            color = Color.White,
+            textAlign = TextAlign.Center
+        )
+        Text(
+            text = RemoteText.shownMode(uiState.currentMode, cameraMode)?.label ?: uiState.currentMode.displayName,
+            style = MaterialTheme.typography.bodyMedium,
+            color = Color.LightGray
+        )
+        ble.batteryPercent?.let {
+            Text(text = "Camera $it%", style = MaterialTheme.typography.bodySmall, color = Color.LightGray)
+        }
+    }
+}

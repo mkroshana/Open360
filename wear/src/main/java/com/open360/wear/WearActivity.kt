@@ -11,7 +11,9 @@ import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.viewModels
+import androidx.compose.runtime.mutableStateOf
 import androidx.core.content.ContextCompat
+import androidx.wear.ambient.AmbientLifecycleObserver
 import com.open360.ui.camera.CameraViewModel
 import com.open360.wear.ui.WearApp
 
@@ -26,6 +28,22 @@ class WearActivity : ComponentActivity() {
 
     private val cameraViewModel: CameraViewModel by viewModels()
     private lateinit var phoneSettings: PhoneSettingsReceiver
+
+    // When the screen dims the remote stays up in the watch's low-power always-on mode, so a
+    // glance shows whether the camera is recording
+    private val isAmbient = mutableStateOf(false)
+    private val ambientObserver = AmbientLifecycleObserver(
+        this,
+        object : AmbientLifecycleObserver.AmbientLifecycleCallback {
+            override fun onEnterAmbient(ambientDetails: AmbientLifecycleObserver.AmbientDetails) {
+                isAmbient.value = true
+            }
+
+            override fun onExitAmbient() {
+                isAmbient.value = false
+            }
+        }
+    )
 
     private val permissionLauncher = registerForActivityResult(
         ActivityResultContracts.RequestMultiplePermissions()
@@ -43,6 +61,7 @@ class WearActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        lifecycle.addObserver(ambientObserver)
         phoneSettings = PhoneSettingsReceiver(this, ::applyPhoneSettings)
         // The view model puts the Wake-Up set-up forward on a first run without an ID. On the
         // watch the ID comes from the phone, where the set-up is done, so it is not put forward
@@ -56,7 +75,7 @@ class WearActivity : ComponentActivity() {
         runDebugRequest(intent)
 
         setContent {
-            WearApp(viewModel = cameraViewModel)
+            WearApp(viewModel = cameraViewModel, isAmbient = isAmbient.value)
         }
     }
 

@@ -63,6 +63,14 @@ class GpsTrackerService : Service() {
             context.startService(intent)
         }
 
+        /**
+         * Adds to the service's notification before it is shown, given the notification's ID
+         * and the intent that opens the app. The watch app makes it an ongoing activity, which
+         * the watch shows on its face and leads back to the app from.
+         */
+        @Volatile
+        var decorateNotification: ((Context, NotificationCompat.Builder, Int, PendingIntent) -> Unit)? = null
+
         fun stop(context: Context) {
             val intent = Intent(context, GpsTrackerService::class.java).apply {
                 action = ACTION_STOP_TRACKING
@@ -178,14 +186,15 @@ class GpsTrackerService : Service() {
             PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
         )
 
-        return NotificationCompat.Builder(this, CHANNEL_ID)
+        val builder = NotificationCompat.Builder(this, CHANNEL_ID)
             .setContentTitle(title)
             .setContentText(text)
             .setSmallIcon(android.R.drawable.ic_menu_mylocation)
             .setContentIntent(pendingIntent)
             .setOngoing(true)
             .setPriority(NotificationCompat.PRIORITY_LOW)
-            .build()
+        decorateNotification?.invoke(this, builder, NOTIFICATION_ID, pendingIntent)
+        return builder.build()
     }
 
     override fun onDestroy() {

@@ -43,6 +43,9 @@ dependencies {
     implementation(libs.wear.compose.material3)
     implementation(libs.wear.compose.foundation)
     implementation(libs.wear.compose.navigation)
+    // The camera link shown on the watch face, and the remote kept on screen when it dims
+    implementation(libs.wear.ongoing)
+    implementation(libs.androidx.wear)
     implementation(platform(libs.androidx.compose.bom))
     implementation(libs.androidx.compose.material.icons.extended)
 

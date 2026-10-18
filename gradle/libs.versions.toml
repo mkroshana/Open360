@@ -19,6 +19,8 @@ documentfile = "1.0.1"
 playServicesWearable = "19.0.0"
 # The newest that builds with compile SDK 35 and this Android Gradle plugin; 1.7 needs SDK 37 and AGP 9.1
 wearCompose = "1.6.2"
+wearOngoing = "1.1.0"
+wear = "1.4.0"
 
 [libraries]
 androidx-core-ktx = { group = "androidx.core", name = "core-ktx", version.ref = "coreKtx" }
@@ -50,6 +52,8 @@ play-services-wearable = { group = "com.google.android.gms", name = "play-servic
 wear-compose-material3 = { group = "androidx.wear.compose", name = "compose-material3", version.ref = "wearCompose" }
 wear-compose-foundation = { group = "androidx.wear.compose", name = "compose-foundation", version.ref = "wearCompose" }
 wear-compose-navigation = { group = "androidx.wear.compose", name = "compose-navigation", version.ref = "wearCompose" }
+wear-ongoing = { group = "androidx.wear", name = "wear-ongoing", version.ref = "wearOngoing" }
+androidx-wear = { group = "androidx.wear", name = "wear", version.ref = "wear" }
 
 [plugins]
 android-application = { id = "com.android.application", version.ref = "agp" }

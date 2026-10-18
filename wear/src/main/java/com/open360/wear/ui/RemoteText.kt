@@ -4,6 +4,7 @@ import com.open360.core.ble.BleCameraState
 import com.open360.core.ble.BleConnectionStatus
 import com.open360.core.ble.CameraMode
 import com.open360.core.model.CaptureMode
+import com.open360.ui.camera.CameraStatusText
 import java.util.Locale
 
 /**
@@ -26,6 +27,14 @@ object RemoteText {
             else -> "Disconnected"
         }
     }
+
+    /**
+     * The status for the dimmed screen, which changes at most once a minute: a recording's length
+     * in whole minutes, as in "Recording, 3 min".
+     */
+    fun ambientStatus(ble: BleCameraState, isRecording: Boolean, recordingSeconds: Long): String =
+        if (isRecording) "Recording, ${CameraStatusText.timeLeft(recordingSeconds.toInt())}"
+        else status(ble, isRecording = false, recordingSeconds = 0)
 
     /** A recording's length so far, such as "01:05" or "1:02:09". */
     fun elapsed(seconds: Long): String {

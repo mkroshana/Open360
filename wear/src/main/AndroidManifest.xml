@@ -19,6 +19,7 @@
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
 
     <application
+        android:name=".WearApplication"
         android:allowBackup="true"
         android:icon="@android:drawable/ic_menu_camera"
         android:label="Open360"

@@ -24,6 +24,14 @@ class RemoteTextTest {
     }
 
     @Test
+    fun ambientStatusCountsWholeMinutes() {
+        assertEquals("Recording, Under 1 min", RemoteText.ambientStatus(cameraOn, true, 59))
+        assertEquals("Recording, 3 min", RemoteText.ambientStatus(cameraOn, true, 3 * 60 + 59))
+        assertEquals("Recording, 1 h 2 min", RemoteText.ambientStatus(cameraOn, true, 3729))
+        assertEquals("Connected", RemoteText.ambientStatus(cameraOn, false, 0))
+    }
+
+    @Test
     fun elapsedShowsHoursOnlyWhenThereAreSome() {
         assertEquals("00:00", RemoteText.elapsed(0))
         assertEquals("59:59", RemoteText.elapsed(3599))
