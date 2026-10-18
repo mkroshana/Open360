@@ -13,10 +13,15 @@ import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.viewModels
 import androidx.core.content.ContextCompat
+import androidx.lifecycle.lifecycleScope
+import com.open360.core.watch.WatchSettingsPublisher
 import com.open360.ui.Open360App
 import com.open360.ui.camera.CameraViewModel
 import com.open360.ui.footage.FootageViewModel
 import com.open360.ui.theme.Open360Theme
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.launch
 
 class MainActivity : ComponentActivity() {
     private companion object {
@@ -49,6 +54,7 @@ class MainActivity : ComponentActivity() {
         checkAndRequestPermissions()
         storeWakeAuthorizationId(intent)
         runDebugRequest(intent)
+        shareConnectionSettingsWithWatch()
 
         setContent {
             Open360Theme {
@@ -104,6 +110,21 @@ class MainActivity : ComponentActivity() {
             if (saved) "Wake-Up ID Saved" else "That Is Not a Valid Wake-Up ID",
             Toast.LENGTH_SHORT
         ).show()
+    }
+
+    /**
+     * Hands the wake-up ID and the camera's serial suffix to the watch app whenever either may
+     * have changed: the ID when it is set or replaced, the serial when a camera is linked to.
+     */
+    private fun shareConnectionSettingsWithWatch() {
+        val publisher = WatchSettingsPublisher(this)
+        val ble = cameraViewModel.bleManager
+        lifecycleScope.launch {
+            cameraViewModel.uiState
+                .map { it.wakeUpId to it.bleState.deviceName }
+                .distinctUntilChanged()
+                .collect { (wakeUpId, _) -> publisher.publish(wakeUpId, ble.getSavedSerialSuffix()) }
+        }
     }
 
     private fun getRequiredPermissions(): List<String> {

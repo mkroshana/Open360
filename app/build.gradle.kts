@@ -65,6 +65,8 @@ dependencies {
     implementation(libs.androidx.media3.exoplayer)
     implementation(libs.androidx.media3.ui)
     implementation(libs.androidx.documentfile)
+    // Hands the connection settings to the watch app
+    implementation(libs.play.services.wearable)
 
     testImplementation(libs.junit)
     testImplementation(libs.kotlinx.coroutines.test)
