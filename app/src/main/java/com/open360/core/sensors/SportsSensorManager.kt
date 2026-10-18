@@ -299,6 +299,7 @@ class SportsSensorManager(private val context: Context) {
         private val gatt: BluetoothGatt? = remote.connectGatt(context, !direct, this, BluetoothDevice.TRANSPORT_LE)
         private val pendingSubscriptions = ArrayDeque<BluetoothGattCharacteristic>()
         private val cadence = CadenceCalculator()
+        @Volatile private var heardFrom = false
 
         init {
             Log.i(TAG, "Linking to ${device.name} (${device.address})${if (direct) " directly" else ""}")
@@ -342,6 +343,13 @@ class SportsSensorManager(private val context: Context) {
             subscribeNext(gatt)
         }
 
+        // A Pixel Watch can change its services after the link is up, which leaves what was
+        // subscribed to on linking out of date, so the services are looked up and subscribed to again
+        override fun onServiceChanged(gatt: BluetoothGatt) {
+            Log.i(TAG, "${device.name}: services changed, looking again")
+            gatt.discoverServices()
+        }
+
         private fun subscribeNext(gatt: BluetoothGatt) {
             val characteristic = pendingSubscriptions.removeFirstOrNull() ?: return
             gatt.setCharacteristicNotification(characteristic, true)
@@ -373,6 +381,10 @@ class SportsSensorManager(private val context: Context) {
 
         private fun handle(uuid: UUID, value: ByteArray) {
             val now = SystemClock.elapsedRealtime()
+            if (!heardFrom) {
+                heardFrom = true
+                Log.i(TAG, "${device.name}: first notification on $uuid: ${value.joinToString("") { "%02x".format(it) }}")
+            }
             when (uuid) {
                 SensorProfiles.HEART_RATE_MEASUREMENT ->
                     SensorProfiles.parseHeartRate(value)?.takeIf { it > 0 }?.let { record(SensorKind.HEART_RATE, device.address, it) }
