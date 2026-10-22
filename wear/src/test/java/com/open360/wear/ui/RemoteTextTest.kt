@@ -52,6 +52,8 @@ class RemoteTextTest {
         assertEquals("Stop Recording", RemoteText.shutter(CaptureMode.VIDEO, CameraMode.FREEFRAME_PRO, true, false, false))
         assertEquals("Starting...", RemoteText.shutter(CaptureMode.VIDEO, CameraMode.VIDEO, false, true, false))
         assertEquals("Stopping...", RemoteText.shutter(CaptureMode.VIDEO, CameraMode.VIDEO, true, false, true))
+        assertEquals("Taking Photo...", RemoteText.shutter(CaptureMode.PHOTO, CameraMode.PHOTO, false, false, false, isTakingPhoto = true))
+        assertEquals("Taking Photo...", RemoteText.shutter(CaptureMode.PHOTO, CameraMode.HDR_PHOTO, false, false, false, isTakingPhoto = true))
         // A camera not yet in the chosen group is not named
         assertEquals("Take Photo", RemoteText.shutter(CaptureMode.PHOTO, CameraMode.FREEFRAME_PRO, false, false, false))
     }

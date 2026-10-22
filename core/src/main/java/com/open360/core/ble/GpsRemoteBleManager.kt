@@ -104,6 +104,9 @@ data class BleCameraState(
     // up once per answer, so a screen can confirm every photo
     val photosTaken: Int = 0,
     val photosFailed: Int = 0,
+    // Set from a take-picture command until the camera answers it, which it does once the photo
+    // is taken, about 3 s later on a GO 3S
+    val isTakingPhoto: Boolean = false,
     // File name of the last video the camera reported saving, e.g. VID_20261012_163049_00_066.mp4.
     // Only known for recordings stopped from the app. Cleared when the next recording starts.
     val lastVideoFile: String? = null,
@@ -157,6 +160,10 @@ class GpsRemoteBleManager(private val context: Context) {
         private const val WAKE_BEACON_MS = 10_000
         private const val LOW_BATTERY_CLEARED_PERCENT = 20
         private const val CAPTURE_CHANGE_TIMEOUT_MS = 10_000L
+
+        // A photo with no answer by then is no longer shown as being taken. An HDR set takes
+        // longer than a single photo, so this allows well over the 3 s a single one took.
+        private const val PHOTO_ANSWER_TIMEOUT_MS = 15_000L
 
         // 10 s of samples. Beyond this the link is not keeping up and the oldest are dropped.
         private const val MAX_QUEUED_GPS_RECORDS = 100
@@ -267,6 +274,7 @@ class GpsRemoteBleManager(private val context: Context) {
     private var activeScanCallback: ScanCallback? = null
     private var keepAliveJob: Job? = null
     private var captureChangeTimeoutJob: Job? = null
+    private var photoTimeoutJob: Job? = null
     @Volatile
     private var stopCaptureSeq = -1
     // The take-picture command awaiting its answer, which comes once the photo is taken
@@ -702,6 +710,7 @@ class GpsRemoteBleManager(private val context: Context) {
                 idleLinkJob?.cancel()
                 stopKeepAlive()
                 markRecordingStop()
+                forgetPhotoInProgress()
                 registrationJob?.cancel()
                 clockJob?.cancel()
                 val reconnect = shouldReconnect()
@@ -717,6 +726,7 @@ class GpsRemoteBleManager(private val context: Context) {
                         isRecording = false,
                         isCaptureStarting = false,
                         isCaptureStopping = false,
+                        isTakingPhoto = false,
                         batteryPercent = null,
                         isCharging = false,
                         cameraClockOffsetMs = null,
@@ -1336,8 +1346,9 @@ class GpsRemoteBleManager(private val context: Context) {
                     }
                     if (inner.sequence == takePictureSeq) {
                         takePictureSeq = -1
+                        photoTimeoutJob?.cancel()
                         Log.i(TAG, "Camera took the photo")
-                        _state.update { it.copy(photosTaken = it.photosTaken + 1) }
+                        _state.update { it.copy(photosTaken = it.photosTaken + 1, isTakingPhoto = false) }
                     }
                     if (inner.sequence == stopCaptureSeq) {
                         stopCaptureSeq = -1
@@ -1362,7 +1373,8 @@ class GpsRemoteBleManager(private val context: Context) {
                     }
                     if (inner.sequence == takePictureSeq) {
                         takePictureSeq = -1
-                        _state.update { it.copy(photosFailed = it.photosFailed + 1) }
+                        photoTimeoutJob?.cancel()
+                        _state.update { it.copy(photosFailed = it.photosFailed + 1, isTakingPhoto = false) }
                     }
                 }
             }
@@ -1553,6 +1565,23 @@ class GpsRemoteBleManager(private val context: Context) {
         if (writeCharacteristic?.uuid == WRITE_CE81) {
             queuePacket(Go2BleProtocol.REMOTE_CMD_SHUTTER)
         }
+
+        _state.update { it.copy(isTakingPhoto = true) }
+        photoTimeoutJob?.cancel()
+        photoTimeoutJob = scope.launch {
+            delay(PHOTO_ANSWER_TIMEOUT_MS)
+            if (takePictureSeq == seq) {
+                takePictureSeq = -1
+                Log.w(TAG, "No answer to the photo command after ${PHOTO_ANSWER_TIMEOUT_MS / 1000} s")
+                _state.update { it.copy(isTakingPhoto = false) }
+            }
+        }
+    }
+
+    /** A photo waiting for its answer when the link ends gets none; the state's flag is cleared with the rest. */
+    private fun forgetPhotoInProgress() {
+        takePictureSeq = -1
+        photoTimeoutJob?.cancel()
     }
 
     /**
@@ -1720,6 +1749,7 @@ class GpsRemoteBleManager(private val context: Context) {
         stopScan()
         stopKeepAlive()
         markRecordingStop()
+        forgetPhotoInProgress()
         activeGatt?.disconnect()
         activeGatt?.close()
         activeGatt = null
@@ -1735,6 +1765,7 @@ class GpsRemoteBleManager(private val context: Context) {
                 isRecording = false,
                 isCaptureStarting = false,
                 isCaptureStopping = false,
+                isTakingPhoto = false,
                 batteryPercent = null,
                 isCharging = false,
                 cameraClockOffsetMs = null,

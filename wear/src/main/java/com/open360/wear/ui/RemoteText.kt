@@ -68,10 +68,12 @@ object RemoteText {
         cameraMode: CameraMode?,
         isRecording: Boolean,
         isStarting: Boolean,
-        isStopping: Boolean
+        isStopping: Boolean,
+        isTakingPhoto: Boolean = false
     ): String {
         val shown = shownMode(choice, cameraMode)
         return when {
+            isTakingPhoto -> "Taking Photo..."
             isStopping -> "Stopping..."
             isRecording -> if (shown?.isPhoto == true) "Stop ${shown.label}" else "Stop Recording"
             isStarting -> "Starting..."

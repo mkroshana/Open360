@@ -130,8 +130,10 @@ fun RemoteScreen(
     val button = CameraButton.of(ble, uiState.isConnected)
     val cameraMode = ble.details.subModes?.let { CameraMode.of(it) }
     val shownMode = RemoteText.shownMode(uiState.currentMode, cameraMode)
-    val busy = ble.isCaptureStarting || ble.isCaptureStopping
-    val shutterLabel = RemoteText.shutter(uiState.currentMode, cameraMode, uiState.isRecording, ble.isCaptureStarting, ble.isCaptureStopping)
+    // Waiting for the camera to confirm the last tap, a photo included: the shutter shows it and
+    // takes no other tap until then
+    val busy = ble.isCaptureStarting || ble.isCaptureStopping || ble.isTakingPhoto
+    val shutterLabel = RemoteText.shutter(uiState.currentMode, cameraMode, uiState.isRecording, ble.isCaptureStarting, ble.isCaptureStopping, ble.isTakingPhoto)
     // The camera last linked to, by the name it advertises, before this link names it
     val cameraName = remember(ble.deviceName) { ble.deviceName ?: "GO 3S ${viewModel.bleManager.getSavedSerialSuffix()}" }
 
