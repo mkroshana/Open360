@@ -1,13 +1,16 @@
 package com.open360.wear.ui
 
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.padding
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.wear.compose.foundation.lazy.TransformingLazyColumn
 import androidx.wear.compose.foundation.lazy.rememberTransformingLazyColumnState
+import androidx.wear.compose.material3.Icon
 import androidx.wear.compose.material3.ListHeader
 import androidx.wear.compose.material3.MaterialTheme
 import androidx.wear.compose.material3.RadioButton
@@ -45,17 +48,9 @@ fun ModesScreen(viewModel: CameraViewModel, onDone: () -> Unit) {
                     transformation = SurfaceTransformation(transformationSpec)
                 ) { Text("Mode") }
             }
-            if (locked) {
-                item {
-                    Text(
-                        text = "Held while recording",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        textAlign = TextAlign.Center
-                    )
-                }
-            }
+            if (locked) item { Note("Held while recording") }
             if (cameraMode == null) {
+                item { Note("Switch the camera on to see all ten modes") }
                 CaptureMode.entries.forEach { choice ->
                     item {
                         RadioButton(
@@ -67,6 +62,7 @@ fun ModesScreen(viewModel: CameraViewModel, onDone: () -> Unit) {
                             enabled = !locked,
                             modifier = Modifier.fillMaxWidth().transformedHeight(this, transformationSpec),
                             transformation = SurfaceTransformation(transformationSpec),
+                            icon = { Icon(modeIcon(choice), contentDescription = null) },
                             label = { Text(choice.displayName) }
                         )
                     }
@@ -90,6 +86,7 @@ fun ModesScreen(viewModel: CameraViewModel, onDone: () -> Unit) {
                                 enabled = !locked,
                                 modifier = Modifier.fillMaxWidth().transformedHeight(this, transformationSpec),
                                 transformation = SurfaceTransformation(transformationSpec),
+                                icon = { Icon(modeIcon(mode), contentDescription = null) },
                                 label = { Text(mode.label) }
                             )
                         }
@@ -98,4 +95,15 @@ fun ModesScreen(viewModel: CameraViewModel, onDone: () -> Unit) {
             }
         }
     }
+}
+
+@Composable
+private fun Note(text: String) {
+    Text(
+        text = text,
+        style = MaterialTheme.typography.bodySmall,
+        color = MaterialTheme.colorScheme.onSurfaceVariant,
+        textAlign = TextAlign.Center,
+        modifier = Modifier.padding(horizontal = 24.dp, vertical = 4.dp)
+    )
 }

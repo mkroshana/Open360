@@ -34,11 +34,9 @@ import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Favorite
 import androidx.compose.material.icons.filled.LocationOff
 import androidx.compose.material.icons.filled.LocationOn
-import androidx.compose.material.icons.filled.PhotoCamera
 import androidx.compose.material.icons.filled.PowerSettingsNew
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Speed
-import androidx.compose.material.icons.filled.Videocam
 import androidx.compose.material.icons.filled.VideocamOff
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
@@ -173,7 +171,7 @@ fun RemoteScreen(
                             modifier = Modifier.transformedHeight(this, transformationSpec),
                             icon = {
                                 Icon(
-                                    imageVector = if (uiState.currentMode == CaptureMode.PHOTO) Icons.Filled.PhotoCamera else Icons.Filled.Videocam,
+                                    imageVector = shownMode?.let { modeIcon(it) } ?: modeIcon(uiState.currentMode),
                                     contentDescription = null,
                                     modifier = Modifier.size(16.dp)
                                 )
