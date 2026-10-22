@@ -31,8 +31,11 @@ import androidx.wear.compose.material3.ListHeader
 import androidx.wear.compose.material3.MaterialTheme
 import androidx.wear.compose.material3.OutlinedButton
 import androidx.wear.compose.material3.ScreenScaffold
+import androidx.wear.compose.material3.SurfaceTransformation
 import androidx.wear.compose.material3.SwitchButton
 import androidx.wear.compose.material3.Text
+import androidx.wear.compose.material3.lazy.rememberTransformationSpec
+import androidx.wear.compose.material3.lazy.transformedHeight
 import com.open360.core.sensors.SensorKind
 import com.open360.core.sensors.SensorStatus
 import com.open360.core.sensors.SportsSensorManager
@@ -59,11 +62,18 @@ fun SettingsScreen(
         heartRate.onPermissionChanged()
     }
     val listState = rememberTransformingLazyColumnState()
+    // Items narrow and shrink as they reach the round screen's top and bottom edges
+    val transformationSpec = rememberTransformationSpec()
     val registration = uiState.bleState.wakeUpRegistration
 
     ScreenScaffold(scrollState = listState) { contentPadding ->
         TransformingLazyColumn(state = listState, contentPadding = contentPadding) {
-            item { ListHeader { Text("Settings") } }
+            item {
+                ListHeader(
+                    modifier = Modifier.transformedHeight(this, transformationSpec),
+                    transformation = SurfaceTransformation(transformationSpec)
+                ) { Text("Settings") }
+            }
             item {
                 val hasId = uiState.wakeUpId != null
                 val status = CameraStatusText.wakeUpSetupStatus(hasId, registration)
@@ -88,12 +98,18 @@ fun SettingsScreen(
                 SwitchButton(
                     checked = uiState.keepGpsActiveInBackground,
                     onCheckedChange = { viewModel.toggleKeepGpsInBackground() },
-                    modifier = Modifier.fillMaxWidth(),
+                    modifier = Modifier.fillMaxWidth().transformedHeight(this, transformationSpec),
+                    transformation = SurfaceTransformation(transformationSpec),
                     secondaryLabel = { Text("Keeps sending GPS with the screen off") },
                     label = { Text("Background GPS") }
                 )
             }
-            item { ListHeader { Text("Sports Sensors") } }
+            item {
+                ListHeader(
+                    modifier = Modifier.transformedHeight(this, transformationSpec),
+                    transformation = SurfaceTransformation(transformationSpec)
+                ) { Text("Sports Sensors") }
+            }
             if (watchHeartRate.available) {
                 item {
                     SwitchButton(
@@ -102,7 +118,8 @@ fun SettingsScreen(
                             heartRate.setEnabled(on)
                             if (on && !watchHeartRate.permitted) askForBodySensors.launch(Manifest.permission.BODY_SENSORS)
                         },
-                        modifier = Modifier.fillMaxWidth(),
+                        modifier = Modifier.fillMaxWidth().transformedHeight(this, transformationSpec),
+                        transformation = SurfaceTransformation(transformationSpec),
                         icon = { Icon(Icons.Filled.MonitorHeart, contentDescription = null) },
                         secondaryLabel = { Text(watchHeartRateStatus(watchHeartRate)) },
                         label = { Text("Watch Heart Rate") }
@@ -113,7 +130,8 @@ fun SettingsScreen(
                 item {
                     FilledTonalButton(
                         onClick = { onOpenSensor(status.device.address) },
-                        modifier = Modifier.fillMaxWidth(),
+                        modifier = Modifier.fillMaxWidth().transformedHeight(this, transformationSpec),
+                        transformation = SurfaceTransformation(transformationSpec),
                         icon = { Icon(iconFor(status.device.kinds), contentDescription = null) },
                         secondaryLabel = { Text(sensorStatus(status)) },
                         label = { Text(status.device.name) }
@@ -123,7 +141,8 @@ fun SettingsScreen(
             item {
                 Button(
                     onClick = onAddSensor,
-                    modifier = Modifier.fillMaxWidth(),
+                    modifier = Modifier.fillMaxWidth().transformedHeight(this, transformationSpec),
+                    transformation = SurfaceTransformation(transformationSpec),
                     icon = { Icon(Icons.Filled.Add, contentDescription = null) },
                     label = { Text("Add Sensor") }
                 )
@@ -137,6 +156,8 @@ fun SettingsScreen(
 fun AddSensorScreen(sensors: SportsSensorManager, onDone: () -> Unit) {
     val state by sensors.state.collectAsStateWithLifecycle()
     val listState = rememberTransformingLazyColumnState()
+    // Items narrow and shrink as they reach the round screen's top and bottom edges
+    val transformationSpec = rememberTransformationSpec()
     DisposableEffect(Unit) {
         sensors.start()
         sensors.startScan()
@@ -147,7 +168,12 @@ fun AddSensorScreen(sensors: SportsSensorManager, onDone: () -> Unit) {
 
     ScreenScaffold(scrollState = listState) { contentPadding ->
         TransformingLazyColumn(state = listState, contentPadding = contentPadding) {
-            item { ListHeader { Text("Add a Sensor") } }
+            item {
+                ListHeader(
+                    modifier = Modifier.transformedHeight(this, transformationSpec),
+                    transformation = SurfaceTransformation(transformationSpec)
+                ) { Text("Add a Sensor") }
+            }
             item {
                 Text(
                     text = "Switch the sensor on and keep it nearby.",
@@ -163,7 +189,8 @@ fun AddSensorScreen(sensors: SportsSensorManager, onDone: () -> Unit) {
                             sensors.add(device)
                             onDone()
                         },
-                        modifier = Modifier.fillMaxWidth(),
+                        modifier = Modifier.fillMaxWidth().transformedHeight(this, transformationSpec),
+                        transformation = SurfaceTransformation(transformationSpec),
                         icon = { Icon(iconFor(device.kinds), contentDescription = null) },
                         secondaryLabel = { Text(kindsText(device.kinds)) },
                         label = { Text(device.name) }
@@ -185,7 +212,8 @@ fun AddSensorScreen(sensors: SportsSensorManager, onDone: () -> Unit) {
                 item {
                     OutlinedButton(
                         onClick = { sensors.startScan() },
-                        modifier = Modifier.fillMaxWidth(),
+                        modifier = Modifier.fillMaxWidth().transformedHeight(this, transformationSpec),
+                        transformation = SurfaceTransformation(transformationSpec),
                         icon = { Icon(Icons.Filled.Refresh, contentDescription = null) },
                         label = { Text("Look Again") }
                     )
@@ -200,15 +228,27 @@ fun AddSensorScreen(sensors: SportsSensorManager, onDone: () -> Unit) {
 fun SensorScreen(sensors: SportsSensorManager, address: String, onDone: () -> Unit) {
     val state by sensors.state.collectAsStateWithLifecycle()
     val listState = rememberTransformingLazyColumnState()
+    // Items narrow and shrink as they reach the round screen's top and bottom edges
+    val transformationSpec = rememberTransformationSpec()
     val status = state.saved.firstOrNull { it.device.address == address }
 
     ScreenScaffold(scrollState = listState) { contentPadding ->
         TransformingLazyColumn(state = listState, contentPadding = contentPadding) {
             if (status == null) {
-                item { ListHeader { Text("Sensor Removed") } }
+                item {
+                    ListHeader(
+                        modifier = Modifier.transformedHeight(this, transformationSpec),
+                        transformation = SurfaceTransformation(transformationSpec)
+                    ) { Text("Sensor Removed") }
+                }
                 return@TransformingLazyColumn
             }
-            item { ListHeader { Text(status.device.name) } }
+            item {
+                ListHeader(
+                    modifier = Modifier.transformedHeight(this, transformationSpec),
+                    transformation = SurfaceTransformation(transformationSpec)
+                ) { Text(status.device.name) }
+            }
             item {
                 Text(
                     text = sensorStatus(status),
@@ -221,7 +261,8 @@ fun SensorScreen(sensors: SportsSensorManager, address: String, onDone: () -> Un
                 item {
                     Button(
                         onClick = { sensors.reconnect(address) },
-                        modifier = Modifier.fillMaxWidth(),
+                        modifier = Modifier.fillMaxWidth().transformedHeight(this, transformationSpec),
+                        transformation = SurfaceTransformation(transformationSpec),
                         icon = { Icon(Icons.Filled.Refresh, contentDescription = null) },
                         label = { Text("Reconnect") }
                     )
@@ -233,7 +274,8 @@ fun SensorScreen(sensors: SportsSensorManager, address: String, onDone: () -> Un
                         sensors.remove(address)
                         onDone()
                     },
-                    modifier = Modifier.fillMaxWidth(),
+                    modifier = Modifier.fillMaxWidth().transformedHeight(this, transformationSpec),
+                    transformation = SurfaceTransformation(transformationSpec),
                     icon = { Icon(Icons.Filled.Delete, contentDescription = null) },
                     label = { Text("Remove") }
                 )

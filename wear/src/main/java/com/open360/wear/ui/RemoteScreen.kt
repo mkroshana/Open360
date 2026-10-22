@@ -6,7 +6,6 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -45,7 +44,10 @@ import androidx.wear.compose.material3.Icon
 import androidx.wear.compose.material3.MaterialTheme
 import androidx.wear.compose.material3.OutlinedButton
 import androidx.wear.compose.material3.ScreenScaffold
+import androidx.wear.compose.material3.SurfaceTransformation
 import androidx.wear.compose.material3.Text
+import androidx.wear.compose.material3.lazy.rememberTransformationSpec
+import androidx.wear.compose.material3.lazy.transformedHeight
 import com.open360.core.ble.BleConnectionStatus
 import com.open360.core.ble.CameraMode
 import com.open360.core.model.CaptureMode
@@ -72,6 +74,8 @@ fun RemoteScreen(
     val gps = uiState.gpsState
     val haptic = LocalHapticFeedback.current
     val listState = rememberTransformingLazyColumnState()
+    // Items narrow and shrink as they reach the round screen's top and bottom edges
+    val transformationSpec = rememberTransformationSpec()
 
     val cameraOn = ble.connectionStatus == BleConnectionStatus.CONNECTED && ble.isCameraAwake
     val button = CameraButton.of(ble, uiState.isConnected)
@@ -125,7 +129,8 @@ fun RemoteScreen(
                 FilledTonalButton(
                     onClick = onOpenModes,
                     enabled = !modeLocked,
-                    modifier = Modifier.fillMaxWidth(),
+                    modifier = Modifier.fillMaxWidth().transformedHeight(this, transformationSpec),
+                    transformation = SurfaceTransformation(transformationSpec),
                     icon = {
                         Icon(
                             imageVector = if (uiState.currentMode == CaptureMode.PHOTO) Icons.Filled.PhotoCamera else Icons.Filled.Videocam,
@@ -139,6 +144,8 @@ fun RemoteScreen(
             item {
                 LinkButton(
                     button = button,
+                    modifier = Modifier.fillMaxWidth().transformedHeight(this, transformationSpec),
+                    transformation = SurfaceTransformation(transformationSpec),
                     onClick = {
                         if (button == CameraButton.CONNECT || button == CameraButton.WAKE_UP) {
                             haptic.performHapticFeedback(HapticFeedbackType.LongPress)
@@ -158,7 +165,8 @@ fun RemoteScreen(
             item {
                 OutlinedButton(
                     onClick = { viewModel.toggleSpeedUnit() },
-                    modifier = Modifier.fillMaxWidth(),
+                    modifier = Modifier.fillMaxWidth().transformedHeight(this, transformationSpec),
+                    transformation = SurfaceTransformation(transformationSpec),
                     icon = { Icon(if (gps.hasFix) Icons.Filled.LocationOn else Icons.Filled.LocationOff, contentDescription = null) },
                     secondaryLabel = {
                         Text(
@@ -178,7 +186,8 @@ fun RemoteScreen(
             item {
                 Button(
                     onClick = onOpenSettings,
-                    modifier = Modifier.fillMaxWidth(),
+                    modifier = Modifier.fillMaxWidth().transformedHeight(this, transformationSpec),
+                    transformation = SurfaceTransformation(transformationSpec),
                     icon = { Icon(Icons.Filled.Settings, contentDescription = null) },
                     label = { Text("Settings") }
                 )
@@ -189,7 +198,8 @@ fun RemoteScreen(
 
 @Composable
 private fun StatusHeader(status: String, color: Color, battery: String?) {
-    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+    // Narrower than the screen, so a long status wraps where the round edge would cut it
+    Column(modifier = Modifier.padding(horizontal = 32.dp), horizontalAlignment = Alignment.CenterHorizontally) {
         Text(text = status, style = MaterialTheme.typography.labelMedium, color = color, textAlign = TextAlign.Center)
         if (battery != null) {
             Text(text = battery, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
@@ -230,7 +240,12 @@ private fun Shutter(
 
 /** The camera card's one link button, as on the phone. */
 @Composable
-private fun LinkButton(button: CameraButton, onClick: () -> Unit) {
+private fun LinkButton(
+    button: CameraButton,
+    modifier: Modifier,
+    transformation: SurfaceTransformation,
+    onClick: () -> Unit
+) {
     val icon: ImageVector = when (button) {
         CameraButton.CONNECT -> Icons.Filled.Bluetooth
         CameraButton.STOP -> Icons.Filled.Stop
@@ -240,14 +255,16 @@ private fun LinkButton(button: CameraButton, onClick: () -> Unit) {
     if (button == CameraButton.CONNECT || button == CameraButton.WAKE_UP) {
         Button(
             onClick = onClick,
-            modifier = Modifier.fillMaxWidth(),
+            modifier = modifier,
+            transformation = transformation,
             icon = { Icon(icon, contentDescription = null) },
             label = { Text(button.label) }
         )
     } else {
         OutlinedButton(
             onClick = onClick,
-            modifier = Modifier.fillMaxWidth(),
+            modifier = modifier,
+            transformation = transformation,
             icon = { Icon(icon, contentDescription = null) },
             label = { Text(button.label) }
         )
@@ -292,16 +309,15 @@ private fun cameraReport(
 
 @Composable
 private fun ReportRow(line: ReportLine) {
-    Row(
-        modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp),
-        horizontalArrangement = Arrangement.SpaceBetween,
-        verticalAlignment = Alignment.CenterVertically
-    ) {
+    // The label above its value, both centred, as a label and value side by side do not fit
+    // the round screen's narrower rows
+    Column(modifier = Modifier.padding(horizontal = 24.dp), horizontalAlignment = Alignment.CenterHorizontally) {
         Text(text = line.label, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
         Text(
             text = line.value,
             style = MaterialTheme.typography.labelMedium,
-            color = if (line.isProblem) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurface
+            color = if (line.isProblem) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurface,
+            textAlign = TextAlign.Center
         )
     }
 }

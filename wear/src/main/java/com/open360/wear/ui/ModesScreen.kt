@@ -12,7 +12,10 @@ import androidx.wear.compose.material3.ListHeader
 import androidx.wear.compose.material3.MaterialTheme
 import androidx.wear.compose.material3.RadioButton
 import androidx.wear.compose.material3.ScreenScaffold
+import androidx.wear.compose.material3.SurfaceTransformation
 import androidx.wear.compose.material3.Text
+import androidx.wear.compose.material3.lazy.rememberTransformationSpec
+import androidx.wear.compose.material3.lazy.transformedHeight
 import com.open360.core.ble.BleConnectionStatus
 import com.open360.core.ble.CameraMode
 import com.open360.core.model.CaptureMode
@@ -28,13 +31,20 @@ fun ModesScreen(viewModel: CameraViewModel, onDone: () -> Unit) {
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
     val ble = uiState.bleState
     val listState = rememberTransformingLazyColumnState()
+    // Items narrow and shrink as they reach the round screen's top and bottom edges
+    val transformationSpec = rememberTransformationSpec()
     val cameraOn = ble.connectionStatus == BleConnectionStatus.CONNECTED && ble.isCameraAwake
     val cameraMode = if (cameraOn) ble.details.subModes?.let { CameraMode.of(it) } else null
     val locked = uiState.isRecording || ble.isCaptureStarting || ble.isCaptureStopping
 
     ScreenScaffold(scrollState = listState) { contentPadding ->
         TransformingLazyColumn(state = listState, contentPadding = contentPadding) {
-            item { ListHeader { Text("Mode") } }
+            item {
+                ListHeader(
+                    modifier = Modifier.transformedHeight(this, transformationSpec),
+                    transformation = SurfaceTransformation(transformationSpec)
+                ) { Text("Mode") }
+            }
             if (locked) {
                 item {
                     Text(
@@ -55,14 +65,20 @@ fun ModesScreen(viewModel: CameraViewModel, onDone: () -> Unit) {
                                 onDone()
                             },
                             enabled = !locked,
-                            modifier = Modifier.fillMaxWidth(),
+                            modifier = Modifier.fillMaxWidth().transformedHeight(this, transformationSpec),
+                            transformation = SurfaceTransformation(transformationSpec),
                             label = { Text(choice.displayName) }
                         )
                     }
                 }
             } else {
                 listOf(false, true).forEach { photo ->
-                    item { ListHeader { Text(if (photo) "Photo" else "Video") } }
+                    item {
+                        ListHeader(
+                            modifier = Modifier.transformedHeight(this, transformationSpec),
+                            transformation = SurfaceTransformation(transformationSpec)
+                        ) { Text(if (photo) "Photo" else "Video") }
+                    }
                     CameraMode.group(photo).forEach { mode ->
                         item {
                             RadioButton(
@@ -72,7 +88,8 @@ fun ModesScreen(viewModel: CameraViewModel, onDone: () -> Unit) {
                                     onDone()
                                 },
                                 enabled = !locked,
-                                modifier = Modifier.fillMaxWidth(),
+                                modifier = Modifier.fillMaxWidth().transformedHeight(this, transformationSpec),
+                                transformation = SurfaceTransformation(transformationSpec),
                                 label = { Text(mode.label) }
                             )
                         }
