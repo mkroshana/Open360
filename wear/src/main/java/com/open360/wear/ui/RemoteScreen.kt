@@ -236,7 +236,7 @@ fun RemoteScreen(
             edgeButton = {
                 EdgeButton(
                     onClick = onLinkButton,
-                    buttonSize = EdgeButtonSize.Medium,
+                    buttonSize = EdgeButtonSize.Small,
                     colors = if (button == CameraButton.STOP) ButtonDefaults.filledTonalButtonColors() else ButtonDefaults.buttonColors()
                 ) {
                     Icon(linkIcon(button), contentDescription = null, modifier = Modifier.size(20.dp))
@@ -262,15 +262,18 @@ private fun OfflineHeader(ble: BleCameraState, cameraName: String, status: Strin
         linked -> Icons.Filled.VideocamOff
         else -> Icons.Filled.BluetoothDisabled
     }
+    // The icon beside the status rather than above it, so the list fits above the edge button
     Column(modifier = Modifier.padding(horizontal = 28.dp), horizontalAlignment = Alignment.CenterHorizontally) {
-        Icon(
-            imageVector = icon,
-            contentDescription = null,
-            tint = if (linked && !looking) StandbyOrange else MaterialTheme.colorScheme.onSurfaceVariant,
-            modifier = Modifier.size(28.dp)
-        )
-        Spacer(Modifier.size(4.dp))
-        Text(text = status, style = MaterialTheme.typography.titleMedium, textAlign = TextAlign.Center)
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Icon(
+                imageVector = icon,
+                contentDescription = null,
+                tint = if (linked && !looking) StandbyOrange else MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.size(20.dp)
+            )
+            Spacer(Modifier.width(6.dp))
+            Text(text = status, style = MaterialTheme.typography.titleMedium, textAlign = TextAlign.Center)
+        }
         Text(text = cameraName, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
     }
 }
@@ -395,7 +398,7 @@ private fun Note(text: String, isProblem: Boolean = false) {
         style = MaterialTheme.typography.bodySmall,
         color = if (isProblem) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant,
         textAlign = TextAlign.Center,
-        modifier = Modifier.padding(horizontal = 24.dp)
+        modifier = Modifier.padding(horizontal = 16.dp)
     )
 }
 
@@ -410,8 +413,8 @@ private fun readyNotes(details: CameraDetails): List<NoteLine> = buildList {
     if (storageProblem != null) add(NoteLine("Storage $storageProblem", isProblem = true))
     val left = details.captureSecondsLeft
     if (storageProblem == null && left != null) {
-        if (details.subModes?.isPhoto == true) add(NoteLine("${CameraStatusText.photosLeft(left)} Photos Left"))
-        else add(NoteLine("${CameraStatusText.timeLeft(left)} Left"))
+        if (details.subModes?.isPhoto == true) add(NoteLine("${CameraStatusText.photosLeft(left)} photos left"))
+        else add(NoteLine("${CameraStatusText.timeLeft(left)} left"))
     }
 }
 

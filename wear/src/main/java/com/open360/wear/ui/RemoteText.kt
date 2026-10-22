@@ -85,16 +85,19 @@ object RemoteText {
     fun shownMode(choice: CaptureMode, cameraMode: CameraMode?): CameraMode? =
         cameraMode?.takeIf { it.isPhoto == (choice == CaptureMode.PHOTO) }
 
-    /** What to do next while the camera cannot be controlled, or null when it can. */
+    /**
+     * What to do next while the camera cannot be controlled, in one short line under the status
+     * that already says what is happening; null when the camera can be controlled.
+     */
     fun hint(ble: BleCameraState, hasWakeUpId: Boolean, isLookingForCamera: Boolean): String? {
         val linked = ble.connectionStatus == BleConnectionStatus.CONNECTED
         return when {
             linked && ble.isCameraAwake -> null
-            linked && ble.isWaking -> "Switching the camera on. It takes a few seconds."
-            isLookingForCamera -> "Looking for the camera. Keep it nearby."
-            linked -> "The camera is switched off. Tap Wake Up or press its button."
-            hasWakeUpId -> "Keep the camera nearby and tap Connect. Open360 switches it on if it is off."
-            else -> "Turn the camera on, keep it nearby and tap Connect."
+            linked && ble.isWaking -> "Takes a few seconds"
+            isLookingForCamera -> "Keep the camera nearby"
+            linked -> "Or switch it on with its button"
+            hasWakeUpId -> "Connect also switches it on"
+            else -> "Switch the camera on, then connect"
         }
     }
 

@@ -59,10 +59,11 @@ class RemoteTextTest {
     @Test
     fun hintSaysWhatToDoUntilTheCameraIsOn() {
         assertNull(RemoteText.hint(cameraOn, hasWakeUpId = true, isLookingForCamera = false))
-        assertEquals("The camera is switched off. Tap Wake Up or press its button.", RemoteText.hint(cameraOff, true, false))
-        assertEquals("Switching the camera on. It takes a few seconds.", RemoteText.hint(cameraOff.copy(isWaking = true), true, true))
-        assertEquals("Looking for the camera. Keep it nearby.", RemoteText.hint(BleCameraState(connectionStatus = BleConnectionStatus.SCANNING), true, true))
-        assertEquals("Turn the camera on, keep it nearby and tap Connect.", RemoteText.hint(BleCameraState(), false, false))
+        assertEquals("Or switch it on with its button", RemoteText.hint(cameraOff, true, false))
+        assertEquals("Takes a few seconds", RemoteText.hint(cameraOff.copy(isWaking = true), true, true))
+        assertEquals("Keep the camera nearby", RemoteText.hint(BleCameraState(connectionStatus = BleConnectionStatus.SCANNING), true, true))
+        assertEquals("Connect also switches it on", RemoteText.hint(BleCameraState(), true, false))
+        assertEquals("Switch the camera on, then connect", RemoteText.hint(BleCameraState(), false, false))
     }
 
     @Test
