@@ -653,13 +653,20 @@ object Go2BleProtocol {
     /**
      * Decodes the reply to CheckAuthorization. Field 1 is the status; a reply that leaves it out
      * carries the default, AUTHORIZED, which is what the camera sent for the Insta360 app's id.
+     * Null when the payload is not a CheckAuthorization reply at all: anything but field 1 once,
+     * as a number. A GO 3S just woken over Bluetooth once sent the reply to the status request
+     * ([buildStatusOptionsRequest]) under the check's sequence number.
      */
-    fun parseCheckAuthorizationReply(payload: ByteArray): AuthorizationStatus =
-        when (readProtoFields(payload)[1] as? Long ?: 0L) {
+    fun parseCheckAuthorizationReply(payload: ByteArray): AuthorizationStatus? {
+        val fields = readProtoFieldList(payload)
+        if (fields.size > 1 || fields.any { it.first != 1 }) return null
+        val status = fields.firstOrNull()?.second ?: 0L
+        return when (status as? Long ?: return null) {
             0L -> AuthorizationStatus.AUTHORIZED
             1L -> AuthorizationStatus.UNAUTHORIZED
             else -> AuthorizationStatus.BUSY
         }
+    }
 
     /**
      * How the camera's question about a new app ended, AuthorizationResult in the published

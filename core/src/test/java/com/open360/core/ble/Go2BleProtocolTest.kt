@@ -255,6 +255,20 @@ class Go2BleProtocolTest {
         assertEquals(Go2BleProtocol.AuthorizationStatus.UNAUTHORIZED, Go2BleProtocol.parseCheckAuthorizationReply(hex("0801")))
         // The remaining value in the published definitions; not captured from a camera
         assertEquals(Go2BleProtocol.AuthorizationStatus.BUSY, Go2BleProtocol.parseCheckAuthorizationReply(hex("0802")))
+        // A reply that leaves the status out carries the default
+        assertEquals(Go2BleProtocol.AuthorizationStatus.AUTHORIZED, Go2BleProtocol.parseCheckAuthorizationReply(ByteArray(0)))
+        // A reply to the status request, captured from a GO 3S on 2026-10-23: not an answer to
+        // the check. One like it came under the check's sequence number just after a wake-up.
+        assertNull(
+            Go2BleProtocol.parseCheckAuthorizationReply(
+                hex(
+                    "0809080b0814085508280829123c48c8385a06080110642828a201170800108080e0a0a80318" +
+                        "808094ebdc0328808094ebdc03c00264c80205aa050e080112040800105e180120022802"
+                )
+            )
+        )
+        // Nor is the capture status reply, whose field 1 is a message
+        assertNull(Go2BleProtocol.parseCheckAuthorizationReply(hex("0a17080010003000380040880e480a5000600068ff0170ff01")))
 
         // What the GO 3S sent once the new app had been allowed on it
         assertEquals(Go2BleProtocol.AuthorizationResult.SUCCESS, Go2BleProtocol.parseAuthorizationResult(hex("0800")))

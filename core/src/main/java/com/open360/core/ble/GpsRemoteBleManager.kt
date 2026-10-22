@@ -713,6 +713,7 @@ class GpsRemoteBleManager(private val context: Context) {
                 forgetPhotoInProgress()
                 registrationJob?.cancel()
                 clockJob?.cancel()
+                forgetPendingReplies()
                 val reconnect = shouldReconnect()
                 if (reconnect) reconnect(gatt.device)
                 _state.update {
@@ -1001,10 +1002,13 @@ class GpsRemoteBleManager(private val context: Context) {
                 )
             )
         )
-        val status = withTimeoutOrNull(AUTHORIZATION_REPLY_MS) { reply.await() }
-        authorizationCheckReply = null
-        authorizationCheckSeq = -1
-        return status
+        try {
+            return withTimeoutOrNull(AUTHORIZATION_REPLY_MS) { reply.await() }
+        } finally {
+            // Also when cancelled, and only its own: a newer check may have started meanwhile
+            if (authorizationCheckReply === reply) authorizationCheckReply = null
+            if (authorizationCheckSeq == seq) authorizationCheckSeq = -1
+        }
     }
 
     /**
@@ -1023,9 +1027,12 @@ class GpsRemoteBleManager(private val context: Context) {
                 Go2BleProtocol.encodeInnerMessage(Go2BleProtocol.CMD_GET_OPTIONS, seq, Go2BleProtocol.buildWifiInfoRequest())
             )
         )
-        val info = withTimeoutOrNull(WIFI_INFO_REPLY_MS) { reply.await() }
-        wifiInfoReply = null
-        wifiInfoQuerySeq = -1
+        val info = try {
+            withTimeoutOrNull(WIFI_INFO_REPLY_MS) { reply.await() }
+        } finally {
+            if (wifiInfoReply === reply) wifiInfoReply = null
+            if (wifiInfoQuerySeq == seq) wifiInfoQuerySeq = -1
+        }
         if (info == null) {
             Log.w(TAG, "The camera gave no Wi-Fi details")
             return null
@@ -1331,9 +1338,15 @@ class GpsRemoteBleManager(private val context: Context) {
                         Go2BleProtocol.parseStatusOptionsReply(inner.payload)?.let { onStatusOptionsReply(it) }
                     }
                     if (inner.sequence == authorizationCheckSeq) {
-                        authorizationCheckSeq = -1
                         Log.i(TAG, "Authorization check reply: $hexPayload")
-                        authorizationCheckReply?.complete(Go2BleProtocol.parseCheckAuthorizationReply(inner.payload))
+                        val status = Go2BleProtocol.parseCheckAuthorizationReply(inner.payload)
+                        if (status != null) {
+                            authorizationCheckSeq = -1
+                            authorizationCheckReply?.complete(status)
+                        } else {
+                            // Another request's reply under the check's number; its own may still come
+                            Log.w(TAG, "Not an answer to the authorization check, still waiting for one")
+                        }
                     }
                     if (inner.sequence == wifiInfoQuerySeq) {
                         wifiInfoQuerySeq = -1
@@ -1585,6 +1598,20 @@ class GpsRemoteBleManager(private val context: Context) {
     }
 
     /**
+     * Lets go of the sequence numbers of requests still waiting for a reply when a link ends, as
+     * none will come on it. Left set, one could take the reply to a later request that reuses
+     * the number once the count wraps.
+     */
+    private fun forgetPendingReplies() {
+        captureStatusQuerySeq = -1
+        statusOptionsQuerySeq = -1
+        authorizationCheckSeq = -1
+        wifiInfoQuerySeq = -1
+        stopCaptureSeq = -1
+        clockQueries.clear()
+    }
+
+    /**
      * Starts a recording in [mode], or a timelapse, interval or starlapse run; normal video when
      * it is null. A plain start command puts a GO 3S back in normal Video first.
      */
@@ -1755,6 +1782,7 @@ class GpsRemoteBleManager(private val context: Context) {
         activeGatt = null
         writeCharacteristic = null
         registrationJob?.cancel()
+        forgetPendingReplies()
         _state.update {
             it.copy(
                 connectionStatus = BleConnectionStatus.DISCONNECTED,
