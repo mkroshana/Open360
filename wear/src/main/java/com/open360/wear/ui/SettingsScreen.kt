@@ -3,7 +3,6 @@ package com.open360.wear.ui
 import android.Manifest
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
-import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material.icons.Icons
@@ -12,10 +11,14 @@ import androidx.compose.material.icons.filled.Bolt
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.MonitorHeart
 import androidx.compose.material.icons.filled.PedalBike
+import androidx.compose.material.icons.filled.PowerSettingsNew
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.style.TextAlign
@@ -23,6 +26,8 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.wear.compose.foundation.lazy.TransformingLazyColumn
 import androidx.wear.compose.foundation.lazy.rememberTransformingLazyColumnState
+import androidx.wear.compose.material3.AlertDialog
+import androidx.wear.compose.material3.AlertDialogDefaults
 import androidx.wear.compose.material3.Button
 import androidx.wear.compose.material3.CircularProgressIndicator
 import androidx.wear.compose.material3.FilledTonalButton
@@ -37,6 +42,7 @@ import androidx.wear.compose.material3.SwitchButton
 import androidx.wear.compose.material3.Text
 import androidx.wear.compose.material3.lazy.rememberTransformationSpec
 import androidx.wear.compose.material3.lazy.transformedHeight
+import com.open360.core.ble.WakeUpRegistration
 import com.open360.core.sensors.SensorKind
 import com.open360.core.sensors.SensorStatus
 import com.open360.core.sensors.SportsSensorManager
@@ -69,6 +75,7 @@ fun SettingsScreen(
     // Items narrow and shrink as they reach the round screen's top and bottom edges
     val transformationSpec = rememberTransformationSpec()
     val registration = uiState.bleState.wakeUpRegistration
+    var wakeUpInfoOpen by remember { mutableStateOf(false) }
 
     ScreenScaffold(scrollState = listState) { contentPadding ->
         TransformingLazyColumn(state = listState, contentPadding = contentPadding) {
@@ -80,23 +87,23 @@ fun SettingsScreen(
             }
             item {
                 val hasId = uiState.wakeUpId != null
-                val status = CameraStatusText.wakeUpSetupStatus(hasId, registration)
-                Column(modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 4.dp)) {
-                    Text(text = "Wake Up", style = MaterialTheme.typography.titleSmall)
-                    Text(
-                        text = when {
-                            !hasId -> "Not set up. Set up Wake Up in Open360 on your phone, and the watch takes the same ID."
-                            status != null -> "$status. ID from your phone."
-                            else -> "ID from your phone."
-                        },
-                        style = MaterialTheme.typography.bodySmall,
-                        color = if (hasId && CameraStatusText.wakeUpRegistrationIsProblem(registration)) {
-                            MaterialTheme.colorScheme.error
-                        } else {
-                            MaterialTheme.colorScheme.onSurfaceVariant
-                        }
-                    )
-                }
+                FilledTonalButton(
+                    onClick = { wakeUpInfoOpen = true },
+                    modifier = Modifier.fillMaxWidth().transformedHeight(this, transformationSpec),
+                    transformation = SurfaceTransformation(transformationSpec),
+                    icon = { Icon(Icons.Filled.PowerSettingsNew, contentDescription = null) },
+                    secondaryLabel = {
+                        Text(
+                            text = wakeUpStatus(hasId, registration),
+                            color = if (hasId && CameraStatusText.wakeUpRegistrationIsProblem(registration)) {
+                                MaterialTheme.colorScheme.error
+                            } else {
+                                MaterialTheme.colorScheme.onSurfaceVariant
+                            }
+                        )
+                    },
+                    label = { Text("Wake Up") }
+                )
             }
             item {
                 SwitchButton(
@@ -104,7 +111,7 @@ fun SettingsScreen(
                     onCheckedChange = { viewModel.toggleKeepGpsInBackground() },
                     modifier = Modifier.fillMaxWidth().transformedHeight(this, transformationSpec),
                     transformation = SurfaceTransformation(transformationSpec),
-                    secondaryLabel = { Text("Keeps sending GPS with the screen off") },
+                    secondaryLabel = { Text("With the screen off") },
                     label = { Text("Background GPS") }
                 )
             }
@@ -131,6 +138,7 @@ fun SettingsScreen(
                     transformation = SurfaceTransformation(transformationSpec)
                 ) { Text("Sports Sensors") }
             }
+            item { Note("Saved in each recording's FIT file") }
             if (watchHeartRate.available) {
                 item {
                     SwitchButton(
@@ -160,7 +168,7 @@ fun SettingsScreen(
                 }
             }
             item {
-                Button(
+                OutlinedButton(
                     onClick = onAddSensor,
                     modifier = Modifier.fillMaxWidth().transformedHeight(this, transformationSpec),
                     transformation = SurfaceTransformation(transformationSpec),
@@ -170,6 +178,19 @@ fun SettingsScreen(
             }
         }
     }
+
+    AlertDialog(
+        visible = wakeUpInfoOpen,
+        onDismissRequest = { wakeUpInfoOpen = false },
+        title = { Text("Wake Up") },
+        text = {
+            Text(
+                if (uiState.wakeUpId != null) "Connect switches the camera on when it is off. The watch uses the wake-up ID from Open360 on your phone."
+                else "Set up Wake Up in Open360 on your phone. The watch takes the same wake-up ID, and Connect then switches the camera on."
+            )
+        },
+        confirmButton = { AlertDialogDefaults.ConfirmButton(onClick = { wakeUpInfoOpen = false }) }
+    )
 }
 
 /** Looks for heart rate, cadence and power sensors while open; tapping one saves it. */
@@ -307,12 +328,17 @@ fun SensorScreen(sensors: SportsSensorManager, address: String, onDone: () -> Un
 
 /** Where reading the watch's own heart rate stands, for its switch. */
 private fun watchHeartRateStatus(state: WatchHeartRateState): String = when {
-    !state.permitted -> "Allow body sensors to save it with each recording"
+    !state.permitted -> "Needs body sensors"
     !state.enabled -> "Off"
-    state.bpm != null -> "${state.bpm} bpm, saved with each recording"
-    state.reading -> "Reading, no heart rate yet"
-    else -> "Read while the camera is on, saved with each recording"
+    state.bpm != null -> "${state.bpm} bpm"
+    state.reading -> "Reading"
+    else -> "While the camera is on"
 }
+
+/** Where Wake Up stands, in a few words: the phone's ID and what the camera said about it. */
+private fun wakeUpStatus(hasId: Boolean, registration: WakeUpRegistration): String =
+    if (!hasId) "Set Up on Your Phone"
+    else CameraStatusText.wakeUpSetupStatus(true, registration) ?: "ID From Your Phone"
 
 private fun iconFor(kinds: Set<SensorKind>): ImageVector = when {
     SensorKind.HEART_RATE in kinds -> Icons.Filled.MonitorHeart
@@ -337,4 +363,15 @@ private fun sensorStatus(status: SensorStatus): String {
         status.powerWatts?.let { "$it W" }
     )
     return if (values.isEmpty()) "Linked, no readings yet" else "Linked: ${values.joinToString(", ")}"
+}
+
+@Composable
+private fun Note(text: String) {
+    Text(
+        text = text,
+        style = MaterialTheme.typography.bodySmall,
+        color = MaterialTheme.colorScheme.onSurfaceVariant,
+        textAlign = TextAlign.Center,
+        modifier = Modifier.padding(horizontal = 24.dp, vertical = 2.dp)
+    )
 }
