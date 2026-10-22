@@ -11,6 +11,7 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -29,7 +30,6 @@ import androidx.compose.material.icons.filled.BatteryChargingFull
 import androidx.compose.material.icons.filled.BatteryFull
 import androidx.compose.material.icons.filled.Bluetooth
 import androidx.compose.material.icons.filled.BluetoothDisabled
-import androidx.compose.material.icons.filled.BluetoothSearching
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Favorite
 import androidx.compose.material.icons.filled.LocationOff
@@ -37,6 +37,7 @@ import androidx.compose.material.icons.filled.LocationOn
 import androidx.compose.material.icons.filled.PowerSettingsNew
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Speed
+import androidx.compose.material.icons.filled.Videocam
 import androidx.compose.material.icons.filled.VideocamOff
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -61,9 +62,12 @@ import androidx.wear.compose.material3.CircularProgressIndicator
 import androidx.wear.compose.material3.CompactButton
 import androidx.wear.compose.material3.EdgeButton
 import androidx.wear.compose.material3.EdgeButtonSize
+import androidx.wear.compose.material3.FilledTonalIconButton
 import androidx.wear.compose.material3.Icon
+import androidx.wear.compose.material3.IconButtonDefaults
 import androidx.wear.compose.material3.MaterialTheme
 import androidx.wear.compose.material3.OutlinedButton
+import androidx.wear.compose.material3.ProgressIndicatorDefaults
 import androidx.wear.compose.material3.ScreenScaffold
 import androidx.wear.compose.material3.SurfaceTransformation
 import androidx.wear.compose.material3.Text
@@ -158,9 +162,27 @@ fun RemoteScreen(
             when (mode) {
                 RemoteMode.OFFLINE -> {
                     item { OfflineHeader(ble, cameraName, RemoteText.status(ble, false, 0)) }
-                    item { GpsStatusLine(gpsReady) }
                     RemoteText.hint(ble, hasWakeUpId = uiState.wakeUpId != null, isLookingForCamera = button == CameraButton.STOP)?.let { hint ->
                         item { Note(hint) }
+                    }
+                    // GPS and Settings share one row, so the screen fits above the edge button
+                    item {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            GpsStatusLine(gpsReady)
+                            Spacer(Modifier.width(12.dp))
+                            FilledTonalIconButton(
+                                onClick = onOpenSettings,
+                                modifier = Modifier.size(IconButtonDefaults.ExtraSmallButtonSize)
+                            ) {
+                                // Small and muted, so it does not compete with the edge button
+                                Icon(
+                                    Icons.Filled.Settings,
+                                    contentDescription = "Settings",
+                                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    modifier = Modifier.size(18.dp)
+                                )
+                            }
+                        }
                     }
                 }
                 RemoteMode.READY -> {
@@ -221,15 +243,17 @@ fun RemoteScreen(
                     )
                 }
             }
-            item {
-                CompactButton(
-                    onClick = onOpenSettings,
-                    colors = ButtonDefaults.filledTonalButtonColors(),
-                    transformation = SurfaceTransformation(transformationSpec),
-                    modifier = Modifier.transformedHeight(this, transformationSpec),
-                    icon = { Icon(Icons.Filled.Settings, contentDescription = null, modifier = Modifier.size(16.dp)) },
-                    label = { Text("Settings") }
-                )
+            if (mode != RemoteMode.OFFLINE) {
+                item {
+                    CompactButton(
+                        onClick = onOpenSettings,
+                        colors = ButtonDefaults.filledTonalButtonColors(),
+                        transformation = SurfaceTransformation(transformationSpec),
+                        modifier = Modifier.transformedHeight(this, transformationSpec),
+                        icon = { Icon(Icons.Filled.Settings, contentDescription = null, modifier = Modifier.size(16.dp)) },
+                        label = { Text("Settings") }
+                    )
+                }
             }
         }
     }
@@ -256,30 +280,51 @@ fun RemoteScreen(
     }
 }
 
-/** What the link is doing while there is no camera to control, and the camera it is for. */
+/**
+ * While there is no camera to control: the camera as a badge, which spins while it is looked for,
+ * linked to or woken, the status as the title, coloured by what it means, and the camera's name.
+ */
 @Composable
 private fun OfflineHeader(ble: BleCameraState, cameraName: String, status: String) {
     val linked = ble.connectionStatus == BleConnectionStatus.CONNECTED
     val looking = ble.isWaking || ble.isReconnecting ||
         ble.connectionStatus == BleConnectionStatus.SCANNING || ble.connectionStatus == BleConnectionStatus.CONNECTING
-    val icon = when {
-        looking -> Icons.Filled.BluetoothSearching
-        linked -> Icons.Filled.VideocamOff
-        else -> Icons.Filled.BluetoothDisabled
+    // Amber for a camera that is off or being switched on, the theme's colour while looking for it
+    val statusColor = when {
+        ble.isWaking || (linked && !looking) -> StandbyOrange
+        looking -> MaterialTheme.colorScheme.primary
+        else -> MaterialTheme.colorScheme.onSurface
     }
-    // The icon beside the status rather than above it, so the list fits above the edge button
     Column(modifier = Modifier.padding(horizontal = 28.dp), horizontalAlignment = Alignment.CenterHorizontally) {
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            Icon(
-                imageVector = icon,
-                contentDescription = null,
-                tint = if (linked && !looking) StandbyOrange else MaterialTheme.colorScheme.onSurfaceVariant,
-                modifier = Modifier.size(20.dp)
-            )
-            Spacer(Modifier.width(6.dp))
-            Text(text = status, style = MaterialTheme.typography.titleMedium, textAlign = TextAlign.Center)
-        }
+        CameraBadge(
+            icon = if (linked && !looking) Icons.Filled.VideocamOff else Icons.Filled.Videocam,
+            iconTint = if (linked && !looking) StandbyOrange else MaterialTheme.colorScheme.onSurfaceVariant,
+            spinning = looking,
+            ringColor = statusColor
+        )
+        Spacer(Modifier.size(6.dp))
+        Text(text = status, style = MaterialTheme.typography.titleMedium, color = statusColor, textAlign = TextAlign.Center)
         Text(text = cameraName, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+    }
+}
+
+/** The camera's icon in a circle, with a spinning ring around it while something is under way. */
+@Composable
+private fun CameraBadge(icon: ImageVector, iconTint: Color, spinning: Boolean, ringColor: Color) {
+    Box(modifier = Modifier.size(48.dp), contentAlignment = Alignment.Center) {
+        if (spinning) {
+            CircularProgressIndicator(
+                modifier = Modifier.fillMaxSize(),
+                colors = ProgressIndicatorDefaults.colors(indicatorColor = ringColor),
+                strokeWidth = 3.dp
+            )
+        }
+        Box(
+            modifier = Modifier.size(38.dp).clip(CircleShape).background(MaterialTheme.colorScheme.surfaceContainer),
+            contentAlignment = Alignment.Center
+        ) {
+            Icon(imageVector = icon, contentDescription = null, tint = iconTint, modifier = Modifier.size(22.dp))
+        }
     }
 }
 

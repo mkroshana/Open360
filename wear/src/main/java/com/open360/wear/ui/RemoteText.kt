@@ -27,7 +27,7 @@ object RemoteText {
             ble.isReconnecting || ble.isWaking -> "Connecting..."
             ble.connectionStatus == BleConnectionStatus.SCANNING -> "Searching..."
             ble.connectionStatus == BleConnectionStatus.CONNECTING -> "Connecting..."
-            else -> "Disconnected"
+            else -> "Not Connected"
         }
     }
 
@@ -101,7 +101,8 @@ object RemoteText {
             linked && ble.isWaking -> "Takes a few seconds"
             isLookingForCamera -> "Keep the camera nearby"
             linked -> "Or switch it on with its button"
-            hasWakeUpId -> "Connect also switches it on"
+            // Connect switches it on as well; Settings, Wake Up explains that
+            hasWakeUpId -> null
             else -> "Switch the camera on, then connect"
         }
     }
