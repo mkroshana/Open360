@@ -18,9 +18,9 @@ class RemoteTextTest {
     @Test
     fun statusFollowsTheLinkAndTheCamera() {
         assertEquals("Disconnected", RemoteText.status(BleCameraState(), false, 0))
-        assertEquals("Looking for Camera...", RemoteText.status(BleCameraState(connectionStatus = BleConnectionStatus.SCANNING), false, 0))
+        assertEquals("Searching...", RemoteText.status(BleCameraState(connectionStatus = BleConnectionStatus.SCANNING), false, 0))
         assertEquals("Camera Is Off", RemoteText.status(cameraOff, false, 0))
-        assertEquals("Switching Camera On...", RemoteText.status(cameraOff.copy(isWaking = true), false, 0))
+        assertEquals("Waking Up...", RemoteText.status(cameraOff.copy(isWaking = true), false, 0))
         assertEquals("Ready", RemoteText.status(cameraOn, false, 0))
         assertEquals("Recording 02:45", RemoteText.status(cameraOn, true, 165))
     }

@@ -13,17 +13,20 @@ import java.util.Locale
  */
 object RemoteText {
 
-    /** What the link and the camera are doing, in a few words for the top of the screen. */
+    /**
+     * What the link and the camera are doing, in a word or two for the top of the screen; the
+     * camera's name goes under it, so it is left out here.
+     */
     fun status(ble: BleCameraState, isRecording: Boolean, recordingSeconds: Long): String {
         val linked = ble.connectionStatus == BleConnectionStatus.CONNECTED
         return when {
             isRecording -> "Recording ${elapsed(recordingSeconds)}"
-            linked && !ble.isCameraAwake && ble.isWaking -> "Switching Camera On..."
+            linked && !ble.isCameraAwake && ble.isWaking -> "Waking Up..."
             linked && !ble.isCameraAwake -> "Camera Is Off"
             linked -> "Ready"
-            ble.isReconnecting || ble.isWaking -> "Connecting to Camera..."
-            ble.connectionStatus == BleConnectionStatus.SCANNING -> "Looking for Camera..."
-            ble.connectionStatus == BleConnectionStatus.CONNECTING -> "Connecting to Camera..."
+            ble.isReconnecting || ble.isWaking -> "Connecting..."
+            ble.connectionStatus == BleConnectionStatus.SCANNING -> "Searching..."
+            ble.connectionStatus == BleConnectionStatus.CONNECTING -> "Connecting..."
             else -> "Disconnected"
         }
     }

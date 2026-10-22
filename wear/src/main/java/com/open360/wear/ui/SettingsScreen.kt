@@ -189,7 +189,8 @@ fun SettingsScreen(
                 else "Set up Wake Up in Open360 on your phone. The watch takes the same wake-up ID, and Connect then switches the camera on."
             )
         },
-        confirmButton = { AlertDialogDefaults.ConfirmButton(onClick = { wakeUpInfoOpen = false }) }
+        // Information only, so one button that closes it
+        edgeButton = { AlertDialogDefaults.EdgeButton(onClick = { wakeUpInfoOpen = false }) }
     )
 }
 

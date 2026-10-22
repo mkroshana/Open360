@@ -99,6 +99,7 @@ private fun WakeUpOnPhoneDialog(viewModel: CameraViewModel) {
         onDismissRequest = { viewModel.closeWakeUpSetup() },
         title = { Text("Set Up Wake Up on Your Phone") },
         text = { Text("Set up Wake Up in Open360 on your phone. The watch takes the same wake-up ID.") },
-        confirmButton = { AlertDialogDefaults.ConfirmButton(onClick = { viewModel.closeWakeUpSetup() }) }
+        // Information only, so one button that closes it
+        edgeButton = { AlertDialogDefaults.EdgeButton(onClick = { viewModel.closeWakeUpSetup() }) }
     )
 }

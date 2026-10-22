@@ -39,6 +39,7 @@ import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Speed
 import androidx.compose.material.icons.filled.VideocamOff
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
@@ -124,6 +125,8 @@ fun RemoteScreen(
         cameraOn -> RemoteMode.READY
         else -> RemoteMode.OFFLINE
     }
+    // Each layout opens at its top: the list would otherwise keep its place from the one before
+    LaunchedEffect(mode) { listState.scrollToItem(0) }
     val button = CameraButton.of(ble, uiState.isConnected)
     val cameraMode = ble.details.subModes?.let { CameraMode.of(it) }
     val shownMode = RemoteText.shownMode(uiState.currentMode, cameraMode)
