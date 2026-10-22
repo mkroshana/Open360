@@ -806,12 +806,11 @@ class GpsRemoteBleManager(private val context: Context) {
             val channel = descriptor.characteristic?.uuid
             Log.i(TAG, "Subscription to $channel finished, status=$status")
             if (status == BluetoothGatt.GATT_SUCCESS && (channel == NOTIFY_BE82 || channel == NOTIFY_CE82)) {
-                // Subscription complete: channel is open for writes
+                // Subscription complete: channel is open for writes. Nothing is asked until the
+                // camera answers (see requestStatusOnce), which one that is on does at once.
                 if (wakeOnNextConnect) {
                     wakeOnNextConnect = false
                     wakeCamera()
-                } else {
-                    requestStatusOnce()
                 }
             }
         }
@@ -892,8 +891,7 @@ class GpsRemoteBleManager(private val context: Context) {
                 wakeInProgress = false
                 // A newer attempt, started since this one was cancelled, is still under way
                 if (wakeJob === attempt) _state.update { it.copy(isWaking = false) }
-                // Carry on as after any connection; a camera that did not come on is let go
-                requestStatusOnce()
+                // A camera that came on was asked for its status as it answered; one that did not is let go
                 activeGatt?.let { letGoIfSilent(it) }
             }
         }
@@ -1079,7 +1077,11 @@ class GpsRemoteBleManager(private val context: Context) {
         if (!hold) activeGatt?.let { letGoIfSilent(it) }
     }
 
-    /** Sends the status requests once per connection. */
+    /**
+     * Sends the status requests once per connection, once the camera is answering. A camera that
+     * is off holds requests, even after the link ends, and answers them after its next wake-up
+     * over Bluetooth under their old sequence numbers, which a request then may have again.
+     */
     private fun requestStatusOnce() {
         if (statusRequested) return
         statusRequested = true
