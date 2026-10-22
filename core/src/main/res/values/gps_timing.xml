@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!--
+        How much later than each video moment the GPS it is given is taken from (CameraViewModel),
+        as the device's GPS reports motion that much after the camera films it. Measured on rides
+        against the camera's own motion sensors. For the phone, 550 ms: turns and speed changes
+        showed in its GPS, placed as Insta360 Studio places it, 0.55 s after the picture
+        (2026-10-12), and within 0.13 s of it with this value on a drive (2026-10-17). An app
+        whose device's GPS lags differently sets its own value under the same name.
+    -->
+    <integer name="gps_behind_picture_ms">550</integer>
+</resources>

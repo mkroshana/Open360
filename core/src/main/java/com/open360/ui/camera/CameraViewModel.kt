@@ -6,6 +6,7 @@ import android.os.SystemClock
 import android.util.Log
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
+import com.open360.core.R
 import com.open360.core.ble.BleCameraState
 import com.open360.core.ble.BleConnectionStatus
 import com.open360.core.ble.CameraClock
@@ -88,14 +89,6 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
         // its whole missed part is due at once, and no sample may be dropped.
         private const val MAX_GPS_BACKLOG = 40
 
-        // Measured on a ride against the camera's own motion sensors: turns and speed changes
-        // showed in the GPS, as placed on the video, 0.55 s after they showed in the camera
-        // (0.55 s on one clip, about 0.8 s on a second one started with the camera's button,
-        // which has its own allowance). Each video moment is therefore given the GPS from this
-        // much later. Whether the phone's GPS reports late or the video starts later than
-        // worked out is not known; the effect on the video is the same.
-        private const val GPS_BEHIND_PICTURE_MS = 550L
-
         // GPS time is counted from a fix at most this far from the moment, as the phone's clock
         // drifts from it by about 30 ppm
         private const val GPS_TIME_FROM_FIX_WITHIN_MS = 60_000L
@@ -115,6 +108,11 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
     private val gpsSchedule = GpsStreamSchedule(GPS_SAMPLE_INTERVAL_MS, MAX_WAIT_FOR_NEXT_FIX_MS)
 
     private val settings = application.getSharedPreferences("open360_settings", Context.MODE_PRIVATE)
+
+    // Each video moment is given the GPS from this much later, as the device's GPS reports motion
+    // that much after the camera films it: 550 ms for the phone and 250 ms for the watch, each
+    // measured on rides against the camera's own motion sensors (res/values/gps_timing.xml)
+    private val gpsBehindPictureMs = application.resources.getInteger(R.integer.gps_behind_picture_ms).toLong()
 
     private val _uiState = MutableStateFlow(
         RemoteUiState(
@@ -584,13 +582,13 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
                     stampOffsetMs = CameraClock.stampOffsetMs(clockOffset ?: 0L, ble.recordingCaptureState())
                     Log.i(TAG, "GPS records stamped ${stampOffsetMs} ms after their moments (camera clock ${clockOffset ?: "not read"})")
                 }
-                // A video moment uses the GPS from GPS_BEHIND_PICTURE_MS later, so it is ready
+                // A video moment uses the GPS from gpsBehindPictureMs later, so it is ready
                 // once a fix that late has arrived
-                val coveredUpTo = gpsTimeline.newestFixMs()?.let { it - GPS_BEHIND_PICTURE_MS }
+                val coveredUpTo = gpsTimeline.newestFixMs()?.let { it - gpsBehindPictureMs }
                 val room = MAX_GPS_BACKLOG - bleManager.gpsBacklog()
                 if (room <= 0) return@runAtFixedRate
                 for (moment in gpsSchedule.due(scheduledMs, coveredUpTo, max = room)) {
-                    val sample = gpsTimeline.sampleAt(moment + GPS_BEHIND_PICTURE_MS)
+                    val sample = gpsTimeline.sampleAt(moment + gpsBehindPictureMs)
                     // With no fix near, the phone's own clock gives the moment's time
                     val momentUtc = gpsTimeline.utcAt(moment, GPS_TIME_FROM_FIX_WITHIN_MS)
                         ?: (System.currentTimeMillis() - (SystemClock.elapsedRealtime() - moment))

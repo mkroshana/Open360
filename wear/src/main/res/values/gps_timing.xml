@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!--
+        The watch's own value for the setting in :core. With the phone's 550 ms, a ride's speed
+        changes showed in the watch's GPS 0.29 to 0.34 s before the picture on three clips
+        (2026-10-22, clips 167 to 169), so its GPS lags about 0.25 s. Its turns showed a further
+        0.4 to 0.6 s earlier, which this does not make up for.
+    -->
+    <integer name="gps_behind_picture_ms">250</integer>
+</resources>
