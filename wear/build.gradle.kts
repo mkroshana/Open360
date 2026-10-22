@@ -19,6 +19,16 @@ android {
         versionName = "1.0.0"
     }
 
+    buildTypes {
+        // The build to install on the watch: Compose in a debug build is too slow there, with
+        // 42% of frames late while scrolling against 1.6% for this one (2026-10-22). Signed with
+        // the debug key, as the phone app's debug build is, since the Data Layer that hands over
+        // the connection settings only joins apps signed with the same key.
+        release {
+            signingConfig = signingConfigs.getByName("debug")
+        }
+    }
+
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17
@@ -51,6 +61,9 @@ dependencies {
 
     // Reads the phone app's connection settings
     implementation(libs.play.services.wearable)
+    // A newer Fragment than the 1.2.4 Play services brings in, which fails the release lint check
+    // for the ActivityResult permission requests
+    implementation(libs.androidx.fragment)
 
     testImplementation(libs.junit)
 }
