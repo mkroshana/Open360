@@ -87,6 +87,15 @@ object RemoteText {
         }
     }
 
+    /** A fix older than this no longer counts as GPS being ready. Fixes come once a second. */
+    const val GPS_FIX_STALE_MS = 5000L
+
+    /** Whether the watch has a current GPS fix: one within [GPS_FIX_STALE_MS]. */
+    fun gpsReady(hasFix: Boolean, fixAgeMs: Long): Boolean = hasFix && fixAgeMs in 0..GPS_FIX_STALE_MS
+
+    /** The GPS status line: "GPS Ready", or "Waiting for GPS" until there is a current fix. */
+    fun gpsStatus(ready: Boolean): String = if (ready) "GPS Ready" else "Waiting for GPS"
+
     /** A speed in the unit chosen, such as "32 km/h". */
     fun speed(kmh: Float, mph: Float, inMph: Boolean): String =
         if (inMph) String.format(Locale.US, "%.0f mph", mph) else String.format(Locale.US, "%.0f km/h", kmh)

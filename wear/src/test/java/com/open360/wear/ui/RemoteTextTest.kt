@@ -5,7 +5,9 @@ import com.open360.core.ble.BleConnectionStatus
 import com.open360.core.ble.CameraMode
 import com.open360.core.model.CaptureMode
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class RemoteTextTest {
@@ -61,5 +63,15 @@ class RemoteTextTest {
         assertEquals("Switching the camera on. It takes a few seconds.", RemoteText.hint(cameraOff.copy(isWaking = true), true, true))
         assertEquals("Looking for the camera. Keep it nearby.", RemoteText.hint(BleCameraState(connectionStatus = BleConnectionStatus.SCANNING), true, true))
         assertEquals("Turn the camera on, keep it nearby and tap Connect.", RemoteText.hint(BleCameraState(), false, false))
+    }
+
+    @Test
+    fun gpsIsReadyOnlyWithACurrentFix() {
+        assertTrue(RemoteText.gpsReady(hasFix = true, fixAgeMs = 900))
+        assertTrue(RemoteText.gpsReady(hasFix = true, fixAgeMs = 5000))
+        assertFalse(RemoteText.gpsReady(hasFix = true, fixAgeMs = 5001))
+        assertFalse(RemoteText.gpsReady(hasFix = false, fixAgeMs = 100))
+        assertEquals("GPS Ready", RemoteText.gpsStatus(true))
+        assertEquals("Waiting for GPS", RemoteText.gpsStatus(false))
     }
 }

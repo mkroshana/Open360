@@ -1,5 +1,6 @@
 package com.open360.wear.ui
 
+import android.os.SystemClock
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -77,6 +78,7 @@ import com.open360.core.model.CaptureMode
 import com.open360.ui.camera.CameraButton
 import com.open360.ui.camera.CameraStatusText
 import com.open360.ui.camera.CameraViewModel
+import com.open360.wear.SpeedUnit
 import com.open360.wear.WatchHeartRate
 
 private val RecordingRed = Color(0xFFFF3B30)
@@ -96,19 +98,23 @@ private enum class RemoteMode {
 /**
  * The remote. What it shows first follows the camera: the link button at the bottom edge while
  * there is no camera to control, the shutter once it is on, and the running time while it records.
- * Below come what the camera reports, the watch's GPS, Disconnect and Settings.
+ * Each says whether the watch has GPS. Below come what the camera reports, Disconnect and Settings.
  */
 @Composable
 fun RemoteScreen(
     viewModel: CameraViewModel,
     heartRate: WatchHeartRate,
+    speedUnit: SpeedUnit,
     onOpenModes: () -> Unit,
     onOpenSettings: () -> Unit
 ) {
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
     val heart by heartRate.state.collectAsStateWithLifecycle()
+    val inMph by speedUnit.inMph.collectAsStateWithLifecycle()
     val ble = uiState.bleState
     val gps = uiState.gpsState
+    // Read again with each GPS update, which comes at least once a second while tracking
+    val gpsReady = RemoteText.gpsReady(gps.hasFix, SystemClock.elapsedRealtime() - gps.fixElapsedRealtimeMs)
     val haptic = LocalHapticFeedback.current
     val listState = rememberTransformingLazyColumnState()
     // Items narrow and shrink as they reach the round screen's top and bottom edges
@@ -149,6 +155,7 @@ fun RemoteScreen(
             when (mode) {
                 RemoteMode.OFFLINE -> {
                     item { OfflineHeader(ble, cameraName, RemoteText.status(ble, false, 0)) }
+                    item { GpsStatusLine(gpsReady) }
                     RemoteText.hint(ble, hasWakeUpId = uiState.wakeUpId != null, isLookingForCamera = button == CameraButton.STOP)?.let { hint ->
                         item { Note(hint) }
                     }
@@ -174,6 +181,7 @@ fun RemoteScreen(
                             label = { Text(shownMode?.label ?: uiState.currentMode.displayName, maxLines = 1, overflow = TextOverflow.Ellipsis) }
                         )
                     }
+                    item { GpsStatusLine(gpsReady) }
                     readyNotes(ble.details).forEach { line -> item { Note(line.text, isProblem = line.isProblem) } }
                 }
                 RemoteMode.RECORDING -> {
@@ -182,34 +190,18 @@ fun RemoteScreen(
                     item { ShutterLabel(shutterLabel) }
                     item {
                         LiveReadings(
-                            speed = if (gps.hasFix) RemoteText.speed(gps.speedKmh, gps.speedMph, uiState.isSpeedMph) else null,
+                            speed = if (gpsReady) RemoteText.speed(gps.speedKmh, gps.speedMph, inMph) else null,
                             heartRateBpm = heart.bpm
                         )
                     }
+                    // The camera is sent void records until there is a fix again
+                    if (!gpsReady) item { GpsStatusLine(ready = false) }
                 }
             }
             if (mode != RemoteMode.OFFLINE) {
                 cameraReport(ble.details, ble.lastVideoFile, ble.lastVideoSeconds).forEach { line ->
                     item { ReportRow(line) }
                 }
-            }
-            item {
-                OutlinedButton(
-                    onClick = { viewModel.toggleSpeedUnit() },
-                    modifier = Modifier.fillMaxWidth().transformedHeight(this, transformationSpec),
-                    transformation = SurfaceTransformation(transformationSpec),
-                    icon = { Icon(if (gps.hasFix) Icons.Filled.LocationOn else Icons.Filled.LocationOff, contentDescription = null) },
-                    secondaryLabel = {
-                        Text(
-                            when {
-                                !gps.hasFix -> "No GPS Fix"
-                                uiState.isRecording -> "Sending GPS to the Camera"
-                                else -> "GPS Fix, ${gps.satellitesInFix} Satellites"
-                            }
-                        )
-                    },
-                    label = { Text(if (gps.hasFix) RemoteText.speed(gps.speedKmh, gps.speedMph, uiState.isSpeedMph) else "GPS") }
-                )
             }
             (ble.lastError ?: uiState.trackState.lastError)?.let { error ->
                 item { Note(error, isProblem = true) }
@@ -301,6 +293,21 @@ private fun ReadyHeader(ble: BleCameraState) {
             )
             Text(text = "$battery%", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
+    }
+}
+
+/** Whether the watch has a GPS fix to send the camera: green when it has, amber while it waits. */
+@Composable
+private fun GpsStatusLine(ready: Boolean) {
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        Icon(
+            imageVector = if (ready) Icons.Filled.LocationOn else Icons.Filled.LocationOff,
+            contentDescription = null,
+            tint = if (ready) ReadyGreen else StandbyOrange,
+            modifier = Modifier.size(14.dp)
+        )
+        Spacer(Modifier.width(4.dp))
+        Text(text = RemoteText.gpsStatus(ready), style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
     }
 }
 

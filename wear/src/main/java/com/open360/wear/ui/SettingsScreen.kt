@@ -30,6 +30,7 @@ import androidx.wear.compose.material3.Icon
 import androidx.wear.compose.material3.ListHeader
 import androidx.wear.compose.material3.MaterialTheme
 import androidx.wear.compose.material3.OutlinedButton
+import androidx.wear.compose.material3.RadioButton
 import androidx.wear.compose.material3.ScreenScaffold
 import androidx.wear.compose.material3.SurfaceTransformation
 import androidx.wear.compose.material3.SwitchButton
@@ -41,6 +42,7 @@ import com.open360.core.sensors.SensorStatus
 import com.open360.core.sensors.SportsSensorManager
 import com.open360.ui.camera.CameraStatusText
 import com.open360.ui.camera.CameraViewModel
+import com.open360.wear.SpeedUnit
 import com.open360.wear.WatchHeartRate
 import com.open360.wear.WatchHeartRateState
 
@@ -52,12 +54,14 @@ import com.open360.wear.WatchHeartRateState
 fun SettingsScreen(
     viewModel: CameraViewModel,
     heartRate: WatchHeartRate,
+    speedUnit: SpeedUnit,
     onAddSensor: () -> Unit,
     onOpenSensor: (String) -> Unit
 ) {
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
     val sensors by viewModel.sportsSensors.state.collectAsStateWithLifecycle()
     val watchHeartRate by heartRate.state.collectAsStateWithLifecycle()
+    val inMph by speedUnit.inMph.collectAsStateWithLifecycle()
     val askForBodySensors = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) {
         heartRate.onPermissionChanged()
     }
@@ -103,6 +107,23 @@ fun SettingsScreen(
                     secondaryLabel = { Text("Keeps sending GPS with the screen off") },
                     label = { Text("Background GPS") }
                 )
+            }
+            item {
+                ListHeader(
+                    modifier = Modifier.transformedHeight(this, transformationSpec),
+                    transformation = SurfaceTransformation(transformationSpec)
+                ) { Text("Speed Units") }
+            }
+            listOf(false to "km/h", true to "mph").forEach { (mph, label) ->
+                item {
+                    RadioButton(
+                        selected = inMph == mph,
+                        onSelect = { speedUnit.set(mph) },
+                        modifier = Modifier.fillMaxWidth().transformedHeight(this, transformationSpec),
+                        transformation = SurfaceTransformation(transformationSpec),
+                        label = { Text(label) }
+                    )
+                }
             }
             item {
                 ListHeader(

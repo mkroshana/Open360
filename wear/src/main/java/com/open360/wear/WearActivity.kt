@@ -34,6 +34,7 @@ class WearActivity : ComponentActivity() {
     private val cameraViewModel: CameraViewModel by viewModels()
     private lateinit var phoneSettings: PhoneSettingsReceiver
     private lateinit var heartRate: WatchHeartRate
+    private lateinit var speedUnit: SpeedUnit
 
     // When the screen dims the remote stays up in the watch's low-power always-on mode, so a
     // glance shows whether the camera is recording
@@ -72,6 +73,7 @@ class WearActivity : ComponentActivity() {
         lifecycle.addObserver(ambientObserver)
         phoneSettings = PhoneSettingsReceiver(this, ::applyPhoneSettings)
         heartRate = WatchHeartRate(applicationContext, cameraViewModel.sportsSensors)
+        speedUnit = SpeedUnit(applicationContext)
         // The watch's heart rate is read while the camera is on, for the FIT file
         lifecycleScope.launch {
             cameraViewModel.uiState
@@ -91,7 +93,7 @@ class WearActivity : ComponentActivity() {
         runDebugRequest(intent)
 
         setContent {
-            WearApp(viewModel = cameraViewModel, heartRate = heartRate, isAmbient = isAmbient.value)
+            WearApp(viewModel = cameraViewModel, heartRate = heartRate, speedUnit = speedUnit, isAmbient = isAmbient.value)
         }
     }
 
