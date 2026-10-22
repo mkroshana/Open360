@@ -47,6 +47,7 @@ fun WearApp(viewModel: CameraViewModel, heartRate: WatchHeartRate, isAmbient: Bo
                 composable(Routes.REMOTE) {
                     RemoteScreen(
                         viewModel = viewModel,
+                        heartRate = heartRate,
                         onOpenModes = { nav.navigate(Routes.MODES) },
                         onOpenSettings = { nav.navigate(Routes.SETTINGS) }
                     )

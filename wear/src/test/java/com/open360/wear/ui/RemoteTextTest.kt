@@ -19,7 +19,7 @@ class RemoteTextTest {
         assertEquals("Looking for Camera...", RemoteText.status(BleCameraState(connectionStatus = BleConnectionStatus.SCANNING), false, 0))
         assertEquals("Camera Is Off", RemoteText.status(cameraOff, false, 0))
         assertEquals("Switching Camera On...", RemoteText.status(cameraOff.copy(isWaking = true), false, 0))
-        assertEquals("Connected", RemoteText.status(cameraOn, false, 0))
+        assertEquals("Ready", RemoteText.status(cameraOn, false, 0))
         assertEquals("Recording 02:45", RemoteText.status(cameraOn, true, 165))
     }
 
@@ -28,7 +28,7 @@ class RemoteTextTest {
         assertEquals("Recording, Under 1 min", RemoteText.ambientStatus(cameraOn, true, 59))
         assertEquals("Recording, 3 min", RemoteText.ambientStatus(cameraOn, true, 3 * 60 + 59))
         assertEquals("Recording, 1 h 2 min", RemoteText.ambientStatus(cameraOn, true, 3729))
-        assertEquals("Connected", RemoteText.ambientStatus(cameraOn, false, 0))
+        assertEquals("Ready", RemoteText.ambientStatus(cameraOn, false, 0))
     }
 
     @Test

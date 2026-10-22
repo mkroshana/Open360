@@ -20,7 +20,7 @@ object RemoteText {
             isRecording -> "Recording ${elapsed(recordingSeconds)}"
             linked && !ble.isCameraAwake && ble.isWaking -> "Switching Camera On..."
             linked && !ble.isCameraAwake -> "Camera Is Off"
-            linked -> "Connected"
+            linked -> "Ready"
             ble.isReconnecting || ble.isWaking -> "Connecting to Camera..."
             ble.connectionStatus == BleConnectionStatus.SCANNING -> "Looking for Camera..."
             ble.connectionStatus == BleConnectionStatus.CONNECTING -> "Connecting to Camera..."
