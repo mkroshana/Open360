@@ -36,6 +36,17 @@ object RemoteText {
         if (isRecording) "Recording, ${CameraStatusText.timeLeft(recordingSeconds.toInt())}"
         else status(ble, isRecording = false, recordingSeconds = 0)
 
+    /**
+     * What a stopped recording confirms: "Saved, 3 min 2 s" once the camera has named the clip,
+     * "Clip Saved" when it named it without a length, and "Recording Stopped" when it said nothing,
+     * as for one stopped with the camera's button.
+     */
+    fun saved(seconds: Int?, named: Boolean): String = when {
+        named && seconds != null -> "Saved, ${CameraStatusText.clipLength(seconds)}"
+        named -> "Clip Saved"
+        else -> "Recording Stopped"
+    }
+
     /** A recording's length so far, such as "01:05" or "1:02:09". */
     fun elapsed(seconds: Long): String {
         val hours = seconds / 3600

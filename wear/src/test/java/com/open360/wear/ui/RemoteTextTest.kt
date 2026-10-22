@@ -74,4 +74,12 @@ class RemoteTextTest {
         assertEquals("GPS Ready", RemoteText.gpsStatus(true))
         assertEquals("Waiting for GPS", RemoteText.gpsStatus(false))
     }
+
+    @Test
+    fun savedSaysWhatTheCameraReported() {
+        assertEquals("Saved, 3 min 2 s", RemoteText.saved(182, named = true))
+        assertEquals("Saved, 41 s", RemoteText.saved(41, named = true))
+        assertEquals("Clip Saved", RemoteText.saved(null, named = true))
+        assertEquals("Recording Stopped", RemoteText.saved(null, named = false))
+    }
 }

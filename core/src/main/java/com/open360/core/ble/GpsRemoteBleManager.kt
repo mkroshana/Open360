@@ -100,6 +100,10 @@ data class BleCameraState(
     // SystemClock.elapsedRealtime() from which the current recording's GPS is streamed, a little
     // before its first video frame; null when idle
     val gpsStreamStartAtMs: Long? = null,
+    // Photos the camera has answered taking, or refused, on this run of the app: each count goes
+    // up once per answer, so a screen can confirm every photo
+    val photosTaken: Int = 0,
+    val photosFailed: Int = 0,
     // File name of the last video the camera reported saving, e.g. VID_20261012_163049_00_066.mp4.
     // Only known for recordings stopped from the app. Cleared when the next recording starts.
     val lastVideoFile: String? = null,
@@ -265,6 +269,9 @@ class GpsRemoteBleManager(private val context: Context) {
     private var captureChangeTimeoutJob: Job? = null
     @Volatile
     private var stopCaptureSeq = -1
+    // The take-picture command awaiting its answer, which comes once the photo is taken
+    @Volatile
+    private var takePictureSeq = -1
     @Volatile
     private var lastHeardAtMs = 0L
     @Volatile
@@ -1327,6 +1334,11 @@ class GpsRemoteBleManager(private val context: Context) {
                             clockAnswers.add(ClockAnswer(sentAt, SystemClock.elapsedRealtime(), seconds))
                         }
                     }
+                    if (inner.sequence == takePictureSeq) {
+                        takePictureSeq = -1
+                        Log.i(TAG, "Camera took the photo")
+                        _state.update { it.copy(photosTaken = it.photosTaken + 1) }
+                    }
                     if (inner.sequence == stopCaptureSeq) {
                         stopCaptureSeq = -1
                         Go2BleProtocol.parseCapturedFilePath(inner.payload)?.let { path ->
@@ -1347,6 +1359,10 @@ class GpsRemoteBleManager(private val context: Context) {
                     if (inner.sequence == wifiInfoQuerySeq) {
                         wifiInfoQuerySeq = -1
                         wifiInfoReply?.complete(null)
+                    }
+                    if (inner.sequence == takePictureSeq) {
+                        takePictureSeq = -1
+                        _state.update { it.copy(photosFailed = it.photosFailed + 1) }
                     }
                 }
             }
@@ -1527,7 +1543,9 @@ class GpsRemoteBleManager(private val context: Context) {
      */
     fun takePhoto(mode: CameraMode? = null) {
         val command = mode?.startCommand ?: Go2BleProtocol.CMD_TAKE_PICTURE
-        val inner = Go2BleProtocol.encodeInnerMessage(command, nextSeq(), mode?.startPayload() ?: ByteArray(0))
+        val seq = nextSeq()
+        takePictureSeq = seq
+        val inner = Go2BleProtocol.encodeInnerMessage(command, seq, mode?.startPayload() ?: ByteArray(0))
         val packet = Go2BleProtocol.encodeMessagePacket(inner)
         queuePacket(packet)
 

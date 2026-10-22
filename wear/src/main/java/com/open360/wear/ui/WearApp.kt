@@ -78,6 +78,7 @@ fun WearApp(viewModel: CameraViewModel, heartRate: WatchHeartRate, speedUnit: Sp
                 }
             }
             WakeUpOnPhoneDialog(viewModel)
+            CameraConfirmations(viewModel)
         }
     }
 }
