@@ -18,6 +18,7 @@ import androidx.compose.animation.expandVertically
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.shrinkVertically
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -37,6 +38,8 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.relocation.BringIntoViewRequester
+import androidx.compose.foundation.relocation.bringIntoViewRequester
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -68,6 +71,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.State
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -1191,6 +1195,8 @@ fun TactileShutterButton(
     }
 }
 
+// BringIntoViewRequester, for the row of modes
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
 fun CameraControlCard(
     currentMode: CaptureMode,
@@ -1247,9 +1253,14 @@ fun CameraControlCard(
                         val isSelected = mode == shownMode
                         val chipInteraction = remember { MutableInteractionSource() }
                         val chipScale by rememberPressScale(chipInteraction, targetScale = 0.95f)
+                        // The row is wider than the screen, so the camera's mode is scrolled into
+                        // view whenever it changes, from here or on the camera
+                        val inView = remember { BringIntoViewRequester() }
+                        LaunchedEffect(isSelected) { if (isSelected) inView.bringIntoView() }
 
                         Box(
                             modifier = Modifier
+                                .bringIntoViewRequester(inView)
                                 .graphicsLayer {
                                     scaleX = chipScale
                                     scaleY = chipScale
