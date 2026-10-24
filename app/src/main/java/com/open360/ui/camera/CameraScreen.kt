@@ -1318,9 +1318,12 @@ fun CameraControlCard(
                 enter = fadeIn(tween(160, easing = EaseOutCubic)) + expandVertically(animationSpec = tween(200, easing = EaseOutCubic)),
                 exit = fadeOut(tween(100, easing = EaseOutCubic)) + shrinkVertically(animationSpec = tween(160, easing = EaseOutCubic))
             ) {
-                val mins = durationSeconds / 60
+                // 01:05, or 1:02:09 once it passes an hour, as on the watch
+                val hours = durationSeconds / 3600
+                val mins = durationSeconds % 3600 / 60
                 val secs = durationSeconds % 60
-                val formatted = String.format(Locale.US, "%02d:%02d", mins, secs)
+                val formatted = if (hours > 0) String.format(Locale.US, "%d:%02d:%02d", hours, mins, secs)
+                else String.format(Locale.US, "%02d:%02d", mins, secs)
 
                 val pulseTransition = rememberInfiniteTransition(label = "pulse")
                 val pulseAlpha by pulseTransition.animateFloat(
