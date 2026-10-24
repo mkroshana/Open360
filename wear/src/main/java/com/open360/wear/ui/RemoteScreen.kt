@@ -6,13 +6,12 @@ import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.BoxScope
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -57,14 +56,19 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.wear.compose.foundation.lazy.TransformingLazyColumn
 import androidx.wear.compose.foundation.lazy.rememberTransformingLazyColumnState
+import androidx.wear.compose.foundation.pager.HorizontalPager
+import androidx.wear.compose.foundation.pager.rememberPagerState
+import androidx.wear.compose.material3.AnimatedPage
 import androidx.wear.compose.material3.ButtonDefaults
 import androidx.wear.compose.material3.CircularProgressIndicator
 import androidx.wear.compose.material3.CompactButton
 import androidx.wear.compose.material3.EdgeButton
 import androidx.wear.compose.material3.EdgeButtonSize
 import androidx.wear.compose.material3.FilledTonalIconButton
+import androidx.wear.compose.material3.HorizontalPagerScaffold
 import androidx.wear.compose.material3.Icon
 import androidx.wear.compose.material3.IconButtonDefaults
+import androidx.wear.compose.material3.ListHeader
 import androidx.wear.compose.material3.MaterialTheme
 import androidx.wear.compose.material3.OutlinedButton
 import androidx.wear.compose.material3.ProgressIndicatorDefaults
@@ -98,10 +102,18 @@ private enum class RemoteMode {
     RECORDING
 }
 
+// Above and below the shutter, each of a fixed height, so the shutter stays in the same place
+// whether the camera is ready, taking a photo or recording
+private val ABOVE_SHUTTER = 44.dp
+private val BELOW_SHUTTER = 44.dp
+// The buttons either side of the shutter
+private val SIDE_BUTTON = 48.dp
+
 /**
- * The remote. What it shows first follows the camera: the link button at the bottom edge while
- * there is no camera to control, the shutter once it is on, and the running time while it records.
- * Each says whether the watch has GPS. Below come what the camera reports, Disconnect and Settings.
+ * The remote. While there is no camera to control it is a short list with the link button at the
+ * bottom edge. Once the camera is on it is two pages: the controls, which do not scroll, with the
+ * shutter in the middle and the mode button beside it, and, a swipe to the left, what the camera
+ * reports, Disconnect and Settings.
  */
 @Composable
 fun RemoteScreen(
@@ -119,9 +131,6 @@ fun RemoteScreen(
     // Read again with each GPS update, which comes at least once a second while tracking
     val gpsReady = RemoteText.gpsReady(gps.hasFix, SystemClock.elapsedRealtime() - gps.fixElapsedRealtimeMs)
     val haptic = LocalHapticFeedback.current
-    val listState = rememberTransformingLazyColumnState()
-    // Items narrow and shrink as they reach the round screen's top and bottom edges
-    val transformationSpec = rememberTransformationSpec()
 
     val cameraOn = ble.connectionStatus == BleConnectionStatus.CONNECTED && ble.isCameraAwake
     val mode = when {
@@ -129,8 +138,6 @@ fun RemoteScreen(
         cameraOn -> RemoteMode.READY
         else -> RemoteMode.OFFLINE
     }
-    // Each layout opens at its top: the list would otherwise keep its place from the one before
-    LaunchedEffect(mode) { listState.scrollToItem(0) }
     val button = CameraButton.of(ble, uiState.isConnected)
     val cameraMode = ble.details.subModes?.let { CameraMode.of(it) }
     val shownMode = RemoteText.shownMode(uiState.currentMode, cameraMode)
@@ -152,131 +159,261 @@ fun RemoteScreen(
         viewModel.onCameraButton(button)
     }
 
-    val content: @Composable BoxScope.(PaddingValues) -> Unit = { contentPadding ->
+    if (mode == RemoteMode.OFFLINE) {
+        OfflineRemote(
+            ble = ble,
+            cameraName = cameraName,
+            hint = RemoteText.hint(ble, hasWakeUpId = uiState.wakeUpId != null, isLookingForCamera = button == CameraButton.STOP),
+            gpsReady = gpsReady,
+            error = ble.lastError ?: uiState.trackState.lastError,
+            button = button,
+            onLinkButton = onLinkButton,
+            onOpenSettings = onOpenSettings
+        )
+        return
+    }
+
+    val pagerState = rememberPagerState(pageCount = { 2 })
+    // Back on the controls whenever a recording starts or stops
+    LaunchedEffect(mode) { pagerState.animateScrollToPage(0) }
+    HorizontalPagerScaffold(pagerState = pagerState) {
+        HorizontalPager(state = pagerState) { page ->
+            AnimatedPage(pageIndex = page, pagerState = pagerState) {
+                if (page == 0) {
+                    ScreenScaffold {
+                        Column(
+                            modifier = Modifier.fillMaxSize(),
+                            verticalArrangement = Arrangement.spacedBy(6.dp, Alignment.CenterVertically),
+                            horizontalAlignment = Alignment.CenterHorizontally
+                        ) {
+                            Column(
+                                modifier = Modifier.height(ABOVE_SHUTTER).padding(horizontal = 36.dp),
+                                verticalArrangement = Arrangement.Bottom,
+                                horizontalAlignment = Alignment.CenterHorizontally
+                            ) {
+                                if (mode == RemoteMode.RECORDING) RecordingTimer(RemoteText.elapsed(uiState.recordingDurationSeconds))
+                                else ReadyHeader(ble)
+                                Text(
+                                    text = shownMode?.label ?: uiState.currentMode.displayName,
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis
+                                )
+                            }
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(10.dp)
+                            ) {
+                                ModeButton(
+                                    icon = shownMode?.let { modeIcon(it) } ?: modeIcon(uiState.currentMode),
+                                    modeName = shownMode?.label ?: uiState.currentMode.displayName,
+                                    // Held while a recording runs, as the camera's mode is
+                                    enabled = !busy && mode != RemoteMode.RECORDING,
+                                    onClick = onOpenModes
+                                )
+                                Shutter(
+                                    isVideo = uiState.currentMode == CaptureMode.VIDEO,
+                                    isRecording = mode == RemoteMode.RECORDING,
+                                    busy = busy,
+                                    label = shutterLabel,
+                                    onClick = onShutter
+                                )
+                                // Keeps the shutter in the middle
+                                Spacer(Modifier.size(SIDE_BUTTON))
+                            }
+                            Column(
+                                modifier = Modifier.height(BELOW_SHUTTER).padding(horizontal = 28.dp),
+                                horizontalAlignment = Alignment.CenterHorizontally
+                            ) {
+                                ShutterLabel(shutterLabel)
+                                UnderShutterLine(
+                                    warning = cameraWarnings(ble.details).firstOrNull(),
+                                    gpsReady = gpsReady,
+                                    isRecording = mode == RemoteMode.RECORDING,
+                                    left = captureLeft(ble.details),
+                                    speed = if (gpsReady) RemoteText.speed(gps.speedKmh, gps.speedMph, inMph) else null,
+                                    heartRateBpm = heart.bpm
+                                )
+                            }
+                        }
+                    }
+                } else {
+                    CameraPage(
+                        ble = ble,
+                        cameraName = cameraName,
+                        gpsReady = gpsReady,
+                        error = ble.lastError ?: uiState.trackState.lastError,
+                        button = button,
+                        onLinkButton = onLinkButton,
+                        onOpenSettings = onOpenSettings
+                    )
+                }
+            }
+        }
+    }
+}
+
+/** While there is no camera to control: the camera, what to do next, and the link button on the edge. */
+@Composable
+private fun OfflineRemote(
+    ble: BleCameraState,
+    cameraName: String,
+    hint: String?,
+    gpsReady: Boolean,
+    error: String?,
+    button: CameraButton,
+    onLinkButton: () -> Unit,
+    onOpenSettings: () -> Unit
+) {
+    val listState = rememberTransformingLazyColumnState()
+    // The one thing to do: the link button on the bottom edge, visible without scrolling
+    ScreenScaffold(
+        scrollState = listState,
+        edgeButton = {
+            EdgeButton(
+                onClick = onLinkButton,
+                buttonSize = EdgeButtonSize.Small,
+                colors = if (button == CameraButton.STOP) ButtonDefaults.filledTonalButtonColors() else ButtonDefaults.buttonColors()
+            ) {
+                Icon(linkIcon(button), contentDescription = null, modifier = Modifier.size(20.dp))
+                Spacer(Modifier.width(6.dp))
+                Text(button.label)
+            }
+        }
+    ) { contentPadding ->
         TransformingLazyColumn(
             state = listState,
             contentPadding = contentPadding,
             verticalArrangement = Arrangement.spacedBy(6.dp),
             horizontalAlignment = Alignment.CenterHorizontally
         ) {
-            when (mode) {
-                RemoteMode.OFFLINE -> {
-                    item { OfflineHeader(ble, cameraName, RemoteText.status(ble, false, 0)) }
-                    RemoteText.hint(ble, hasWakeUpId = uiState.wakeUpId != null, isLookingForCamera = button == CameraButton.STOP)?.let { hint ->
-                        item { Note(hint) }
-                    }
-                    // GPS and Settings share one row, so the screen fits above the edge button
-                    item {
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            GpsStatusLine(gpsReady)
-                            Spacer(Modifier.width(12.dp))
-                            FilledTonalIconButton(
-                                onClick = onOpenSettings,
-                                modifier = Modifier.size(IconButtonDefaults.ExtraSmallButtonSize)
-                            ) {
-                                // Small and muted, so it does not compete with the edge button
-                                Icon(
-                                    Icons.Filled.Settings,
-                                    contentDescription = "Settings",
-                                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                                    modifier = Modifier.size(18.dp)
-                                )
-                            }
-                        }
-                    }
-                }
-                RemoteMode.READY -> {
-                    item { ReadyHeader(ble) }
-                    item { Shutter(isVideo = uiState.currentMode == CaptureMode.VIDEO, isRecording = false, busy = busy, label = shutterLabel, onClick = onShutter) }
-                    item { ShutterLabel(shutterLabel) }
-                    item {
-                        CompactButton(
-                            onClick = onOpenModes,
-                            enabled = !busy,
-                            colors = ButtonDefaults.filledTonalButtonColors(),
-                            transformation = SurfaceTransformation(transformationSpec),
-                            modifier = Modifier.transformedHeight(this, transformationSpec),
-                            icon = {
-                                Icon(
-                                    imageVector = shownMode?.let { modeIcon(it) } ?: modeIcon(uiState.currentMode),
-                                    contentDescription = null,
-                                    modifier = Modifier.size(16.dp)
-                                )
-                            },
-                            label = { Text(shownMode?.label ?: uiState.currentMode.displayName, maxLines = 1, overflow = TextOverflow.Ellipsis) }
-                        )
-                    }
-                    item { GpsStatusLine(gpsReady) }
-                    readyNotes(ble.details).forEach { line -> item { Note(line.text, isProblem = line.isProblem) } }
-                }
-                RemoteMode.RECORDING -> {
-                    item { RecordingTimer(RemoteText.elapsed(uiState.recordingDurationSeconds)) }
-                    item { Shutter(isVideo = true, isRecording = true, busy = busy, label = shutterLabel, onClick = onShutter) }
-                    item { ShutterLabel(shutterLabel) }
-                    item {
-                        LiveReadings(
-                            speed = if (gpsReady) RemoteText.speed(gps.speedKmh, gps.speedMph, inMph) else null,
-                            heartRateBpm = heart.bpm
-                        )
-                    }
-                    // The camera is sent void records until there is a fix again
-                    if (!gpsReady) item { GpsStatusLine(ready = false) }
-                }
-            }
-            if (mode != RemoteMode.OFFLINE) {
-                cameraReport(ble.details, ble.lastVideoFile, ble.lastVideoSeconds).forEach { line ->
-                    item { ReportRow(line) }
-                }
-            }
-            (ble.lastError ?: uiState.trackState.lastError)?.let { error ->
-                item { Note(error, isProblem = true) }
-            }
-            // Ending the link is rarely wanted while the camera is on, so it waits below the rest
-            if (mode != RemoteMode.OFFLINE) {
-                item {
-                    OutlinedButton(
-                        onClick = onLinkButton,
-                        modifier = Modifier.fillMaxWidth().transformedHeight(this, transformationSpec),
-                        transformation = SurfaceTransformation(transformationSpec),
-                        icon = { Icon(linkIcon(button), contentDescription = null) },
-                        label = { Text(button.label) }
-                    )
-                }
-            }
-            if (mode != RemoteMode.OFFLINE) {
-                item {
-                    CompactButton(
+            item { OfflineHeader(ble, cameraName, RemoteText.status(ble, false, 0)) }
+            hint?.let { item { Note(it) } }
+            // GPS and Settings share one row, so the screen fits above the edge button
+            item {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    GpsStatusLine(gpsReady)
+                    Spacer(Modifier.width(12.dp))
+                    FilledTonalIconButton(
                         onClick = onOpenSettings,
-                        colors = ButtonDefaults.filledTonalButtonColors(),
-                        transformation = SurfaceTransformation(transformationSpec),
-                        modifier = Modifier.transformedHeight(this, transformationSpec),
-                        icon = { Icon(Icons.Filled.Settings, contentDescription = null, modifier = Modifier.size(16.dp)) },
-                        label = { Text("Settings") }
-                    )
+                        modifier = Modifier.size(IconButtonDefaults.ExtraSmallButtonSize)
+                    ) {
+                        // Small and muted, so it does not compete with the edge button
+                        Icon(
+                            Icons.Filled.Settings,
+                            contentDescription = "Settings",
+                            tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.size(18.dp)
+                        )
+                    }
                 }
+            }
+            error?.let { item { Note(it, isProblem = true) } }
+        }
+    }
+}
+
+/**
+ * The page a swipe to the left of the controls: what the camera reports, whether the watch has
+ * GPS, and Disconnect and Settings, which are rarely wanted while the camera is on.
+ */
+@Composable
+private fun CameraPage(
+    ble: BleCameraState,
+    cameraName: String,
+    gpsReady: Boolean,
+    error: String?,
+    button: CameraButton,
+    onLinkButton: () -> Unit,
+    onOpenSettings: () -> Unit
+) {
+    val listState = rememberTransformingLazyColumnState()
+    // Items narrow and shrink as they reach the round screen's top and bottom edges
+    val transformationSpec = rememberTransformationSpec()
+    ScreenScaffold(scrollState = listState) { contentPadding ->
+        TransformingLazyColumn(
+            state = listState,
+            contentPadding = contentPadding,
+            verticalArrangement = Arrangement.spacedBy(6.dp),
+            horizontalAlignment = Alignment.CenterHorizontally
+        ) {
+            item {
+                ListHeader(
+                    modifier = Modifier.transformedHeight(this, transformationSpec),
+                    transformation = SurfaceTransformation(transformationSpec)
+                ) { Text(cameraName) }
+            }
+            cameraWarnings(ble.details).forEach { warning -> item { Note(warning, isProblem = true) } }
+            cameraReport(ble.details, ble.lastVideoFile, ble.lastVideoSeconds).forEach { line ->
+                item { ReportRow(line) }
+            }
+            item { GpsStatusLine(gpsReady) }
+            error?.let { item { Note(it, isProblem = true) } }
+            item {
+                OutlinedButton(
+                    onClick = onLinkButton,
+                    modifier = Modifier.fillMaxWidth().transformedHeight(this, transformationSpec),
+                    transformation = SurfaceTransformation(transformationSpec),
+                    icon = { Icon(linkIcon(button), contentDescription = null) },
+                    label = { Text(button.label) }
+                )
+            }
+            item {
+                CompactButton(
+                    onClick = onOpenSettings,
+                    colors = ButtonDefaults.filledTonalButtonColors(),
+                    transformation = SurfaceTransformation(transformationSpec),
+                    modifier = Modifier.transformedHeight(this, transformationSpec),
+                    icon = { Icon(Icons.Filled.Settings, contentDescription = null, modifier = Modifier.size(16.dp)) },
+                    label = { Text("Settings") }
+                )
             }
         }
     }
+}
 
-    if (mode == RemoteMode.OFFLINE) {
-        // The one thing to do: the link button on the bottom edge, visible without scrolling
-        ScreenScaffold(
-            scrollState = listState,
-            edgeButton = {
-                EdgeButton(
-                    onClick = onLinkButton,
-                    buttonSize = EdgeButtonSize.Small,
-                    colors = if (button == CameraButton.STOP) ButtonDefaults.filledTonalButtonColors() else ButtonDefaults.buttonColors()
-                ) {
-                    Icon(linkIcon(button), contentDescription = null, modifier = Modifier.size(20.dp))
-                    Spacer(Modifier.width(6.dp))
-                    Text(button.label)
-                }
-            },
-            content = content
-        )
-    } else {
-        ScreenScaffold(scrollState = listState, content = content)
+/** Beside the shutter: the camera's mode as its icon, which opens the list of modes. */
+@Composable
+private fun ModeButton(icon: ImageVector, modeName: String, enabled: Boolean, onClick: () -> Unit) {
+    FilledTonalIconButton(
+        onClick = onClick,
+        enabled = enabled,
+        modifier = Modifier.size(SIDE_BUTTON)
+    ) {
+        Icon(imageVector = icon, contentDescription = "Mode: $modeName", modifier = Modifier.size(24.dp))
+    }
+}
+
+/**
+ * The one line under the shutter's label, whichever matters most: a camera warning, then the
+ * watch waiting for GPS, as the camera is sent void records until there is a fix, then speed and
+ * heart rate while recording, or the time or photos left.
+ */
+@Composable
+private fun UnderShutterLine(
+    warning: String?,
+    gpsReady: Boolean,
+    isRecording: Boolean,
+    left: String?,
+    speed: String?,
+    heartRateBpm: Int?
+) {
+    when {
+        warning != null -> Note(warning, isProblem = true)
+        !gpsReady -> GpsStatusLine(ready = false)
+        isRecording -> LiveReadings(speed, heartRateBpm)
+        left != null -> Row(verticalAlignment = Alignment.CenterVertically) {
+            Icon(
+                imageVector = Icons.Filled.LocationOn,
+                contentDescription = RemoteText.gpsStatus(true),
+                tint = ReadyGreen,
+                modifier = Modifier.size(14.dp)
+            )
+            Spacer(Modifier.width(4.dp))
+            Text(text = left, style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1)
+        }
+        else -> GpsStatusLine(ready = true)
     }
 }
 
@@ -365,7 +502,7 @@ private fun GpsStatusLine(ready: Boolean) {
 /** A recording's running time, large and red, in place of the status while it records. */
 @Composable
 private fun RecordingTimer(elapsed: String) {
-    Text(text = elapsed, style = MaterialTheme.typography.numeralSmall, color = RecordingRed)
+    Text(text = elapsed, style = MaterialTheme.typography.numeralExtraSmall, color = RecordingRed)
 }
 
 /** The watch's speed and heart rate while recording, each left out when there is none. */
@@ -452,29 +589,36 @@ private fun Note(text: String, isProblem: Boolean = false) {
     )
 }
 
-/** A short line under the shutter, which may be a warning. */
-private data class NoteLine(val text: String, val isProblem: Boolean = false)
+/** The camera's warnings, most pressing first. */
+private fun cameraWarnings(details: CameraDetails): List<String> = buildList {
+    if (details.temperatureHigh) add("Camera Temperature High")
+    if (details.batteryLow) add("Camera Battery Low")
+    CameraStatusText.storageProblem(details.cardState)?.let { add("Storage $it") }
+}
 
-/** Under the shutter: the camera's warnings first, then the recording time or photos left. */
-private fun readyNotes(details: CameraDetails): List<NoteLine> = buildList {
-    if (details.temperatureHigh) add(NoteLine("Camera Temperature High", isProblem = true))
-    if (details.batteryLow) add(NoteLine("Camera Battery Low", isProblem = true))
-    val storageProblem = CameraStatusText.storageProblem(details.cardState)
-    if (storageProblem != null) add(NoteLine("Storage $storageProblem", isProblem = true))
-    val left = details.captureSecondsLeft
-    if (storageProblem == null && left != null) {
-        if (details.subModes?.isPhoto == true) add(NoteLine("${CameraStatusText.photosLeft(left)} photos left"))
-        else add(NoteLine("${CameraStatusText.timeLeft(left)} left"))
-    }
+/** The recording time or photos left, as in "1 h 52 min left"; null with a storage problem. */
+private fun captureLeft(details: CameraDetails): String? {
+    if (CameraStatusText.storageProblem(details.cardState) != null) return null
+    val left = details.captureSecondsLeft ?: return null
+    return if (details.subModes?.isPhoto == true) "${CameraStatusText.photosLeft(left)} photos left"
+    else "${CameraStatusText.timeLeft(left)} left"
 }
 
 /** One line of what the camera reports: a label and its value. */
 private data class ReportLine(val label: String, val value: String, val isProblem: Boolean = false)
 
-/** The rest of what the camera reports, below the controls: the pod, the recording mode and the last clip. */
+/**
+ * What the camera reports, on the page beside the controls: the time or photos left, the pod and
+ * the last clip. Its mode is left out, as the controls show it.
+ */
 private fun cameraReport(details: CameraDetails, lastVideoFile: String?, lastVideoSeconds: Int?): List<ReportLine> = buildList {
+    if (CameraStatusText.storageProblem(details.cardState) == null) {
+        details.captureSecondsLeft?.let { left ->
+            if (details.subModes?.isPhoto == true) add(ReportLine("Photos Left", CameraStatusText.photosLeft(left)))
+            else add(ReportLine("Time Left", CameraStatusText.timeLeft(left)))
+        }
+    }
     details.pod?.let { add(ReportLine("Action Pod", CameraStatusText.pod(it), isProblem = CameraStatusText.podIsLow(it))) }
-    CameraStatusText.recordingMode(details.recordingState)?.let { add(ReportLine("Recording Mode", it)) }
     if (lastVideoFile != null) {
         add(ReportLine("Last Clip", lastVideoSeconds?.let { CameraStatusText.clipLength(it) } ?: "Saved"))
     }
