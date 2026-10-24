@@ -71,6 +71,7 @@ import androidx.wear.compose.material3.IconButtonDefaults
 import androidx.wear.compose.material3.ListHeader
 import androidx.wear.compose.material3.MaterialTheme
 import androidx.wear.compose.material3.OutlinedButton
+import androidx.wear.compose.material3.OutlinedIconButton
 import androidx.wear.compose.material3.ProgressIndicatorDefaults
 import androidx.wear.compose.material3.ScreenScaffold
 import androidx.wear.compose.material3.SurfaceTransformation
@@ -112,8 +113,8 @@ private val SIDE_BUTTON = 48.dp
 /**
  * The remote. While there is no camera to control it is a short list with the link button at the
  * bottom edge. Once the camera is on it is two pages: the controls, which do not scroll, with the
- * shutter in the middle and the mode button beside it, and, a swipe to the left, what the camera
- * reports, Disconnect and Settings.
+ * shutter in the middle between the mode and a Video and Photo switch, and, a swipe to the left,
+ * what the camera reports, Disconnect and Settings.
  */
 @Composable
 fun RemoteScreen(
@@ -219,8 +220,11 @@ fun RemoteScreen(
                                     label = shutterLabel,
                                     onClick = onShutter
                                 )
-                                // Keeps the shutter in the middle
-                                Spacer(Modifier.size(SIDE_BUTTON))
+                                PhotoVideoSwitch(
+                                    current = uiState.currentMode,
+                                    enabled = !busy && mode != RemoteMode.RECORDING,
+                                    onSwitch = { viewModel.setMode(it) }
+                                )
                             }
                             Column(
                                 modifier = Modifier.height(BELOW_SHUTTER).padding(horizontal = 28.dp),
@@ -382,6 +386,24 @@ private fun ModeButton(icon: ImageVector, modeName: String, enabled: Boolean, on
         modifier = Modifier.size(SIDE_BUTTON)
     ) {
         Icon(imageVector = icon, contentDescription = "Mode: $modeName", modifier = Modifier.size(24.dp))
+    }
+}
+
+/**
+ * Beside the shutter, across from the mode: one tap between Video and Photo, showing the one it
+ * switches to. Outlined, where the mode is filled, as it is not the mode the camera is in. The
+ * camera goes back to the mode it was last seen in on that side since the app started, or to
+ * plain Video or Photo.
+ */
+@Composable
+private fun PhotoVideoSwitch(current: CaptureMode, enabled: Boolean, onSwitch: (CaptureMode) -> Unit) {
+    val other = if (current == CaptureMode.PHOTO) CaptureMode.VIDEO else CaptureMode.PHOTO
+    OutlinedIconButton(
+        onClick = { onSwitch(other) },
+        enabled = enabled,
+        modifier = Modifier.size(SIDE_BUTTON)
+    ) {
+        Icon(imageVector = modeIcon(other), contentDescription = "Switch to ${other.displayName}", modifier = Modifier.size(24.dp))
     }
 }
 
