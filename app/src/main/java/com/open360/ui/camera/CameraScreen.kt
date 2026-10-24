@@ -194,6 +194,7 @@ fun CameraScreen(
                 isRecording = uiState.isRecording,
                 isStarting = uiState.bleState.isCaptureStarting,
                 isStopping = uiState.bleState.isCaptureStopping,
+                isTakingPhoto = uiState.bleState.isTakingPhoto,
                 durationSeconds = uiState.recordingDurationSeconds,
                 isConnected = uiState.isConnected,
                 isAsleep = isAsleep,
@@ -1196,6 +1197,8 @@ fun CameraControlCard(
     isRecording: Boolean,
     isStarting: Boolean = false,
     isStopping: Boolean = false,
+    // From a photo tap until the camera answers, about 3 to 5 s
+    isTakingPhoto: Boolean = false,
     durationSeconds: Long,
     isConnected: Boolean,
     isAsleep: Boolean = false,
@@ -1204,7 +1207,7 @@ fun CameraControlCard(
     onCameraModeSelected: (CameraMode) -> Unit = {},
     onShutterClick: () -> Unit
 ) {
-    val modeLocked = isRecording || isStarting || isStopping
+    val modeLocked = isRecording || isStarting || isStopping || isTakingPhoto
     val shownMode = cameraMode?.takeIf { it.isPhoto == (currentMode == CaptureMode.PHOTO) }
 
     ElevatedCard(
@@ -1289,7 +1292,8 @@ fun CameraControlCard(
             TactileShutterButton(
                 currentMode = currentMode,
                 isRecording = isRecording,
-                isStarting = isStarting,
+                // Waiting for the camera to answer either way: the shutter pulses and takes no tap
+                isStarting = isStarting || isTakingPhoto,
                 isStopping = isStopping,
                 enabled = isConnected && !isAsleep,
                 onClick = onShutterClick
@@ -1341,7 +1345,9 @@ fun CameraControlCard(
                 }
             }
 
-            val actionLabel = if (isStopping) {
+            val actionLabel = if (isTakingPhoto) {
+                "Taking Photo..."
+            } else if (isStopping) {
                 "Stopping..."
             } else if (isRecording) {
                 if (shownMode?.isPhoto == true) "Stop ${shownMode.label}" else "Stop Recording"
