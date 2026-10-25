@@ -9,6 +9,17 @@ class GpsStreamScheduleTest {
     private fun schedule() = GpsStreamSchedule(periodMs = 100, maxWaitMs = 4000)
 
     @Test
+    fun theNextMomentIsTheFirstNotYetHandedOut() {
+        val s = schedule()
+        assertEquals(null, s.nextMoment())
+        s.setStart(10_000)
+        assertEquals(10_000L, s.nextMoment())
+        s.due(nowMs = 11_500, newestFixMs = 10_700)
+        // Handed over with the link, the stream carries on from here
+        assertEquals(10_800L, s.nextMoment())
+    }
+
+    @Test
     fun nothingIsDueWhileIdle() {
         assertTrue(schedule().due(nowMs = 50_000, newestFixMs = 49_500).isEmpty())
     }

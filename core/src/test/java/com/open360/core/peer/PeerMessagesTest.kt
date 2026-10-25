@@ -6,6 +6,7 @@ import com.open360.core.ble.CameraDetails
 import com.open360.core.ble.CameraMode
 import com.open360.core.ble.Go2BleProtocol
 import com.open360.core.ble.WakeUpRegistration
+import com.open360.core.gps.GpsFix
 import com.open360.core.gps.GpsTelemetry
 import com.open360.core.model.CaptureMode
 import com.open360.ui.camera.CameraButton
@@ -129,10 +130,34 @@ class PeerMessagesTest {
             PeerCommand.SetCameraMode(CameraMode.HDR_PHOTO),
             PeerCommand.PressCameraButton(CameraButton.WAKE_UP),
             PeerCommand.GiveLink,
-            PeerCommand.TakeLink,
+            PeerCommand.TakeLink(),
             PeerCommand.TakeLinkFailed
         )
         commands.forEach { assertEquals(it, PeerMessages.decodeCommand(PeerMessages.encodeCommand(it))) }
+    }
+
+    @Test
+    fun testARecordingsStreamGoesWithTheLink() {
+        // As a phone hands it over: the next record due 1.4 s before the move, two fixes around it
+        val stream = StreamHandover(
+            nextMomentUtcMs = 1_761_380_000_100L,
+            stampOffsetMs = -174L,
+            behindPictureMs = 550L,
+            fixes = listOf(
+                GpsFix(1_761_379_999_000L, 1_761_379_999_000L, 6.9271, 79.8612, 12.5, 10.0, 271.5),
+                GpsFix(1_761_380_000_000L, 1_761_380_000_000L, 6.92711, 79.86111, 12.4, 10.2, 271.75)
+            )
+        )
+        assertEquals(PeerCommand.TakeLink(stream), PeerMessages.decodeCommand(PeerMessages.encodeCommand(PeerCommand.TakeLink(stream))))
+        // A handover with no fixes to give
+        val bare = stream.copy(fixes = emptyList())
+        assertEquals(PeerCommand.TakeLink(bare), PeerMessages.decodeCommand(PeerMessages.encodeCommand(PeerCommand.TakeLink(bare))))
+    }
+
+    @Test
+    fun testABrokenStreamIsRefused() {
+        assertNull(PeerMessages.decodeCommand("take_link 1761380000100 -174".toByteArray()))
+        assertNull(PeerMessages.decodeCommand("take_link 1761380000100 -174 550 1761379999000,6.9271,79.8612".toByteArray()))
     }
 
     @Test

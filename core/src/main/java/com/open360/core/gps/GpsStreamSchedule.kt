@@ -64,6 +64,9 @@ class GpsStreamSchedule(private val periodMs: Long, private val maxWaitMs: Long)
         return moments
     }
 
+    /** The moment of the next sample to be handed out, or null when not recording. */
+    fun nextMoment(): Long? = startMs?.let { it + nextIndex * periodMs }
+
     companion object {
         private const val NEW_RECORDING_MS = 500L
         private const val MAX_BURST = 50

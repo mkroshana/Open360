@@ -67,13 +67,14 @@ class LinkSharingTest {
     }
 
     @Test
-    fun testTheLinkMovesOnlyWithTheCameraOnAndIdle() {
+    fun testTheLinkMovesOnlyWithTheCameraOnAndNothingToConfirm() {
         assertTrue(LinkSharing.canMoveLink(linked))
+        // Its GPS stream goes with it
+        assertTrue(LinkSharing.canMoveLink(recording))
         assertFalse(LinkSharing.canMoveLink(none))
         assertFalse(LinkSharing.canMoveLink(looking))
         // Linked to a camera that is off
         assertFalse(LinkSharing.canMoveLink(linked.copy(isCameraAwake = false)))
-        assertFalse(LinkSharing.canMoveLink(recording))
         assertFalse(LinkSharing.canMoveLink(linked.copy(isCaptureStarting = true)))
         assertFalse(LinkSharing.canMoveLink(linked.copy(isCaptureStopping = true)))
         assertFalse(LinkSharing.canMoveLink(linked.copy(isTakingPhoto = true)))

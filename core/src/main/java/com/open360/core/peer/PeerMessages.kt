@@ -5,6 +5,7 @@ import com.open360.core.ble.BleConnectionStatus
 import com.open360.core.ble.CameraDetails
 import com.open360.core.ble.CameraMode
 import com.open360.core.ble.Go2BleProtocol
+import com.open360.core.gps.GpsFix
 import com.open360.core.gps.GpsTelemetry
 import com.open360.core.model.CaptureMode
 import com.open360.ui.camera.CameraButton
@@ -42,6 +43,23 @@ data class PeerSnapshot(
 val BleCameraState.holdsLink: Boolean
     get() = connectionStatus != BleConnectionStatus.DISCONNECTED || isReconnecting || isWaking
 
+/**
+ * A recording's GPS stream, handed over with its link so that the device taking the link carries
+ * it on from the next record, instead of joining the recording late and sending it from the start
+ * again, which the camera would keep as well. Times are GPS time, as the two devices' own clocks
+ * differ.
+ */
+data class StreamHandover(
+    // The moment of the next record, the first the device taking the link sends; records are 100 ms apart
+    val nextMomentUtcMs: Long,
+    // How much later than its moment each record is stamped, fixed for the recording (CameraClock)
+    val stampOffsetMs: Long,
+    // How much later than the picture the sender's GPS reports motion (gps_behind_picture_ms)
+    val behindPictureMs: Long,
+    // The sender's fixes from a little before the next moment, each with elapsedMs set to its GPS time
+    val fixes: List<GpsFix>
+)
+
 /** What one app asks the other to do. */
 sealed interface PeerCommand {
     /** The shutter, pressed on the device that does not hold the link. */
@@ -59,8 +77,11 @@ sealed interface PeerCommand {
     /** Asks the app holding the link to move it to the sender. */
     data object GiveLink : PeerCommand
 
-    /** The sender has let go of the link to hand it over: the receiver links to the camera now. */
-    data object TakeLink : PeerCommand
+    /**
+     * The sender has let go of the link to hand it over: the receiver links to the camera now,
+     * carrying on the recording's GPS stream when there is one.
+     */
+    data class TakeLink(val stream: StreamHandover? = null) : PeerCommand
 
     /** The receiver of TakeLink could not link in time, so the sender links again. */
     data object TakeLinkFailed : PeerCommand
@@ -111,7 +132,7 @@ object PeerMessages {
         is PeerCommand.SetCameraMode -> "camera_mode ${command.mode.name}"
         is PeerCommand.PressCameraButton -> "button ${command.button.name}"
         PeerCommand.GiveLink -> "give_link"
-        PeerCommand.TakeLink -> "take_link"
+        is PeerCommand.TakeLink -> command.stream?.let { "take_link ${encodeStream(it)}" } ?: "take_link"
         PeerCommand.TakeLinkFailed -> "take_link_failed"
     }.toByteArray(Charsets.UTF_8)
 
@@ -126,13 +147,39 @@ object PeerMessages {
                 "camera_mode" -> PeerCommand.SetCameraMode(CameraMode.valueOf(argument ?: return null))
                 "button" -> PeerCommand.PressCameraButton(CameraButton.valueOf(argument ?: return null))
                 "give_link" -> PeerCommand.GiveLink
-                "take_link" -> PeerCommand.TakeLink
+                "take_link" -> PeerCommand.TakeLink(argument?.let { decodeStream(it) ?: return null })
                 "take_link_failed" -> PeerCommand.TakeLinkFailed
                 else -> null
             }
         } catch (_: IllegalArgumentException) {
             null
         }
+    }
+
+    // The next moment, the stamp offset and the delay, then each fix as its comma-separated values
+    private fun encodeStream(stream: StreamHandover): String = buildString {
+        append("${stream.nextMomentUtcMs} ${stream.stampOffsetMs} ${stream.behindPictureMs}")
+        stream.fixes.forEach { fix ->
+            append(" ${fix.utcMs},${fix.latitude},${fix.longitude},${fix.altitudeMeters},${fix.speedMps},${fix.bearingDegrees}")
+        }
+    }
+
+    private fun decodeStream(text: String): StreamHandover? {
+        val parts = text.split(' ')
+        if (parts.size < 3) return null
+        val fixes = parts.drop(3).map { part ->
+            val values = part.split(',')
+            if (values.size != 6) return null
+            val utcMs = values[0].toLongOrNull() ?: return null
+            val numbers = values.drop(1).map { it.toDoubleOrNull() ?: return null }
+            GpsFix(utcMs, utcMs, numbers[0], numbers[1], numbers[2], numbers[3], numbers[4])
+        }
+        return StreamHandover(
+            nextMomentUtcMs = parts[0].toLongOrNull() ?: return null,
+            stampOffsetMs = parts[1].toLongOrNull() ?: return null,
+            behindPictureMs = parts[2].toLongOrNull() ?: return null,
+            fixes = fixes
+        )
     }
 
     // The receiver keeps its own wake-up registration, and the clock offset and the GPS stream's

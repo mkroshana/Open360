@@ -41,12 +41,12 @@ object LinkSharing {
 
     /**
      * Whether the link on which [camera] is seen can be moved to the other device: the camera is
-     * on and idle. Not during a recording, as the other device would join it late and send its
-     * GPS from the start a second time, nor while a photo, start or stop is being confirmed.
+     * on, and no photo, start or stop is waiting for the camera to confirm it. A recording moves
+     * with its GPS stream (StreamHandover).
      */
     fun canMoveLink(camera: BleCameraState): Boolean =
         camera.connectionStatus == BleConnectionStatus.CONNECTED && camera.isCameraAwake &&
-            !camera.isRecording && !camera.isCaptureStarting && !camera.isCaptureStopping &&
+            !camera.isCaptureStarting && !camera.isCaptureStopping &&
             !camera.isTakingPhoto && !camera.isWaking && !camera.isReconnecting
 
     // Scanning, with no link yet and none being opened again

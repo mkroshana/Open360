@@ -35,6 +35,7 @@ import com.open360.core.peer.PeerDevice
 import com.open360.core.peer.PeerLink
 import com.open360.core.peer.PeerMessages
 import com.open360.core.peer.PeerSnapshot
+import com.open360.core.peer.StreamHandover
 import com.open360.core.peer.holdsLink
 import java.util.UUID
 import kotlinx.coroutines.CompletableDeferred
@@ -139,6 +140,22 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
         private const val TAKE_LINK_MS = 25_000L
         private const val MOVE_LINK_MS = 30_000L
 
+        // A recording moved with its link (StreamHandover): the records already made are given
+        // this long to go out, and the last write a little longer, before the link is let go. The
+        // device taking it over is sent the fixes from this long before the next record. The device
+        // handing it over keeps its GPS on for the other until that one has a fix of its own, the
+        // recording ends or the two lose each other, and for this long at most: indoors a watch
+        // whose GPS had been paused took about 70 s to its first fix (clip 193, 2026-10-25).
+        private const val STREAM_DRAIN_MS = 4000L
+        private const val LAST_WRITE_MS = 300L
+        private const val HANDOVER_FIXES_MS = 3000L
+        private const val RELAY_FIXES_MS = 5 * 60_000L
+        // A fix counts as current for this long
+        private const val CURRENT_FIX_MS = 3000L
+        // A stream handed over is dropped when the new link has been up this long without the
+        // camera saying it is recording, as when the recording was stopped during the move
+        private const val RESUME_WAIT_FOR_RECORDING_MS = 5000L
+
         private const val SERVICE_TEXT_OWN_LINK = "GPS is sent to the camera while recording"
     }
 
@@ -191,6 +208,37 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
     // Until when this app is taking over a link the other app let go of, 0 when it is not
     private var takingLinkUntilMs = 0L
     private var takeJob: Job? = null
+    private var moveStartedAtMs = 0L
+    // Set while a recording's GPS stream is being handed to the other app: no more records are made
+    private var handingOverStream = false
+    // The stream handed over with the last move from here, kept in case the other app does not
+    // take the link and this one carries the stream on itself
+    private var handedOverStream: StreamHandover? = null
+    // Until when this app keeps its GPS on after handing a recording over, so that the other app
+    // has its fixes until it has its own; 0 when it does not
+    private var relayFixesUntilMs = 0L
+    // A recording's stream carried on from where it was handed over
+    private var resumedStream: ResumedStream? = null
+    // A recording moving with the link: its time when the move began, and when that was, so it
+    // keeps counting on screen while neither device holds the link
+    private var movingRecordingSeconds: Long? = null
+    private var movingRecordingSinceMs = 0L
+
+    /**
+     * A recording's GPS stream carried on from a StreamHandover. Its moments and its fixes are
+     * kept in GPS time rather than on this device's clock (each fix's elapsedMs is its GPS time),
+     * as the fixes come partly from the other device, whose clock is not this one's.
+     */
+    private class ResumedStream(val handover: StreamHandover) {
+        val schedule = GpsStreamSchedule(GPS_SAMPLE_INTERVAL_MS, MAX_WAIT_FOR_NEXT_FIX_MS).apply { setStart(handover.nextMomentUtcMs) }
+        val fixes = GpsTimeline(keepMs = GPS_HISTORY_MS)
+        // Set once the stream is under way on this device's link
+        var active = false
+        // When this device's link first had the camera answering with the stream not yet seen
+        var linkUpAtMs: Long? = null
+        // Set once this device's own GPS has a current fix; the other device's are not taken after
+        var hasOwnFix = false
+    }
 
     private var recordingTimerJob: Job? = null
     private var gpsStreamJob: Job? = null
@@ -332,7 +380,15 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
         // Keep the recent fixes for interpolating the samples sent to the camera
         viewModelScope.launch {
             gpsEngine.telemetry.collect { gps ->
-                gps.toFix()?.let { gpsTimeline.add(it) }
+                gps.toFix()?.let { fix ->
+                    gpsTimeline.add(fix)
+                    // A stream handed over takes this device's own fixes too, once they are current
+                    val resumed = resumedStream
+                    if (resumed != null && SystemClock.elapsedRealtime() - fix.elapsedMs <= CURRENT_FIX_MS) {
+                        resumed.hasOwnFix = true
+                        resumed.fixes.add(fix.inGpsTime())
+                    }
+                }
             }
         }
 
@@ -402,14 +458,25 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
         } else {
             own.copy(bleState = own.bleState.copy(photosTaken = photosTaken, photosFailed = photosFailed))
         }
+        // A recording moving with the link keeps counting while neither device holds it
+        val movingSeconds = movingRecordingSeconds
+        val shownMoving = if (movingSeconds != null && !shown.isRecording) {
+            shown.copy(
+                isRecording = true,
+                recordingDurationSeconds = movingSeconds + (SystemClock.elapsedRealtime() - movingRecordingSinceMs) / 1000,
+                bleState = shown.bleState.copy(isRecording = true)
+            )
+        } else {
+            shown
+        }
         // Moved here from the other app, which this one shows while linked through it, or to the
         // other app, which must be able to keep it
         val canMove = other != null && !movingLink && !taking && if (through) {
             LinkSharing.canMoveLink(other.camera)
         } else {
-            LinkSharing.canMoveLink(own.bleState) && other.canTakeLink && !other.holdsLink
+            LinkSharing.canMoveLink(own.bleState) && isStreamReadyToHandOver(own.bleState) && other.canTakeLink && !other.holdsLink
         }
-        _shownState.value = shown.copy(
+        _shownState.value = shownMoving.copy(
             peerOpen = other != null,
             linkedThroughPeer = through,
             canMoveLink = canMove,
@@ -455,7 +522,7 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
      * rather than with every fix, and the other app wakes half as often.
      */
     private fun PeerSnapshot.changeKey(): PeerSnapshot =
-        if (camera.isRecording) this else copy(gps = GpsTelemetry(hasFix = gps.hasFix))
+        if (camera.isRecording || isRelayingFixes()) this else copy(gps = GpsTelemetry(hasFix = gps.hasFix))
 
     private fun sendSnapshot(snapshot: PeerSnapshot) {
         peerLink.sendSnapshot(PeerMessages.encodeSnapshot(snapshot, SystemClock.elapsedRealtime(), System.currentTimeMillis()))
@@ -489,6 +556,9 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
                     lastSentAtMs = now
                 }
                 showState()
+                // GPS kept on for the other app is let go once it is out of reach or its time is up
+                if (isRelayingFixes() && freshPeer(now) == null) relayFixesUntilMs = 0L
+                updateWaitingForCamera()
                 delay(PEER_UPDATE_MS)
             }
         }
@@ -508,6 +578,24 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
             // An app that has just opened hears from this one at once, not at the next heartbeat
             if (isWorthTelling()) sendSnapshot(ownSnapshot())
         }
+        val gps = snapshot.gps
+        // A stream handed over from the other device carries on with its fixes, which it keeps
+        // sending with its snapshots, until this device has its own
+        resumedStream?.let { resumed ->
+            if (!resumed.hasOwnFix && gps.hasFix && gps.timestampEpochMs > 0) {
+                val fix = GpsFix(gps.timestampEpochMs, gps.timestampEpochMs, gps.latitude, gps.longitude, gps.altitudeMeters, gps.speedKmh / 3.6, gps.bearingDegrees.toDouble())
+                resumed.fixes.add(fix.inGpsTime(gpsBehindPictureMs - resumed.handover.behindPictureMs))
+            }
+        }
+        // The device a recording was handed to has GPS of its own, or the recording has ended
+        if (isRelayingFixes()) {
+            val ownFix = gps.hasFix && now - gps.fixElapsedRealtimeMs <= CURRENT_FIX_MS
+            if (ownFix || (!movingLink && !snapshot.camera.isRecording)) {
+                Log.i(TAG, if (ownFix) "The $peerName has GPS of its own: no longer keeping GPS on for it" else "The recording handed to the $peerName has ended: no longer keeping GPS on for it")
+                relayFixesUntilMs = 0L
+                updateWaitingForCamera()
+            }
+        }
         peer = snapshot
         peerHeardAtMs = now
         peerUpdates.value = snapshot
@@ -520,7 +608,7 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
     private fun onPeerCommand(command: PeerCommand) {
         when (command) {
             PeerCommand.GiveLink -> giveLinkToPeer()
-            PeerCommand.TakeLink -> takeLink()
+            is PeerCommand.TakeLink -> takeLink(command.stream)
             PeerCommand.TakeLinkFailed -> if (movingLink) {
                 moveJob?.cancel()
                 endMove(moved = false)
@@ -543,8 +631,8 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
     /**
      * Moves the camera link to the other device, or, while linked through it, to this one. The
      * app holding the link lets go of it and the other links to the camera at once; if that has
-     * not worked in time, the first links again. Only while the camera is on and idle
-     * (LinkSharing.canMoveLink).
+     * not worked in time, the first links again. Only while the camera is on and nothing waits
+     * for it to confirm a tap (LinkSharing.canMoveLink). A recording's GPS stream goes with it.
      */
     fun moveLink() {
         if (!_shownState.value.canMoveLink) return
@@ -553,42 +641,130 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
 
     private fun giveLinkToPeer() {
         val other = freshPeer() ?: return
-        if (movingLink || !LinkSharing.canMoveLink(bleManager.state.value) || !other.canTakeLink || other.holdsLink) return
-        Log.i(TAG, "Moving the camera link to the $peerName")
+        val camera = bleManager.state.value
+        if (movingLink || !LinkSharing.canMoveLink(camera) || !isStreamReadyToHandOver(camera) ||
+            !other.canTakeLink || other.holdsLink
+        ) return
+        val recording = camera.gpsStreamStartAtMs != null
+        Log.i(TAG, "Moving the camera link to the $peerName${if (recording) ", with the recording's GPS" else ""}")
         movingLink = true
-        // Let go first, so the camera is free to take the other device's link
-        disconnectBle()
-        peerLink.sendCommand(PeerCommand.TakeLink)
+        moveStartedAtMs = SystemClock.elapsedRealtime()
+        if (recording) {
+            movingRecordingSeconds = _uiState.value.recordingDurationSeconds
+            movingRecordingSinceMs = moveStartedAtMs
+            handingOverStream = true
+        }
         showState()
         updateBackgroundService()
         moveJob?.cancel()
         moveJob = viewModelScope.launch {
-            // Moved once the other app's snapshot has the camera answering on its link
+            val stream = if (recording) streamToHandOver() else null
+            if (recording) Log.i(TAG, if (stream != null) "Handing over the GPS stream from ${stream.nextMomentUtcMs} with ${stream.fixes.size} fixes" else "No GPS stream to hand over")
+            handedOverStream = stream
+            // Let go first, so the camera is free to take the other device's link
+            disconnectBle()
+            handingOverStream = false
+            peerLink.sendCommand(PeerCommand.TakeLink(stream))
+            // The other device has this one's fixes until it has its own
+            if (stream != null) relayFixesUntilMs = SystemClock.elapsedRealtime() + RELAY_FIXES_MS
+            updateWaitingForCamera()
+            // Moved once the other app's snapshot has the camera answering on its link, and
+            // recording there when it was here
             val taken = withTimeoutOrNull(MOVE_LINK_MS) {
-                peerUpdates.first { it?.camera?.connectionStatus == BleConnectionStatus.CONNECTED && it.camera.isCameraAwake }
+                peerUpdates.first {
+                    it != null && it.camera.connectionStatus == BleConnectionStatus.CONNECTED && it.camera.isCameraAwake &&
+                        (!recording || it.camera.isRecording)
+                }
             }
             endMove(moved = taken != null)
         }
     }
 
+    /**
+     * Lets the records already made go out, then gives where the stream is up to: the next
+     * record's moment in GPS time, the stamp offset and the latest fixes. Null when there is no
+     * stream to hand over.
+     */
+    private suspend fun streamToHandOver(): StreamHandover? {
+        withTimeoutOrNull(STREAM_DRAIN_MS) { while (bleManager.gpsBacklog() > 0) delay(50) }
+        // The last batch taken from the queue may still be being written
+        delay(LAST_WRITE_MS)
+        // A stream this device carried on itself is handed on in the same terms
+        val resumed = resumedStream?.takeIf { it.active }
+        resumedStream = null
+        if (resumed != null) {
+            val next = resumed.schedule.nextMoment() ?: return null
+            return StreamHandover(next, resumed.handover.stampOffsetMs, gpsBehindPictureMs, resumed.fixes.fixesFrom(next - HANDOVER_FIXES_MS))
+        }
+        val next = gpsSchedule.nextMoment() ?: return null
+        val offset = stampOffsetMs ?: return null
+        // As the records were stamped: with no fix near, the device's own clock gives the time
+        val nextUtc = gpsTimeline.utcAt(next, GPS_TIME_FROM_FIX_WITHIN_MS)
+            ?: (System.currentTimeMillis() - (SystemClock.elapsedRealtime() - next))
+        return StreamHandover(nextUtc, offset, gpsBehindPictureMs, gpsTimeline.fixesFrom(next - HANDOVER_FIXES_MS).map { it.inGpsTime() })
+    }
+
+    // A recording's stream can be handed over once its records are being stamped
+    private fun isStreamReadyToHandOver(camera: BleCameraState): Boolean =
+        camera.gpsStreamStartAtMs == null || stampOffsetMs != null || resumedStream?.active == true
+
+    private fun isRelayingFixes(): Boolean = SystemClock.elapsedRealtime() < relayFixesUntilMs
+
     private fun endMove(moved: Boolean) {
         movingLink = false
+        movingRecordingSeconds = null
+        val stream = handedOverStream
+        handedOverStream = null
         if (moved) {
             Log.i(TAG, "The camera link is now on the $peerName")
         } else {
-            // The camera was on a moment ago, so it is only linked to again
             Log.w(TAG, "The $peerName did not take the camera link: linking again here")
+            // A recording handed over is carried on here instead, from where it was left, with
+            // this device's own fixes since
+            if (stream != null) {
+                relayFixesUntilMs = 0L
+                resumedStream = resumeStream(stream).also { resumed ->
+                    resumed.hasOwnFix = true
+                    gpsTimeline.fixesFrom(moveStartedAtMs - HANDOVER_FIXES_MS).forEach { resumed.fixes.add(it.inGpsTime()) }
+                }
+            }
+            // The camera was on a moment ago, so it is only linked to again
             bleManager.startScanAndConnect()
         }
         showState()
+        updateWaitingForCamera()
         updateBackgroundService()
     }
 
-    /** Links to the camera the other app has just let go of, to take its link over. */
-    private fun takeLink() {
+    /** A stream to carry on from [handover], holding the fixes that came with it. */
+    private fun resumeStream(handover: StreamHandover): ResumedStream {
+        val resumed = ResumedStream(handover)
+        // The other device's GPS reports motion that much later or sooner than this one's
+        val shiftMs = gpsBehindPictureMs - handover.behindPictureMs
+        handover.fixes.forEach { resumed.fixes.add(it.inGpsTime(shiftMs)) }
+        return resumed
+    }
+
+    /**
+     * This fix keyed by GPS time, moved by [shiftMs]: for a fix from the other device, the
+     * difference in how late each device's GPS reports motion (gps_behind_picture_ms).
+     */
+    private fun GpsFix.inGpsTime(shiftMs: Long = 0L): GpsFix = copy(elapsedMs = utcMs + shiftMs, utcMs = utcMs + shiftMs)
+
+    /**
+     * Links to the camera the other app has just let go of, to take its link over, carrying on
+     * the recording's GPS stream when there is one.
+     */
+    private fun takeLink(stream: StreamHandover?) {
         if (bleManager.state.value.holdsLink) return
-        Log.i(TAG, "Taking the camera link from the $peerName")
-        takingLinkUntilMs = SystemClock.elapsedRealtime() + TAKE_LINK_MS
+        Log.i(TAG, "Taking the camera link from the $peerName${if (stream != null) ", with the recording's GPS from ${stream.nextMomentUtcMs}" else ""}")
+        val now = SystemClock.elapsedRealtime()
+        if (stream != null) {
+            resumedStream = resumeStream(stream)
+            movingRecordingSeconds = maxOf(_shownState.value.recordingDurationSeconds, freshPeer()?.recordingSeconds ?: 0L)
+            movingRecordingSinceMs = now
+        }
+        takingLinkUntilMs = now + TAKE_LINK_MS
         showState()
         updateBackgroundService()
         takeJob?.cancel()
@@ -604,11 +780,15 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
             takingLinkUntilMs = 0L
             if (linked != null) {
                 Log.i(TAG, "Took the camera link from the $peerName")
+                // The recording shows as moving until this link has seen it
+                if (stream != null) withTimeoutOrNull(RESUME_WAIT_FOR_RECORDING_MS) { bleManager.state.first { it.isRecording } }
             } else {
                 Log.w(TAG, "Could not take the camera link from the $peerName")
+                resumedStream = null
                 disconnectBle()
                 peerLink.sendCommand(PeerCommand.TakeLinkFailed)
             }
+            movingRecordingSeconds = null
             showState()
             updateBackgroundService()
         }
@@ -875,7 +1055,8 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
     private fun updateWaitingForCamera() {
         val ble = _uiState.value.bleState
         val cameraOff = ble.isLinkIdle && !ble.isCameraAwake && ble.gpsStreamStartAtMs == null
-        val waiting = linkedThrough || (!appVisible && cameraOff)
+        // Kept on for a little after a recording was handed to the other device (RELAY_FIXES_MS)
+        val waiting = (linkedThrough && !isRelayingFixes()) || (!appVisible && cameraOff)
         if (waiting == waitingForCamera) return
         waitingForCamera = waiting
         if (waiting) {
@@ -965,6 +1146,31 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
             runAtFixedRate(GPS_SAMPLE_INTERVAL_MS, MAX_CATCH_UP_MS, SystemClock::elapsedRealtime) { scheduledMs ->
                 val ble = bleManager.state.value
                 val streamStart = ble.gpsStreamStartAtMs
+                // No more records are made while the stream is being handed to the other app
+                if (handingOverStream) return@runAtFixedRate
+                // A recording handed over with the link carries on from the next record, rather
+                // than being joined late and sent from its start again
+                val resumed = resumedStream
+                if (resumed != null) {
+                    if (streamStart != null) {
+                        if (!resumed.active) {
+                            resumed.active = true
+                            Log.i(TAG, "Carrying on the recording's GPS from ${resumed.handover.nextMomentUtcMs}, stamped ${resumed.handover.stampOffsetMs} ms after their moments")
+                        }
+                        sendResumedRecords(resumed, scheduledMs)
+                        return@runAtFixedRate
+                    }
+                    // Waiting for this link to show the recording, which it does at once
+                    if (!resumed.active && ble.isCameraAwake) {
+                        val linkUpAt = resumed.linkUpAtMs ?: scheduledMs.also { resumed.linkUpAtMs = it }
+                        if (scheduledMs - linkUpAt < RESUME_WAIT_FOR_RECORDING_MS) return@runAtFixedRate
+                    } else if (!resumed.active) {
+                        return@runAtFixedRate
+                    }
+                    // The recording has ended, here or before the link arrived
+                    Log.i(TAG, "The recording handed over has ended")
+                    resumedStream = null
+                }
                 gpsSchedule.setStart(streamStart)
                 if (streamStart != stampedStreamStartMs) {
                     stampedStreamStartMs = streamStart
@@ -1003,6 +1209,31 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
                     )
                 }
             }
+        }
+    }
+
+    /**
+     * Sends the records of a recording handed over with the link, as the normal stream does, but
+     * with its moments and fixes in GPS time and stamped with the offset it was handed.
+     */
+    private fun sendResumedRecords(resumed: ResumedStream, nowMs: Long) {
+        // GPS time now, from this device's fixes, or its own clock before it has any
+        val nowUtc = gpsTimeline.utcAt(nowMs, GPS_TIME_FROM_FIX_WITHIN_MS)
+            ?: (System.currentTimeMillis() - (SystemClock.elapsedRealtime() - nowMs))
+        val coveredUpTo = resumed.fixes.newestFixMs()?.let { it - gpsBehindPictureMs }
+        val room = MAX_GPS_BACKLOG - bleManager.gpsBacklog()
+        if (room <= 0) return
+        for (moment in resumed.schedule.due(nowUtc, coveredUpTo, max = room)) {
+            val sample = resumed.fixes.sampleAt(moment + gpsBehindPictureMs)
+            bleManager.addGpsFix(
+                timestampMs = moment + resumed.handover.stampOffsetMs,
+                latitude = sample?.latitude ?: 0.0,
+                longitude = sample?.longitude ?: 0.0,
+                speedMps = sample?.speedMps ?: 0.0,
+                bearingDegrees = sample?.bearingDegrees ?: 0.0,
+                altitudeMeters = sample?.altitudeMeters ?: 0.0,
+                hasFix = sample?.valid == true
+            )
         }
     }
 
