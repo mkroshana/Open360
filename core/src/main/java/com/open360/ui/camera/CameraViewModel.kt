@@ -133,9 +133,11 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
         private const val PEER_ANSWER_MS = 1500L
 
         // A link moved to the other app: that app is given this long to link to the camera, and
-        // this one waits a little longer for it before linking again itself
-        private const val TAKE_LINK_MS = 12_000L
-        private const val MOVE_LINK_MS = 16_000L
+        // this one waits a little longer for it before linking again itself. Android ends a link
+        // about 4 s after the app lets go of it, the camera turns away a second link until then
+        // and at times for several seconds after, so five moves took 8.3 to 14.1 s (2026-10-25).
+        private const val TAKE_LINK_MS = 25_000L
+        private const val MOVE_LINK_MS = 30_000L
 
         private const val SERVICE_TEXT_OWN_LINK = "GPS is sent to the camera while recording"
     }
