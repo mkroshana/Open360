@@ -449,6 +449,14 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
         )
     }
 
+    /**
+     * What decides whether a snapshot has changed enough to send at once. Outside a recording the
+     * GPS counts only by whether there is a fix, so an idle link sends its GPS with the heartbeat
+     * rather than with every fix, and the other app wakes half as often.
+     */
+    private fun PeerSnapshot.changeKey(): PeerSnapshot =
+        if (camera.isRecording) this else copy(gps = GpsTelemetry(hasFix = gps.hasFix))
+
     private fun sendSnapshot(snapshot: PeerSnapshot) {
         peerLink.sendSnapshot(PeerMessages.encodeSnapshot(snapshot, SystemClock.elapsedRealtime(), System.currentTimeMillis()))
     }
@@ -467,7 +475,7 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
             var lastSentAtMs = 0L
             while (isActive) {
                 val now = SystemClock.elapsedRealtime()
-                val snapshot = ownSnapshot()
+                val snapshot = ownSnapshot().changeKey()
                 // With the other app not heard from only the heartbeat goes out, as there may be no
                 // one to tell; an app that opens says so, and is answered at once
                 val due = if (freshPeer(now) != null) {
@@ -476,7 +484,7 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
                     now - lastSentAtMs >= PEER_IDLE_HEARTBEAT_MS
                 }
                 if (isWorthTelling() && due) {
-                    sendSnapshot(snapshot)
+                    sendSnapshot(ownSnapshot())
                     lastSent = snapshot
                     lastSentAtMs = now
                 }
@@ -858,17 +866,20 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
      * Both start again as soon as the camera answers; the location service keeps running, as
      * Android would not let it start again from the background. On screen GPS keeps running for
      * the readouts, and while a link is being opened or a recording runs nothing is paused.
-     * The same goes for the camera linked through the other device, whose GPS goes to the camera:
-     * this one's is wanted only on screen, ready for the link to be moved here.
+     * While the camera is linked through the other device, whose GPS goes to the camera and is
+     * the one shown, this one's GPS is paused and the processor let sleep, on screen too. On the
+     * watch the dimmed remote stays up for as long as the phone holds the link, and with its GPS
+     * and wake lock kept on it used them all that time for nothing. A link moved here starts GPS
+     * again, with a fix some seconds later.
      */
     private fun updateWaitingForCamera() {
         val ble = _uiState.value.bleState
         val cameraOff = ble.isLinkIdle && !ble.isCameraAwake && ble.gpsStreamStartAtMs == null
-        val waiting = !appVisible && (cameraOff || linkedThrough)
+        val waiting = linkedThrough || (!appVisible && cameraOff)
         if (waiting == waitingForCamera) return
         waitingForCamera = waiting
         if (waiting) {
-            Log.i(TAG, if (linkedThrough) "Linked through the $peerName and off screen: GPS paused" else "Waiting for the camera to be switched on: GPS paused")
+            Log.i(TAG, if (linkedThrough) "Linked through the $peerName: GPS paused" else "Waiting for the camera to be switched on: GPS paused")
             gpsEngine.stopTracking()
         } else {
             Log.i(TAG, "GPS resumed")

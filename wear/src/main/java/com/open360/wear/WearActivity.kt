@@ -74,10 +74,11 @@ class WearActivity : ComponentActivity() {
         phoneSettings = PhoneSettingsReceiver(this, ::applyPhoneSettings)
         heartRate = WatchHeartRate(applicationContext, cameraViewModel.sportsSensors)
         speedUnit = SpeedUnit(applicationContext)
-        // The watch's heart rate is read while the camera is on, for the FIT file
+        // The watch's heart rate is read while the camera is on over the watch's own link, for its
+        // FIT file. Not while the camera is linked through the phone, whose FIT it would not reach.
         lifecycleScope.launch {
-            cameraViewModel.uiState
-                .map { it.bleState.connectionStatus == BleConnectionStatus.CONNECTED && it.bleState.isCameraAwake }
+            cameraViewModel.bleManager.state
+                .map { it.connectionStatus == BleConnectionStatus.CONNECTED && it.isCameraAwake }
                 .distinctUntilChanged()
                 .collect { heartRate.setWanted(it) }
         }
