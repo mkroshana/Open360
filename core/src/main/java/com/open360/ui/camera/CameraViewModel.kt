@@ -239,6 +239,8 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
         var linkUpAtMs: Long? = null
         // Set once this device's own GPS has a current fix; the other device's are not taken after
         var hasOwnFix = false
+        // The other device's fixes as it took them, for this device's GPX and FIT
+        val relayedFixes = ArrayList<GpsFix>()
     }
 
     private var recordingTimerJob: Job? = null
@@ -351,8 +353,10 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
                     if (streamStart != null) {
                         trackRecorder.start(streamStart)
                         // A recording joined late began in the past: its track takes the fixes
-                        // already remembered from then
-                        gpsTimeline.fixesFrom(streamStart).forEach { trackRecorder.addFix(it) }
+                        // already remembered from then, and, carried on after the link moved
+                        // here, those the other device passed on
+                        val relayed = resumedStream?.relayedFixes?.map { it.onThisClock() }.orEmpty()
+                        (gpsTimeline.fixesFrom(streamStart) + relayed).sortedBy { it.elapsedMs }.forEach { trackRecorder.addFix(it) }
                     } else {
                         trackRecorder.stop(SystemClock.elapsedRealtime())
                     }
@@ -583,9 +587,13 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
         // A stream handed over from the other device carries on with its fixes, which it keeps
         // sending with its snapshots, until this device has its own
         resumedStream?.let { resumed ->
-            if (!resumed.hasOwnFix && gps.hasFix && gps.timestampEpochMs > 0) {
+            if (!resumed.hasOwnFix && gps.hasFix && gps.timestampEpochMs > (resumed.relayedFixes.lastOrNull()?.utcMs ?: 0L)) {
                 val fix = GpsFix(gps.timestampEpochMs, gps.timestampEpochMs, gps.latitude, gps.longitude, gps.altitudeMeters, gps.speedKmh / 3.6, gps.bearingDegrees.toDouble())
                 resumed.fixes.add(fix.inGpsTime(gpsBehindPictureMs - resumed.handover.behindPictureMs))
+                // The route after the move goes into this device's files too, as it was taken;
+                // the track takes it once it has started
+                resumed.relayedFixes.add(fix)
+                trackRecorder.addFix(fix.onThisClock())
             }
         }
         // The device a recording was handed to has GPS of its own, or the recording has ended
@@ -743,8 +751,19 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
         // The other device's GPS reports motion that much later or sooner than this one's
         val shiftMs = gpsBehindPictureMs - handover.behindPictureMs
         handover.fixes.forEach { resumed.fixes.add(it.inGpsTime(shiftMs)) }
+        resumed.relayedFixes.addAll(handover.fixes)
         return resumed
     }
+
+    /**
+     * A fix the other device took, placed on this device's clock by its GPS time, for this
+     * device's track: through this device's own fixes when it has had any lately, which place it
+     * to within milliseconds, or else its wall clock, which agrees with GPS time to about a second.
+     * The track writes each fix's GPS time; this only decides which recording and which sensor
+     * readings it goes with.
+     */
+    private fun GpsFix.onThisClock(): GpsFix =
+        copy(elapsedMs = gpsTimeline.elapsedAt(utcMs, GPS_HISTORY_MS) ?: (SystemClock.elapsedRealtime() - (System.currentTimeMillis() - utcMs)))
 
     /**
      * This fix keyed by GPS time, moved by [shiftMs]: for a fix from the other device, the

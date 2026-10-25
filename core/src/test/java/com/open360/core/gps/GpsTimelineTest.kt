@@ -44,6 +44,19 @@ class GpsTimelineTest {
     }
 
     @Test
+    fun aGpsTimeIsPlacedOnTheDevicesClockFromTheNearestFix() {
+        val timeline = GpsTimeline()
+        assertNull(timeline.elapsedAt(5_000_000L))
+        timeline.add(GpsFix(10_000, 5_000_000L, 6.0, 79.0, 0.0, 0.0, 0.0))
+        timeline.add(GpsFix(11_000, 5_001_003L, 6.0, 79.0, 0.0, 0.0, 0.0))
+        // A fix the other device took, between and after this one's
+        assertEquals(10_200L, timeline.elapsedAt(5_000_200L))
+        assertEquals(41_000L, timeline.elapsedAt(5_031_003L))
+        // Too far from any fix
+        assertNull(timeline.elapsedAt(5_072_000L, maxDistanceMs = 60_000))
+    }
+
+    @Test
     fun interpolatesBetweenTheFixBeforeAndAfter() {
         val timeline = GpsTimeline()
         timeline.add(fix(10_000, lat = 6.0000, lon = 79.0000, speed = 2.0, alt = 10.0))
