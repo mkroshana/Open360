@@ -27,6 +27,8 @@ dependencies {
     api(libs.androidx.lifecycle.viewmodel.ktx)
     api(libs.kotlinx.coroutines.core)
     implementation(libs.kotlinx.coroutines.android)
+    // The Wear OS Data Layer, over which the phone and watch apps control the camera through each other
+    implementation(libs.play.services.wearable)
 
     testImplementation(libs.junit)
     testImplementation(libs.kotlinx.coroutines.test)
