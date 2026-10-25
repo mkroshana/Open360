@@ -65,4 +65,17 @@ class LinkSharingTest {
         assertFalse(LinkSharing.shouldLetGo(linked, null, PeerDevice.WATCH, takingLink = false))
         assertFalse(LinkSharing.shouldLetGo(looking, from(PeerDevice.PHONE, linked), PeerDevice.WATCH, takingLink = true))
     }
+
+    @Test
+    fun testTheLinkMovesOnlyWithTheCameraOnAndIdle() {
+        assertTrue(LinkSharing.canMoveLink(linked))
+        assertFalse(LinkSharing.canMoveLink(none))
+        assertFalse(LinkSharing.canMoveLink(looking))
+        // Linked to a camera that is off
+        assertFalse(LinkSharing.canMoveLink(linked.copy(isCameraAwake = false)))
+        assertFalse(LinkSharing.canMoveLink(recording))
+        assertFalse(LinkSharing.canMoveLink(linked.copy(isCaptureStarting = true)))
+        assertFalse(LinkSharing.canMoveLink(linked.copy(isCaptureStopping = true)))
+        assertFalse(LinkSharing.canMoveLink(linked.copy(isTakingPhoto = true)))
+    }
 }

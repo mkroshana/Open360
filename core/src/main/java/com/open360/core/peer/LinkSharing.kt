@@ -3,6 +3,12 @@ package com.open360.core.peer
 import com.open360.core.ble.BleCameraState
 import com.open360.core.ble.BleConnectionStatus
 
+/** A move of the camera link under way, seen from one of the two apps. */
+enum class LinkMove {
+    TO_OTHER_DEVICE,
+    TO_THIS_DEVICE
+}
+
 /**
  * Which of the two apps holds the camera link when both are open. The camera is taken to hold one
  * link, so the app without it controls the camera through the one that has it, and does not look
@@ -32,6 +38,16 @@ object LinkSharing {
         if (ownOnlyLooking != peerOnlyLooking) return ownOnlyLooking
         return self == PeerDevice.WATCH
     }
+
+    /**
+     * Whether the link on which [camera] is seen can be moved to the other device: the camera is
+     * on and idle. Not during a recording, as the other device would join it late and send its
+     * GPS from the start a second time, nor while a photo, start or stop is being confirmed.
+     */
+    fun canMoveLink(camera: BleCameraState): Boolean =
+        camera.connectionStatus == BleConnectionStatus.CONNECTED && camera.isCameraAwake &&
+            !camera.isRecording && !camera.isCaptureStarting && !camera.isCaptureStopping &&
+            !camera.isTakingPhoto && !camera.isWaking && !camera.isReconnecting
 
     // Scanning, with no link yet and none being opened again
     private val BleCameraState.isOnlyLooking: Boolean

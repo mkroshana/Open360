@@ -28,6 +28,7 @@ import com.open360.core.sensors.SportsSensorManager
 import com.open360.core.gps.GpxTrackState
 import com.open360.core.gps.runAtFixedRate
 import com.open360.core.model.CaptureMode
+import com.open360.core.peer.LinkMove
 import com.open360.core.peer.LinkSharing
 import com.open360.core.peer.PeerCommand
 import com.open360.core.peer.PeerDevice
@@ -43,6 +44,7 @@ import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
@@ -73,7 +75,11 @@ data class RemoteUiState(
     val peerOpen: Boolean = false,
     // Set while the camera is linked through the other device: the camera, GPS, mode and recording
     // time shown are that device's, and the camera's controls are passed on to it
-    val linkedThroughPeer: Boolean = false
+    val linkedThroughPeer: Boolean = false,
+    // Whether the link can be moved now: to the other device, or, while linked through it, here
+    val canMoveLink: Boolean = false,
+    // Set while the link is being moved, from Move until the device it goes to has it
+    val linkMove: LinkMove? = null
 )
 
 class CameraViewModel(application: Application) : AndroidViewModel(application) {
@@ -126,6 +132,11 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
         // this one looks for it
         private const val PEER_ANSWER_MS = 1500L
 
+        // A link moved to the other app: that app is given this long to link to the camera, and
+        // this one waits a little longer for it before linking again itself
+        private const val TAKE_LINK_MS = 12_000L
+        private const val MOVE_LINK_MS = 16_000L
+
         private const val SERVICE_TEXT_OWN_LINK = "GPS is sent to the camera while recording"
     }
 
@@ -170,6 +181,14 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
     private var peerPhotosTaken = 0
     private var peerPhotosFailed = 0
     private var serviceText = SERVICE_TEXT_OWN_LINK
+    // The other app's snapshots, for waiting on it to take a link moved to it
+    private val peerUpdates = MutableStateFlow<PeerSnapshot?>(null)
+    // Set from letting go of the link to move it until the other app has it, or this one has it back
+    private var movingLink = false
+    private var moveJob: Job? = null
+    // Until when this app is taking over a link the other app let go of, 0 when it is not
+    private var takingLinkUntilMs = 0L
+    private var takeJob: Job? = null
 
     private var recordingTimerJob: Job? = null
     private var gpsStreamJob: Job? = null
@@ -359,7 +378,8 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
     private fun showState() {
         val own = _uiState.value
         val other = freshPeer()
-        val through = LinkSharing.isLinkedThrough(own.bleState, other, takingLink = false)
+        val taking = isTakingLink()
+        val through = LinkSharing.isLinkedThrough(own.bleState, other, takingLink = taking)
         val photosTaken = own.bleState.photosTaken + peerPhotosTaken
         val photosFailed = own.bleState.photosFailed + peerPhotosFailed
         val shown = if (through && other != null) {
@@ -380,7 +400,23 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
         } else {
             own.copy(bleState = own.bleState.copy(photosTaken = photosTaken, photosFailed = photosFailed))
         }
-        _shownState.value = shown.copy(peerOpen = other != null, linkedThroughPeer = through)
+        // Moved here from the other app, which this one shows while linked through it, or to the
+        // other app, which must be able to keep it
+        val canMove = other != null && !movingLink && !taking && if (through) {
+            LinkSharing.canMoveLink(other.camera)
+        } else {
+            LinkSharing.canMoveLink(own.bleState) && other.canTakeLink && !other.holdsLink
+        }
+        _shownState.value = shown.copy(
+            peerOpen = other != null,
+            linkedThroughPeer = through,
+            canMoveLink = canMove,
+            linkMove = when {
+                movingLink -> LinkMove.TO_OTHER_DEVICE
+                taking -> LinkMove.TO_THIS_DEVICE
+                else -> null
+            }
+        )
 
         if (through != linkedThrough) {
             linkedThrough = through
@@ -464,36 +500,123 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
         }
         peer = snapshot
         peerHeardAtMs = now
+        peerUpdates.value = snapshot
         peerAnswered.complete(Unit)
         coordinateLink()
         showState()
     }
 
-    /** What the other app asks while this one holds the link and it controls the camera through it. */
+    /** What the other app asks: to move the link, or, while it controls the camera through this one, a tap. */
     private fun onPeerCommand(command: PeerCommand) {
-        // Only the app holding the link acts on the other's taps
-        if (!bleManager.state.value.holdsLink) return
         when (command) {
-            // A second tap before the other app has heard that a photo is being taken
-            PeerCommand.Shutter -> if (!bleManager.state.value.isTakingPhoto) onShutterClicked()
-            is PeerCommand.SetCaptureMode -> setMode(command.mode)
-            is PeerCommand.SetCameraMode -> setCameraMode(command.mode)
-            is PeerCommand.PressCameraButton -> onCameraButton(command.button)
-            PeerCommand.GiveLink, PeerCommand.TakeLink, PeerCommand.TakeLinkFailed -> Unit
+            PeerCommand.GiveLink -> giveLinkToPeer()
+            PeerCommand.TakeLink -> takeLink()
+            PeerCommand.TakeLinkFailed -> if (movingLink) {
+                moveJob?.cancel()
+                endMove(moved = false)
+            }
+            else -> {
+                // Only the app holding the link acts on the other's taps
+                if (!bleManager.state.value.holdsLink) return
+                when (command) {
+                    // A second tap before the other app has heard that a photo is being taken
+                    PeerCommand.Shutter -> if (!bleManager.state.value.isTakingPhoto) onShutterClicked()
+                    is PeerCommand.SetCaptureMode -> setMode(command.mode)
+                    is PeerCommand.SetCameraMode -> setCameraMode(command.mode)
+                    is PeerCommand.PressCameraButton -> onCameraButton(command.button)
+                    else -> Unit
+                }
+            }
         }
     }
+
+    /**
+     * Moves the camera link to the other device, or, while linked through it, to this one. The
+     * app holding the link lets go of it and the other links to the camera at once; if that has
+     * not worked in time, the first links again. Only while the camera is on and idle
+     * (LinkSharing.canMoveLink).
+     */
+    fun moveLink() {
+        if (!_shownState.value.canMoveLink) return
+        if (linkedThrough) peerLink.sendCommand(PeerCommand.GiveLink) else giveLinkToPeer()
+    }
+
+    private fun giveLinkToPeer() {
+        val other = freshPeer() ?: return
+        if (movingLink || !LinkSharing.canMoveLink(bleManager.state.value) || !other.canTakeLink || other.holdsLink) return
+        Log.i(TAG, "Moving the camera link to the $peerName")
+        movingLink = true
+        // Let go first, so the camera is free to take the other device's link
+        disconnectBle()
+        peerLink.sendCommand(PeerCommand.TakeLink)
+        showState()
+        updateBackgroundService()
+        moveJob?.cancel()
+        moveJob = viewModelScope.launch {
+            // Moved once the other app's snapshot has the camera answering on its link
+            val taken = withTimeoutOrNull(MOVE_LINK_MS) {
+                peerUpdates.first { it?.camera?.connectionStatus == BleConnectionStatus.CONNECTED && it.camera.isCameraAwake }
+            }
+            endMove(moved = taken != null)
+        }
+    }
+
+    private fun endMove(moved: Boolean) {
+        movingLink = false
+        if (moved) {
+            Log.i(TAG, "The camera link is now on the $peerName")
+        } else {
+            // The camera was on a moment ago, so it is only linked to again
+            Log.w(TAG, "The $peerName did not take the camera link: linking again here")
+            bleManager.startScanAndConnect()
+        }
+        showState()
+        updateBackgroundService()
+    }
+
+    /** Links to the camera the other app has just let go of, to take its link over. */
+    private fun takeLink() {
+        if (bleManager.state.value.holdsLink) return
+        Log.i(TAG, "Taking the camera link from the $peerName")
+        takingLinkUntilMs = SystemClock.elapsedRealtime() + TAKE_LINK_MS
+        showState()
+        updateBackgroundService()
+        takeJob?.cancel()
+        takeJob = viewModelScope.launch {
+            // The camera is on, so it is only linked to. A try that fails, as a link opened just
+            // after another closed may, is made again while there is time.
+            val linked = withTimeoutOrNull(TAKE_LINK_MS) {
+                bleManager.state.first { link ->
+                    if (link.connectionStatus == BleConnectionStatus.DISCONNECTED && !link.isReconnecting) bleManager.startScanAndConnect()
+                    link.connectionStatus == BleConnectionStatus.CONNECTED && link.isCameraAwake
+                }
+            }
+            takingLinkUntilMs = 0L
+            if (linked != null) {
+                Log.i(TAG, "Took the camera link from the $peerName")
+            } else {
+                Log.w(TAG, "Could not take the camera link from the $peerName")
+                disconnectBle()
+                peerLink.sendCommand(PeerCommand.TakeLinkFailed)
+            }
+            showState()
+            updateBackgroundService()
+        }
+    }
+
+    private fun isTakingLink(): Boolean = SystemClock.elapsedRealtime() < takingLinkUntilMs
 
     /** Lets go of this app's link, or stops looking for the camera, when the other app has it too. */
     private fun coordinateLink() {
         val other = freshPeer() ?: return
-        if (LinkSharing.shouldLetGo(bleManager.state.value, other, thisDevice, takingLink = false)) {
+        if (LinkSharing.shouldLetGo(bleManager.state.value, other, thisDevice, takingLink = isTakingLink())) {
             Log.i(TAG, "Open360 on the $peerName has the camera link too, so this one lets go of it")
             disconnectBle()
         }
     }
 
     // Whether Open360 on the other device holds the link or is looking for the camera
-    private fun peerHoldsLink(): Boolean = freshPeer()?.holdsLink == true
+    private fun peerHoldsLink(): Boolean = !isTakingLink() && freshPeer()?.holdsLink == true
 
     fun wakeUpCamera(serialSuffix: String? = null) {
         // The app holding the link wakes the camera, when it is linked to it and the camera is off
@@ -685,12 +808,14 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
      * on the camera too. Android only lets it start while the app is on screen, so it is kept
      * while the link is being opened again by itself, which may happen with the phone locked.
      * It runs too while the camera is linked through the other device, so this app stays up to
-     * show it, which on the watch keeps the remote on its face, and can take the link over.
+     * show it, which on the watch keeps the remote on its face, and can take the link over, and
+     * while the link is being moved, which leaves neither device linked for a moment.
      */
     private fun updateBackgroundService() {
         val state = _uiState.value
         val wanted = state.keepGpsActiveInBackground &&
-            (state.bleState.connectionStatus == BleConnectionStatus.CONNECTED || state.bleState.isReconnecting || linkedThrough)
+            (state.bleState.connectionStatus == BleConnectionStatus.CONNECTED || state.bleState.isReconnecting ||
+                linkedThrough || movingLink || isTakingLink())
         val text = if (linkedThrough) "Controlled through Open360 on your $peerName" else SERVICE_TEXT_OWN_LINK
         if (wanted == backgroundServiceRunning) {
             if (wanted && text != serviceText) {

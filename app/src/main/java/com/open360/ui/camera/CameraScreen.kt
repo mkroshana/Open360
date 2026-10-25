@@ -29,6 +29,7 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxHeight
@@ -96,6 +97,7 @@ import com.open360.core.ble.BleConnectionStatus
 import com.open360.core.ble.CameraMode
 import com.open360.core.gps.GpxTrackState
 import com.open360.core.model.CaptureMode
+import com.open360.core.peer.LinkMove
 import java.util.Locale
 
 // Emil Kowalski custom curves & motion tokens
@@ -168,7 +170,8 @@ fun CameraScreen(
                         haptic.performHapticFeedback(HapticFeedbackType.LongPress)
                     }
                     viewModel.onCameraButton(button)
-                }
+                },
+                onMoveLink = { viewModel.moveLink() }
             )
 
             // Live GPS Telemetry Card
@@ -220,7 +223,8 @@ fun CameraScreen(
 @Composable
 fun CameraStatusCard(
     uiState: RemoteUiState,
-    onCameraButton: (CameraButton) -> Unit
+    onCameraButton: (CameraButton) -> Unit,
+    onMoveLink: () -> Unit = {}
 ) {
     val ble = uiState.bleState
     val server = uiState.serverState
@@ -352,6 +356,7 @@ fun CameraStatusCard(
                 Spacer(modifier = Modifier.height(12.dp))
 
                 val statusColor = when {
+                    uiState.linkMove != null -> Color(0xFF007AFF)
                     server.isCameraConnected -> Color(0xFF34C759)
                     isAsleep -> Color(0xFFFF9500)
                     server.isAdvertising || ble.connectionStatus == BleConnectionStatus.SCANNING -> Color(0xFF007AFF)
@@ -360,6 +365,7 @@ fun CameraStatusCard(
                 }
 
                 val statusText = when {
+                    uiState.linkMove != null -> "Moving the Link..."
                     server.isCameraConnected -> "Connected as GPS Remote"
                     isAsleep && ble.isWaking -> "Switching Camera On..."
                     isAsleep -> "Camera Is Off"
@@ -370,6 +376,7 @@ fun CameraStatusCard(
                 }
 
                 val statusIcon = when {
+                    uiState.linkMove != null -> Icons.Default.Sync
                     isAsleep -> Icons.Default.PowerSettingsNew
                     uiState.isConnected -> Icons.Default.CheckCircle
                     server.isAdvertising || ble.connectionStatus == BleConnectionStatus.SCANNING -> Icons.Default.Sync
@@ -442,7 +449,9 @@ fun CameraStatusCard(
                 val buttonInteraction = remember { MutableInteractionSource() }
                 val buttonScale by rememberPressScale(buttonInteraction, targetScale = 0.97f)
 
-                if (button == CameraButton.CONNECT || button == CameraButton.WAKE_UP) {
+                if (uiState.linkMove != null) {
+                    // Nothing to press until the link has arrived
+                } else if (button == CameraButton.CONNECT || button == CameraButton.WAKE_UP) {
                     FilledTonalButton(
                         onClick = { onCameraButton(button) },
                         interactionSource = buttonInteraction,
@@ -479,9 +488,21 @@ fun CameraStatusCard(
                 }
             }
 
-            if (uiState.linkedThroughPeer) {
-                Spacer(modifier = Modifier.height(10.dp))
-                PeerLinkRow(text = "Controlled through Open360 on your watch")
+            when {
+                uiState.linkMove == LinkMove.TO_OTHER_DEVICE -> PeerLinkRow(text = "Moving the link to your watch")
+                uiState.linkMove == LinkMove.TO_THIS_DEVICE -> PeerLinkRow(text = "Moving the link to this phone")
+                uiState.linkedThroughPeer -> PeerLinkRow(
+                    text = "Controlled through Open360 on your watch",
+                    action = "Move Here",
+                    actionEnabled = uiState.canMoveLink,
+                    onAction = onMoveLink
+                )
+                // For leaving the phone behind
+                uiState.canMoveLink -> PeerLinkRow(
+                    text = "Open360 is open on your watch",
+                    action = "Move to Watch",
+                    onAction = onMoveLink
+                )
             }
 
             AnimatedVisibility(visible = server.lastError != null || ble.lastError != null) {
@@ -498,10 +519,17 @@ fun CameraStatusCard(
 
 /**
  * About the camera's link and the watch: while the camera is linked through the watch, whose
- * Open360 holds the link and sends the camera its GPS, the camera shown is the watch's.
+ * Open360 holds the link and sends the camera its GPS, the camera shown is the watch's. With
+ * [action], a button that moves the link: here from the watch, or to it.
  */
 @Composable
-private fun PeerLinkRow(text: String) {
+private fun PeerLinkRow(
+    text: String,
+    action: String? = null,
+    actionEnabled: Boolean = true,
+    onAction: () -> Unit = {}
+) {
+    Spacer(modifier = Modifier.height(10.dp))
     Row(
         modifier = Modifier
             .fillMaxWidth()
@@ -523,6 +551,17 @@ private fun PeerLinkRow(text: String) {
             color = MaterialTheme.colorScheme.onSecondaryContainer,
             modifier = Modifier.weight(1f)
         )
+        if (action != null) {
+            FilledTonalButton(
+                onClick = onAction,
+                enabled = actionEnabled,
+                contentPadding = PaddingValues(horizontal = 12.dp, vertical = 4.dp),
+                modifier = Modifier.height(32.dp),
+                shape = RoundedCornerShape(10.dp)
+            ) {
+                Text(text = action, style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.SemiBold)
+            }
+        }
     }
 }
 

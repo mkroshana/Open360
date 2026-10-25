@@ -36,6 +36,7 @@ import androidx.compose.material.icons.filled.LocationOn
 import androidx.compose.material.icons.filled.PowerSettingsNew
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Smartphone
+import androidx.compose.material.icons.filled.Watch
 import androidx.compose.material.icons.filled.Speed
 import androidx.compose.material.icons.filled.Videocam
 import androidx.compose.material.icons.filled.VideocamOff
@@ -65,6 +66,7 @@ import androidx.wear.compose.material3.CircularProgressIndicator
 import androidx.wear.compose.material3.CompactButton
 import androidx.wear.compose.material3.EdgeButton
 import androidx.wear.compose.material3.EdgeButtonSize
+import androidx.wear.compose.material3.FilledTonalButton
 import androidx.wear.compose.material3.FilledTonalIconButton
 import androidx.wear.compose.material3.HorizontalPagerScaffold
 import androidx.wear.compose.material3.Icon
@@ -174,6 +176,7 @@ fun RemoteScreen(
             gpsReady = gpsReady,
             error = ble.lastError ?: uiState.trackState.lastError,
             button = button,
+            isMovingLink = uiState.linkMove != null,
             onLinkButton = onLinkButton,
             onOpenSettings = onOpenSettings
         )
@@ -256,6 +259,8 @@ fun RemoteScreen(
                         gpsReady = gpsReady,
                         error = ble.lastError ?: uiState.trackState.lastError,
                         button = button,
+                        canMoveLink = uiState.canMoveLink,
+                        onMoveLink = { viewModel.moveLink() },
                         onLinkButton = onLinkButton,
                         onOpenSettings = onOpenSettings
                     )
@@ -274,6 +279,7 @@ private fun OfflineRemote(
     gpsReady: Boolean,
     error: String?,
     button: CameraButton,
+    isMovingLink: Boolean,
     onLinkButton: () -> Unit,
     onOpenSettings: () -> Unit
 ) {
@@ -285,6 +291,8 @@ private fun OfflineRemote(
             EdgeButton(
                 onClick = onLinkButton,
                 buttonSize = EdgeButtonSize.Small,
+                // Neither device holds the link for a moment while it moves
+                enabled = !isMovingLink,
                 colors = if (button == CameraButton.STOP) ButtonDefaults.filledTonalButtonColors() else ButtonDefaults.buttonColors()
             ) {
                 Icon(linkIcon(button), contentDescription = null, modifier = Modifier.size(20.dp))
@@ -299,7 +307,7 @@ private fun OfflineRemote(
             verticalArrangement = Arrangement.spacedBy(6.dp),
             horizontalAlignment = Alignment.CenterHorizontally
         ) {
-            item { OfflineHeader(ble, cameraName, RemoteText.status(ble, false, 0)) }
+            item { OfflineHeader(ble, cameraName, if (isMovingLink) RemoteText.MOVING_LINK else RemoteText.status(ble, false, 0)) }
             hint?.let { item { Note(it) } }
             // GPS and Settings share one row, so the screen fits above the edge button
             item {
@@ -327,7 +335,8 @@ private fun OfflineRemote(
 
 /**
  * The page a swipe to the left of the controls: what the camera reports, whether the watch has
- * GPS, and Disconnect and Settings, which are rarely wanted while the camera is on.
+ * GPS, moving the link between the watch and the phone, and Disconnect and Settings, which are
+ * rarely wanted while the camera is on.
  */
 @Composable
 private fun CameraPage(
@@ -337,6 +346,8 @@ private fun CameraPage(
     gpsReady: Boolean,
     error: String?,
     button: CameraButton,
+    canMoveLink: Boolean,
+    onMoveLink: () -> Unit,
     onLinkButton: () -> Unit,
     onOpenSettings: () -> Unit
 ) {
@@ -364,6 +375,19 @@ private fun CameraPage(
             }
             item { GpsStatusLine(gpsReady) }
             error?.let { item { Note(it, isProblem = true) } }
+            // Moves the link here from the phone, or to the phone for leaving the watch behind
+            if (throughPhone || canMoveLink) {
+                item {
+                    FilledTonalButton(
+                        onClick = onMoveLink,
+                        enabled = canMoveLink,
+                        modifier = Modifier.fillMaxWidth().transformedHeight(this, transformationSpec),
+                        transformation = SurfaceTransformation(transformationSpec),
+                        icon = { Icon(if (throughPhone) Icons.Filled.Watch else Icons.Filled.Smartphone, contentDescription = null) },
+                        label = { Text(if (throughPhone) "Move Here" else "Move to Phone") }
+                    )
+                }
+            }
             item {
                 OutlinedButton(
                     onClick = onLinkButton,

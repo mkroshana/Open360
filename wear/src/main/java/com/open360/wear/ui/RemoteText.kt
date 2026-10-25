@@ -31,6 +31,9 @@ object RemoteText {
         }
     }
 
+    /** The status while the link moves between the watch and the phone, when neither holds it for a moment. */
+    const val MOVING_LINK = "Moving Link..."
+
     /**
      * The status for the dimmed screen, which changes at most once a minute: a recording's length
      * in whole minutes, as in "Recording, 3 min".
