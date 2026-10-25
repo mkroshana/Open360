@@ -1196,6 +1196,58 @@ fun TactileShutterButton(
     }
 }
 
+/**
+ * A recording's running time, large and red with a pulsing dot, and the mode it is in, shown above
+ * the shutter in place of the modes while it records.
+ */
+@Composable
+private fun RecordingTime(durationSeconds: Long, modeName: String, isRecording: Boolean, modifier: Modifier = Modifier) {
+    // 01:05, or 1:02:09 once it passes an hour, as on the watch
+    val hours = durationSeconds / 3600
+    val mins = durationSeconds % 3600 / 60
+    val secs = durationSeconds % 60
+    val formatted = if (hours > 0) String.format(Locale.US, "%d:%02d:%02d", hours, mins, secs)
+    else String.format(Locale.US, "%02d:%02d", mins, secs)
+
+    val pulseTransition = rememberInfiniteTransition(label = "pulse")
+    val pulseAlpha by if (isRecording) {
+        pulseTransition.animateFloat(
+            initialValue = 0.3f,
+            targetValue = 1f,
+            animationSpec = infiniteRepeatable(tween(600, easing = FastOutSlowInEasing), RepeatMode.Reverse),
+            label = "pulseAlpha"
+        )
+    } else {
+        remember { mutableFloatStateOf(1f) }
+    }
+
+    Column(modifier = modifier, horizontalAlignment = Alignment.CenterHorizontally) {
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(10.dp)
+        ) {
+            Box(
+                modifier = Modifier
+                    .size(10.dp)
+                    .clip(CircleShape)
+                    .background(Color(0xFFFF3B30).copy(alpha = pulseAlpha))
+            )
+            Text(
+                text = formatted,
+                style = MaterialTheme.typography.displaySmall,
+                fontWeight = FontWeight.Bold,
+                fontFamily = FontFamily.Monospace,
+                color = Color(0xFFFF3B30)
+            )
+        }
+        Text(
+            text = modeName,
+            style = MaterialTheme.typography.labelLarge,
+            color = MaterialTheme.colorScheme.onSurfaceVariant
+        )
+    }
+}
+
 // BringIntoViewRequester, for the row of modes
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
@@ -1232,76 +1284,102 @@ fun CameraControlCard(
             modifier = Modifier.padding(vertical = 16.dp),
             horizontalAlignment = Alignment.CenterHorizontally
         ) {
-            // Mode Segmented Control (Video / Photo)
-            ModeSegmentedControl(
-                currentMode = currentMode,
-                enabled = !modeLocked,
-                onModeSelected = onModeSelected,
-                modifier = Modifier.padding(horizontal = 16.dp)
+            // Above the shutter, one space for two things, as on the watch: the modes while ready,
+            // and the running time and mode while recording, when the modes are held. Both are
+            // laid out, the one not shown invisible and silent, so the space keeps its height and
+            // the shutter, in a card fixed at the bottom, keeps its place
+            val recordingAlpha by animateFloatAsState(
+                targetValue = if (isRecording) 1f else 0f,
+                animationSpec = tween(if (isRecording) 160 else 100, easing = EaseOutCubic),
+                label = "recordingAlpha"
             )
-
-            // Sub-mode pills (FreeFrame Video, TimeShift, Timelapse, etc.)
-            if (cameraMode != null) {
-                Spacer(modifier = Modifier.height(10.dp))
-                Row(
+            Box(modifier = Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
+                Column(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .horizontalScroll(rememberScrollState())
-                        .padding(horizontal = 16.dp),
-                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        .graphicsLayer { alpha = 1f - recordingAlpha }
+                        .then(if (isRecording) Modifier.clearAndSetSemantics {} else Modifier),
+                    horizontalAlignment = Alignment.CenterHorizontally
                 ) {
-                    CameraMode.group(photo = currentMode == CaptureMode.PHOTO).forEach { mode ->
-                        val isSelected = mode == shownMode
-                        val chipInteraction = remember { MutableInteractionSource() }
-                        val chipScale by rememberPressScale(chipInteraction, targetScale = 0.95f)
-                        // The row is wider than the screen, so the camera's mode is scrolled into
-                        // view whenever it changes, from here or on the camera
-                        val inView = remember { BringIntoViewRequester() }
-                        LaunchedEffect(isSelected) { if (isSelected) inView.bringIntoView() }
+                    // Mode Segmented Control (Video / Photo)
+                    ModeSegmentedControl(
+                        currentMode = currentMode,
+                        enabled = !modeLocked,
+                        onModeSelected = onModeSelected,
+                        modifier = Modifier.padding(horizontal = 16.dp)
+                    )
 
-                        Box(
+                    // Sub-mode pills (FreeFrame Video, TimeShift, Timelapse, etc.)
+                    if (cameraMode != null) {
+                        Spacer(modifier = Modifier.height(10.dp))
+                        Row(
                             modifier = Modifier
-                                .bringIntoViewRequester(inView)
-                                .graphicsLayer {
-                                    scaleX = chipScale
-                                    scaleY = chipScale
-                                }
-                                .clip(RoundedCornerShape(14.dp))
-                                .background(
-                                    if (isSelected) MaterialTheme.colorScheme.primaryContainer
-                                    else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.45f)
-                                )
-                                .border(
-                                    width = 1.dp,
-                                    color = if (isSelected) MaterialTheme.colorScheme.primary.copy(alpha = 0.4f)
-                                            else MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.2f),
-                                    shape = RoundedCornerShape(14.dp)
-                                )
-                                .clickable(
-                                    interactionSource = chipInteraction,
-                                    indication = null,
-                                    enabled = !modeLocked
-                                ) {
-                                    onCameraModeSelected(mode)
-                                }
-                                .padding(horizontal = 14.dp, vertical = 8.dp)
+                                .fillMaxWidth()
+                                .horizontalScroll(rememberScrollState(), enabled = !isRecording)
+                                .padding(horizontal = 16.dp),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
                         ) {
-                            Text(
-                                text = mode.label,
-                                style = MaterialTheme.typography.labelMedium,
-                                fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium,
-                                color = if (isSelected) MaterialTheme.colorScheme.onPrimaryContainer
-                                        else MaterialTheme.colorScheme.onSurface
-                            )
+                            CameraMode.group(photo = currentMode == CaptureMode.PHOTO).forEach { mode ->
+                                val isSelected = mode == shownMode
+                                val chipInteraction = remember { MutableInteractionSource() }
+                                val chipScale by rememberPressScale(chipInteraction, targetScale = 0.95f)
+                                // The row is wider than the screen, so the camera's mode is scrolled into
+                                // view whenever it changes, from here or on the camera
+                                val inView = remember { BringIntoViewRequester() }
+                                LaunchedEffect(isSelected) { if (isSelected) inView.bringIntoView() }
+
+                                Box(
+                                    modifier = Modifier
+                                        .bringIntoViewRequester(inView)
+                                        .graphicsLayer {
+                                            scaleX = chipScale
+                                            scaleY = chipScale
+                                        }
+                                        .clip(RoundedCornerShape(14.dp))
+                                        .background(
+                                            if (isSelected) MaterialTheme.colorScheme.primaryContainer
+                                            else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.45f)
+                                        )
+                                        .border(
+                                            width = 1.dp,
+                                            color = if (isSelected) MaterialTheme.colorScheme.primary.copy(alpha = 0.4f)
+                                                    else MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.2f),
+                                            shape = RoundedCornerShape(14.dp)
+                                        )
+                                        .clickable(
+                                            interactionSource = chipInteraction,
+                                            indication = null,
+                                            enabled = !modeLocked
+                                        ) {
+                                            onCameraModeSelected(mode)
+                                        }
+                                        .padding(horizontal = 14.dp, vertical = 8.dp)
+                                ) {
+                                    Text(
+                                        text = mode.label,
+                                        style = MaterialTheme.typography.labelMedium,
+                                        fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium,
+                                        color = if (isSelected) MaterialTheme.colorScheme.onPrimaryContainer
+                                                else MaterialTheme.colorScheme.onSurface
+                                    )
+                                }
+                            }
                         }
                     }
                 }
+
+                RecordingTime(
+                    durationSeconds = durationSeconds,
+                    modeName = shownMode?.label ?: currentMode.displayName,
+                    isRecording = isRecording,
+                    modifier = Modifier
+                        .graphicsLayer { alpha = recordingAlpha }
+                        .then(if (isRecording) Modifier else Modifier.clearAndSetSemantics {})
+                )
             }
 
             Spacer(modifier = Modifier.height(24.dp))
 
-            // The shutter stays put when a recording starts or stops: the timer below it keeps its
-            // room while hidden, as the card is fixed at the bottom and would otherwise grow upwards
             TactileShutterButton(
                 currentMode = currentMode,
                 isRecording = isRecording,
@@ -1313,61 +1391,6 @@ fun CameraControlCard(
             )
 
             Spacer(modifier = Modifier.height(14.dp))
-
-            // Live recording timer, below the shutter. Laid out while not recording too, only
-            // invisible and silent, so the card keeps its height
-            val timerAlpha by animateFloatAsState(
-                targetValue = if (isRecording) 1f else 0f,
-                animationSpec = tween(if (isRecording) 160 else 100, easing = EaseOutCubic),
-                label = "timerAlpha"
-            )
-            run {
-                // 01:05, or 1:02:09 once it passes an hour, as on the watch
-                val hours = durationSeconds / 3600
-                val mins = durationSeconds % 3600 / 60
-                val secs = durationSeconds % 60
-                val formatted = if (hours > 0) String.format(Locale.US, "%d:%02d:%02d", hours, mins, secs)
-                else String.format(Locale.US, "%02d:%02d", mins, secs)
-
-                val pulseTransition = rememberInfiniteTransition(label = "pulse")
-                val pulseAlpha by if (isRecording) {
-                    pulseTransition.animateFloat(
-                        initialValue = 0.3f,
-                        targetValue = 1f,
-                        animationSpec = infiniteRepeatable(tween(600, easing = FastOutSlowInEasing), RepeatMode.Reverse),
-                        label = "pulseAlpha"
-                    )
-                } else {
-                    remember { mutableFloatStateOf(1f) }
-                }
-
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(8.dp),
-                    modifier = Modifier
-                        .padding(bottom = 8.dp)
-                        .graphicsLayer { alpha = timerAlpha }
-                        .then(if (isRecording) Modifier else Modifier.clearAndSetSemantics {})
-                        .clip(RoundedCornerShape(12.dp))
-                        .background(Color(0xFFFF3B30).copy(alpha = 0.12f))
-                        .border(1.dp, Color(0xFFFF3B30).copy(alpha = 0.25f), RoundedCornerShape(12.dp))
-                        .padding(horizontal = 14.dp, vertical = 6.dp)
-                ) {
-                    Box(
-                        modifier = Modifier
-                            .size(8.dp)
-                            .clip(CircleShape)
-                            .background(Color(0xFFFF3B30).copy(alpha = pulseAlpha))
-                    )
-                    Text(
-                        text = formatted,
-                        style = MaterialTheme.typography.titleMedium,
-                        fontWeight = FontWeight.Bold,
-                        fontFamily = FontFamily.Monospace,
-                        color = Color(0xFFFF3B30)
-                    )
-                }
-            }
 
             val actionLabel = if (isTakingPhoto) {
                 "Taking Photo..."
