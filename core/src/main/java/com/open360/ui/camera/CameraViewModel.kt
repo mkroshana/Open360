@@ -137,9 +137,9 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
         // A link moved to the other app: that app is given this long to link to the camera, and
         // this one waits a little longer for it before linking again itself. Android ends a link
         // about 4 s after the app lets go of it, the camera turns away a second link until then
-        // and at times for several seconds after, so five moves took 8.3 to 14.1 s (2026-10-25).
-        private const val TAKE_LINK_MS = 25_000L
-        private const val MOVE_LINK_MS = 30_000L
+        // and at times for several seconds after, so seven moves took 8.3 to 22 s (2026-10-25).
+        private const val TAKE_LINK_MS = 40_000L
+        private const val MOVE_LINK_MS = 45_000L
 
         // A recording moved with its link (StreamHandover): the records already made are given
         // this long to go out, and the last write a little longer, before the link is let go. The
