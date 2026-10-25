@@ -36,16 +36,21 @@ class GpsTrackerService : Service() {
         private const val TAG = "GpsTrackerService"
         private const val CHANNEL_ID = "open360_gps_tracking_channel"
         private const val NOTIFICATION_ID = 2001
+        private const val NOTIFICATION_TITLE = "Camera Connected"
 
         const val ACTION_START_TRACKING = "com.open360.action.START_GPS_TRACKING"
         const val ACTION_STOP_TRACKING = "com.open360.action.STOP_GPS_TRACKING"
         const val ACTION_SET_HOLD_AWAKE = "com.open360.action.SET_HOLD_AWAKE"
+        const val ACTION_SET_TEXT = "com.open360.action.SET_TEXT"
         const val EXTRA_HOLD_AWAKE = "hold_awake"
+        const val EXTRA_TEXT = "text"
 
-        fun start(context: Context, holdAwake: Boolean) {
+        /** Starts the service, its notification reading [text] under "Camera Connected". */
+        fun start(context: Context, holdAwake: Boolean, text: String) {
             val intent = Intent(context, GpsTrackerService::class.java).apply {
                 action = ACTION_START_TRACKING
                 putExtra(EXTRA_HOLD_AWAKE, holdAwake)
+                putExtra(EXTRA_TEXT, text)
             }
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
                 context.startForegroundService(intent)
@@ -59,6 +64,15 @@ class GpsTrackerService : Service() {
             val intent = Intent(context, GpsTrackerService::class.java).apply {
                 action = ACTION_SET_HOLD_AWAKE
                 putExtra(EXTRA_HOLD_AWAKE, holdAwake)
+            }
+            context.startService(intent)
+        }
+
+        /** Changes the running service's notification to read [text]. */
+        fun setText(context: Context, text: String) {
+            val intent = Intent(context, GpsTrackerService::class.java).apply {
+                action = ACTION_SET_TEXT
+                putExtra(EXTRA_TEXT, text)
             }
             context.startService(intent)
         }
@@ -109,11 +123,15 @@ class GpsTrackerService : Service() {
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         when (intent?.action) {
             ACTION_START_TRACKING -> {
-                startForegroundTracking()
+                startForegroundTracking(intent.getStringExtra(EXTRA_TEXT).orEmpty())
                 holdAwake(intent.getBooleanExtra(EXTRA_HOLD_AWAKE, true))
             }
             ACTION_SET_HOLD_AWAKE -> {
                 holdAwake(intent.getBooleanExtra(EXTRA_HOLD_AWAKE, true))
+            }
+            ACTION_SET_TEXT -> {
+                getSystemService(NotificationManager::class.java)
+                    .notify(NOTIFICATION_ID, buildNotification(NOTIFICATION_TITLE, intent.getStringExtra(EXTRA_TEXT).orEmpty()))
             }
             ACTION_STOP_TRACKING -> {
                 stopForegroundTracking()
@@ -125,8 +143,8 @@ class GpsTrackerService : Service() {
 
     override fun onBind(intent: Intent?): IBinder = binder
 
-    private fun startForegroundTracking() {
-        val notification = buildNotification("Camera Connected", "GPS is sent to the camera while recording")
+    private fun startForegroundTracking(text: String) {
+        val notification = buildNotification(NOTIFICATION_TITLE, text)
 
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
             startForeground(

@@ -92,12 +92,14 @@ object RemoteText {
 
     /**
      * What to do next while the camera cannot be controlled, in one short line under the status
-     * that already says what is happening; null when the camera can be controlled.
+     * that already says what is happening; null when the camera can be controlled. Through the
+     * phone ([throughPhone]) it says so, as the phone does the looking and the waking.
      */
-    fun hint(ble: BleCameraState, hasWakeUpId: Boolean, isLookingForCamera: Boolean): String? {
+    fun hint(ble: BleCameraState, hasWakeUpId: Boolean, isLookingForCamera: Boolean, throughPhone: Boolean = false): String? {
         val linked = ble.connectionStatus == BleConnectionStatus.CONNECTED
         return when {
             linked && ble.isCameraAwake -> null
+            throughPhone -> "Through your phone"
             linked && ble.isWaking -> "Takes a few seconds"
             isLookingForCamera -> "Keep the camera nearby"
             linked -> "Or switch it on with its button"

@@ -35,6 +35,7 @@ import androidx.compose.material.icons.filled.LocationOff
 import androidx.compose.material.icons.filled.LocationOn
 import androidx.compose.material.icons.filled.PowerSettingsNew
 import androidx.compose.material.icons.filled.Settings
+import androidx.compose.material.icons.filled.Smartphone
 import androidx.compose.material.icons.filled.Speed
 import androidx.compose.material.icons.filled.Videocam
 import androidx.compose.material.icons.filled.VideocamOff
@@ -164,7 +165,12 @@ fun RemoteScreen(
         OfflineRemote(
             ble = ble,
             cameraName = cameraName,
-            hint = RemoteText.hint(ble, hasWakeUpId = uiState.wakeUpId != null, isLookingForCamera = button == CameraButton.STOP),
+            hint = RemoteText.hint(
+                ble,
+                hasWakeUpId = uiState.wakeUpId != null,
+                isLookingForCamera = button == CameraButton.STOP,
+                throughPhone = uiState.linkedThroughPeer
+            ),
             gpsReady = gpsReady,
             error = ble.lastError ?: uiState.trackState.lastError,
             button = button,
@@ -193,7 +199,7 @@ fun RemoteScreen(
                                 horizontalAlignment = Alignment.CenterHorizontally
                             ) {
                                 if (mode == RemoteMode.RECORDING) RecordingTimer(RemoteText.elapsed(uiState.recordingDurationSeconds))
-                                else ReadyHeader(ble)
+                                else ReadyHeader(ble, throughPhone = uiState.linkedThroughPeer)
                                 Text(
                                     text = shownMode?.label ?: uiState.currentMode.displayName,
                                     style = MaterialTheme.typography.labelSmall,
@@ -246,6 +252,7 @@ fun RemoteScreen(
                     CameraPage(
                         ble = ble,
                         cameraName = cameraName,
+                        throughPhone = uiState.linkedThroughPeer,
                         gpsReady = gpsReady,
                         error = ble.lastError ?: uiState.trackState.lastError,
                         button = button,
@@ -326,6 +333,7 @@ private fun OfflineRemote(
 private fun CameraPage(
     ble: BleCameraState,
     cameraName: String,
+    throughPhone: Boolean,
     gpsReady: Boolean,
     error: String?,
     button: CameraButton,
@@ -348,6 +356,8 @@ private fun CameraPage(
                     transformation = SurfaceTransformation(transformationSpec)
                 ) { Text(cameraName) }
             }
+            // The phone holds the link, and its GPS is the one the camera gets
+            if (throughPhone) item { Note("Controlled through your phone") }
             cameraWarnings(ble.details).forEach { warning -> item { Note(warning, isProblem = true) } }
             cameraReport(ble.details, ble.lastVideoFile, ble.lastVideoSeconds).forEach { line ->
                 item { ReportRow(line) }
@@ -487,11 +497,20 @@ private fun CameraBadge(icon: ImageVector, iconTint: Color, spinning: Boolean, r
     }
 }
 
-/** "Ready" and the camera's battery, above the shutter. */
+/** "Ready" and the camera's battery, above the shutter, with a phone while linked through the phone. */
 @Composable
-private fun ReadyHeader(ble: BleCameraState) {
+private fun ReadyHeader(ble: BleCameraState, throughPhone: Boolean) {
     Row(verticalAlignment = Alignment.CenterVertically) {
         Text(text = "Ready", style = MaterialTheme.typography.labelMedium, color = ReadyGreen)
+        if (throughPhone) {
+            Spacer(Modifier.width(6.dp))
+            Icon(
+                imageVector = Icons.Filled.Smartphone,
+                contentDescription = "Through your phone",
+                tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.size(14.dp)
+            )
+        }
         val battery = ble.batteryPercent
         if (battery != null) {
             Spacer(Modifier.width(8.dp))

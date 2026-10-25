@@ -69,6 +69,14 @@ class RemoteTextTest {
     }
 
     @Test
+    fun hintSaysTheCameraIsLinkedThroughThePhone() {
+        // The phone is looking for it, or is linked to it while it is off
+        assertEquals("Through your phone", RemoteText.hint(BleCameraState(connectionStatus = BleConnectionStatus.SCANNING), true, true, throughPhone = true))
+        assertEquals("Through your phone", RemoteText.hint(cameraOff, false, false, throughPhone = true))
+        assertNull(RemoteText.hint(cameraOn, true, false, throughPhone = true))
+    }
+
+    @Test
     fun gpsIsReadyOnlyWithACurrentFix() {
         assertTrue(RemoteText.gpsReady(hasFix = true, fixAgeMs = 900))
         assertTrue(RemoteText.gpsReady(hasFix = true, fixAgeMs = 5000))

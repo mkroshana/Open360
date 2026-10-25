@@ -62,6 +62,7 @@ import androidx.compose.material.icons.filled.Speed
 import androidx.compose.material.icons.filled.Stop
 import androidx.compose.material.icons.filled.Sync
 import androidx.compose.material.icons.filled.Videocam
+import androidx.compose.material.icons.filled.Watch
 import androidx.compose.material3.ElevatedCard
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilledTonalButton
@@ -181,6 +182,7 @@ fun CameraScreen(
                 joinedLateSeconds = ble.joinedRecordingSeconds,
                 lastGpsSentTimeMs = lastGpsSentTime,
                 track = uiState.trackState,
+                isWatchGps = uiState.linkedThroughPeer,
                 onToggleSpeedUnit = { viewModel.toggleSpeedUnit() },
                 onToggleMinimize = { viewModel.toggleGpsCardMinimized() }
             )
@@ -477,6 +479,11 @@ fun CameraStatusCard(
                 }
             }
 
+            if (uiState.linkedThroughPeer) {
+                Spacer(modifier = Modifier.height(10.dp))
+                PeerLinkRow(text = "Controlled through Open360 on your watch")
+            }
+
             AnimatedVisibility(visible = server.lastError != null || ble.lastError != null) {
                 Text(
                     text = server.lastError ?: ble.lastError ?: "",
@@ -486,6 +493,36 @@ fun CameraStatusCard(
                 )
             }
         }
+    }
+}
+
+/**
+ * About the camera's link and the watch: while the camera is linked through the watch, whose
+ * Open360 holds the link and sends the camera its GPS, the camera shown is the watch's.
+ */
+@Composable
+private fun PeerLinkRow(text: String) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(10.dp))
+            .background(MaterialTheme.colorScheme.secondaryContainer.copy(alpha = 0.6f))
+            .padding(horizontal = 12.dp, vertical = 8.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(8.dp)
+    ) {
+        Icon(
+            imageVector = Icons.Default.Watch,
+            contentDescription = null,
+            tint = MaterialTheme.colorScheme.onSecondaryContainer,
+            modifier = Modifier.size(16.dp)
+        )
+        Text(
+            text = text,
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSecondaryContainer,
+            modifier = Modifier.weight(1f)
+        )
     }
 }
 
@@ -641,6 +678,8 @@ fun GpsTelemetryCard(
     joinedLateSeconds: Int? = null,
     lastGpsSentTimeMs: Long,
     track: GpxTrackState = GpxTrackState(),
+    // The GPS shown is the watch's, as the camera is linked through it and gets its GPS
+    isWatchGps: Boolean = false,
     onToggleSpeedUnit: () -> Unit,
     onToggleMinimize: () -> Unit = {}
 ) {
@@ -701,7 +740,7 @@ fun GpsTelemetryCard(
                         tint = MaterialTheme.colorScheme.primary
                     )
                     Text(
-                        text = "GPS Telemetry",
+                        text = if (isWatchGps) "Watch GPS" else "GPS Telemetry",
                         style = MaterialTheme.typography.titleMedium,
                         fontWeight = FontWeight.SemiBold
                     )
