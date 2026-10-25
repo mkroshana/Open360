@@ -85,6 +85,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.platform.LocalHapticFeedback
+import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
@@ -1299,7 +1300,8 @@ fun CameraControlCard(
 
             Spacer(modifier = Modifier.height(24.dp))
 
-            // Primary Shutter Button: Position is 100% INVARIANT (never displaced by recording HUD)
+            // The shutter stays put when a recording starts or stops: the timer below it keeps its
+            // room while hidden, as the card is fixed at the bottom and would otherwise grow upwards
             TactileShutterButton(
                 currentMode = currentMode,
                 isRecording = isRecording,
@@ -1312,12 +1314,14 @@ fun CameraControlCard(
 
             Spacer(modifier = Modifier.height(14.dp))
 
-            // Live Recording Timer Display (placed below shutter, expanding downward)
-            AnimatedVisibility(
-                visible = isRecording,
-                enter = fadeIn(tween(160, easing = EaseOutCubic)) + expandVertically(animationSpec = tween(200, easing = EaseOutCubic)),
-                exit = fadeOut(tween(100, easing = EaseOutCubic)) + shrinkVertically(animationSpec = tween(160, easing = EaseOutCubic))
-            ) {
+            // Live recording timer, below the shutter. Laid out while not recording too, only
+            // invisible and silent, so the card keeps its height
+            val timerAlpha by animateFloatAsState(
+                targetValue = if (isRecording) 1f else 0f,
+                animationSpec = tween(if (isRecording) 160 else 100, easing = EaseOutCubic),
+                label = "timerAlpha"
+            )
+            run {
                 // 01:05, or 1:02:09 once it passes an hour, as on the watch
                 val hours = durationSeconds / 3600
                 val mins = durationSeconds % 3600 / 60
@@ -1326,18 +1330,24 @@ fun CameraControlCard(
                 else String.format(Locale.US, "%02d:%02d", mins, secs)
 
                 val pulseTransition = rememberInfiniteTransition(label = "pulse")
-                val pulseAlpha by pulseTransition.animateFloat(
-                    initialValue = 0.3f,
-                    targetValue = 1f,
-                    animationSpec = infiniteRepeatable(tween(600, easing = FastOutSlowInEasing), RepeatMode.Reverse),
-                    label = "pulseAlpha"
-                )
+                val pulseAlpha by if (isRecording) {
+                    pulseTransition.animateFloat(
+                        initialValue = 0.3f,
+                        targetValue = 1f,
+                        animationSpec = infiniteRepeatable(tween(600, easing = FastOutSlowInEasing), RepeatMode.Reverse),
+                        label = "pulseAlpha"
+                    )
+                } else {
+                    remember { mutableFloatStateOf(1f) }
+                }
 
                 Row(
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.spacedBy(8.dp),
                     modifier = Modifier
                         .padding(bottom = 8.dp)
+                        .graphicsLayer { alpha = timerAlpha }
+                        .then(if (isRecording) Modifier else Modifier.clearAndSetSemantics {})
                         .clip(RoundedCornerShape(12.dp))
                         .background(Color(0xFFFF3B30).copy(alpha = 0.12f))
                         .border(1.dp, Color(0xFFFF3B30).copy(alpha = 0.25f), RoundedCornerShape(12.dp))
