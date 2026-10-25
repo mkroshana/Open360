@@ -108,8 +108,9 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
         // connected can be given the positions from its missed part, where there were any
         private const val GPS_HISTORY_MS = 10 * 60_000L
 
-        // Samples are only made as fast as they can be sent. When a recording is joined late
-        // its whole missed part is due at once, and no sample may be dropped.
+        // Samples are only made as fast as they can be sent. When a recording is joined late, or
+        // carried on after the link moved, its whole missed part is due at once, and no sample
+        // may be dropped; as the camera takes no more than ten a second, it is sent late.
         private const val MAX_GPS_BACKLOG = 40
 
         // GPS time is counted from a fix at most this far from the moment, as the phone's clock

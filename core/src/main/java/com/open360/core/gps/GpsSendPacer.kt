@@ -5,13 +5,17 @@ import kotlin.math.ceil
 /**
  * Limits how fast GPS records are sent to the camera.
  *
- * The camera loses records that arrive much faster than the ten a second they are made at. On a
- * GO 3S, after 20 records in 2 s it took 20 more in half a second and then dropped the next 33.
- * Insta360 Studio places the records on the video by counting them, so one lost record shifts
- * everything after it. A backlog is therefore worked off at [recordsPerSecond], only a little
- * above ten, with never more than [maxBurst] going out together.
+ * The camera takes about ten records a second, the rate they are made at, with room for about
+ * thirty more, and drops whole messages (UploadGps) beyond that without answering them. A GO 3S
+ * catching up on a backlog after the link moved during a recording (2026-10-25) lost about two
+ * records a second, from 15 s in, when sent twelve a second (clip 195), and about ten a second,
+ * from 3 s in, when sent twenty a second, four to a message (clip 196); sent ten a second it lost
+ * none, in messages of one record or four. Insta360 Studio places the records on the video by
+ * counting them, so one lost record shifts everything after it. Records therefore go out at no
+ * more than [perSecond], with never more than [maxBurst] together. A backlog is not caught up:
+ * it is sent late, and the end of the clip goes without as much GPS.
  */
-class GpsSendPacer(private val recordsPerSecond: Double, private val maxBurst: Int) {
+class GpsSendPacer(private val perSecond: Double, private val maxBurst: Int) {
 
     private var allowance = maxBurst.toDouble()
     private var allowanceAtMs: Long? = null
@@ -32,7 +36,7 @@ class GpsSendPacer(private val recordsPerSecond: Double, private val maxBurst: I
     fun waitMs(nowMs: Long): Long {
         refill(nowMs)
         if (allowance >= 1.0) return 0L
-        return ceil((1.0 - allowance) * 1000.0 / recordsPerSecond).toLong()
+        return ceil((1.0 - allowance) * 1000.0 / perSecond).toLong()
     }
 
     private fun refill(nowMs: Long) {
@@ -40,7 +44,7 @@ class GpsSendPacer(private val recordsPerSecond: Double, private val maxBurst: I
         if (last == null) {
             allowanceAtMs = nowMs
         } else if (nowMs > last) {
-            allowance = minOf(maxBurst.toDouble(), allowance + (nowMs - last) * recordsPerSecond / 1000.0)
+            allowance = minOf(maxBurst.toDouble(), allowance + (nowMs - last) * perSecond / 1000.0)
             allowanceAtMs = nowMs
         }
     }

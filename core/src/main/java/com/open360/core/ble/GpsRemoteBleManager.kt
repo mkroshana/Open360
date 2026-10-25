@@ -168,10 +168,11 @@ class GpsRemoteBleManager(private val context: Context) {
         // 10 s of samples. Beyond this the link is not keeping up and the oldest are dropped.
         private const val MAX_QUEUED_GPS_RECORDS = 100
 
-        // Samples are made ten a second. Sending is held to a little more than that, so a
-        // backlog clears without the burst that makes the camera drop records.
-        private const val GPS_SEND_RECORDS_PER_SECOND = 12.0
-        private const val GPS_SEND_MAX_BURST = 4
+        // Samples are made ten a second, and the camera takes no more than that (GpsSendPacer),
+        // so they go out at that rate, a fix's ten together, in messages of as many as the link
+        // takes (four at the MTU of 247 a GO 3S takes)
+        private const val GPS_SEND_RECORDS_PER_SECOND = 10.0
+        private const val GPS_SEND_MAX_BURST = 10
 
         // A recording's GPS is streamed from before its first frame, so that its first record is
         // older than the camera's clock reading the clip stores, which then places the GPS
