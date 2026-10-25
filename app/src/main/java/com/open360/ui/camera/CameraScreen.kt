@@ -916,7 +916,12 @@ fun GpsTelemetryCard(
                         )
                     }
                 } else {
-                    val altitudeDisplay = if (gps.hasFix) String.format(Locale.US, "%.0f m", gps.altitudeMeters) else "— m"
+                    val altitudeDisplay = when {
+                        !gps.hasFix -> "— m"
+                        gps.verticalAccuracyMeters != null ->
+                            String.format(Locale.US, "%.0f ±%.0f m", gps.altitudeMeters, gps.verticalAccuracyMeters)
+                        else -> String.format(Locale.US, "%.0f m", gps.altitudeMeters)
+                    }
                     Row(
                         modifier = Modifier
                             .align(Alignment.CenterEnd)
@@ -971,7 +976,12 @@ fun GpsTelemetryCard(
                         TelemetryMetricItem(
                             icon = Icons.Default.Height,
                             label = "Altitude",
-                            value = if (gps.hasFix) String.format(Locale.US, "%.1f m", gps.altitudeMeters) else "—",
+                            value = when {
+                                !gps.hasFix -> "—"
+                                gps.verticalAccuracyMeters != null ->
+                                    String.format(Locale.US, "%.1f ±%.1f m", gps.altitudeMeters, gps.verticalAccuracyMeters)
+                                else -> String.format(Locale.US, "%.1f m", gps.altitudeMeters)
+                            },
                             modifier = Modifier.weight(1f)
                         )
                         TelemetryMetricItem(

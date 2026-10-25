@@ -56,6 +56,7 @@ class GpsTrackerEngine(private val context: Context) {
             val speedKmh = speedMps * 3.6f
             val speedMph = speedMps * 2.23694f
             val altitude = seaLevelAltitude(location)
+            val altitudeAccuracy = if (altitude != null) altitudeAccuracy(location) else null
             Log.v(TAG, "Fix delivered ${SystemClock.elapsedRealtime() - location.elapsedRealtimeNanos / 1_000_000} ms after it was taken")
             val bearing = if (location.hasBearing()) location.bearing else 0f
             val accuracy = if (location.hasAccuracy()) location.accuracy else 0f
@@ -66,6 +67,7 @@ class GpsTrackerEngine(private val context: Context) {
                     longitude = location.longitude,
                     // A fix without altitude (network provider) keeps the last known one
                     altitudeMeters = altitude ?: current.altitudeMeters,
+                    verticalAccuracyMeters = if (altitude != null) altitudeAccuracy else current.verticalAccuracyMeters,
                     speedKmh = speedKmh,
                     speedMph = speedMph,
                     bearingDegrees = bearing,
@@ -106,6 +108,14 @@ class GpsTrackerEngine(private val context: Context) {
             Log.i(TAG, "Altitude: ellipsoid=$ellipsoid m, sea level=${seaLevel ?: "unavailable"} m")
         }
         return seaLevel ?: ellipsoid
+    }
+
+    /** Accuracy of the altitude seaLevelAltitude returned, which must be called first as it adds the sea level one. */
+    private fun altitudeAccuracy(location: Location): Float? {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE && location.hasMslAltitude()) {
+            return if (location.hasMslAltitudeAccuracy()) location.mslAltitudeAccuracyMeters else null
+        }
+        return if (location.hasVerticalAccuracy()) location.verticalAccuracyMeters else null
     }
 
     @RequiresApi(Build.VERSION_CODES.UPSIDE_DOWN_CAKE)

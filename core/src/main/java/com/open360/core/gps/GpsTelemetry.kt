@@ -8,6 +8,8 @@ data class GpsTelemetry(
     val speedMph: Float = 0f,
     val bearingDegrees: Float = 0f,
     val accuracyMeters: Float = 0f,
+    // Of altitudeMeters; null when the fix gives none. Not passed between the phone and watch apps.
+    val verticalAccuracyMeters: Float? = null,
     val satellitesInFix: Int = 0,
     val satellitesTotal: Int = 0,
     val hasFix: Boolean = false,
