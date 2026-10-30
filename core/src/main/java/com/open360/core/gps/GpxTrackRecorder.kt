@@ -38,6 +38,17 @@ data class GpxTrackState(
     val lastError: String? = null
 )
 
+/** A recording's finished GPX and FIT files, as saved, for passing on (TrackHandover). */
+class SavedTrack(
+    // The recording's start on the wall clock, the same for every save of its files
+    val recordingId: Long,
+    val gpxName: String,
+    val gpx: ByteArray,
+    // Null when the FIT could not be written
+    val fitName: String?,
+    val fit: ByteArray?
+)
+
 /**
  * Saves the GPS fixes of each recording to its own GPX file on the phone.
  *
@@ -50,7 +61,9 @@ data class GpxTrackState(
 class GpxTrackRecorder(
     private val context: Context,
     // The sports sensors' readings between two monotonic times, for the FIT file
-    private val sensorReadings: ((fromElapsedMs: Long, toElapsedMs: Long) -> SensorTrack)? = null
+    private val sensorReadings: ((fromElapsedMs: Long, toElapsedMs: Long) -> SensorTrack)? = null,
+    // Called each time a recording's files are completed, and again if they are renamed afterwards
+    private val onSaved: ((SavedTrack) -> Unit)? = null
 ) {
 
     companion object {
@@ -255,9 +268,10 @@ class GpxTrackRecorder(
         content.append(GpxWriter.FOOTER)
 
         val out = s.channel ?: reopen(s)
+        val gpx = content.toString().toByteArray(Charsets.UTF_8)
         out.truncate(0)
         out.position(0)
-        out.write(bytes(content.toString()))
+        out.write(ByteBuffer.wrap(gpx))
         out.force(true)
 
         val finalName = if (video != null) video.substringBeforeLast('.') + ".gpx" else s.fileName ?: return
@@ -266,15 +280,18 @@ class GpxTrackRecorder(
         }
         _state.update { it.copy(fileName = s.fileName, folder = s.folder, pointCount = s.fixes.size, isRecording = false) }
         Log.i(TAG, "GPX track saved: ${s.folder}/${s.fileName} (${s.fixes.size} points)")
-        saveFit(s)
+        val fit = saveFit(s)
+        val gpxName = s.fileName ?: return
+        onSaved?.invoke(SavedTrack(s.startWallMs, gpxName, gpx, if (fit != null) s.fitName else null, fit))
     }
 
     /**
      * Writes the track again as a FIT file named like the GPX, for importing into Insta360
      * Studio, which reads more from FIT than from GPX. A failure here leaves the GPX as it is.
+     * Returns the file's bytes, or null when it was not saved.
      */
-    private fun saveFit(s: Session) {
-        val name = (s.fileName ?: return).substringBeforeLast('.') + ".fit"
+    private fun saveFit(s: Session): ByteArray? {
+        val name = (s.fileName ?: return null).substringBeforeLast('.') + ".fit"
         try {
             val sensors = sensorReadings?.invoke(s.fixes.first().elapsedMs - SENSOR_MARGIN_MS, s.fixes.last().elapsedMs + SENSOR_MARGIN_MS)
                 ?: SensorTrack()
@@ -307,8 +324,10 @@ class GpxTrackRecorder(
             s.fitName = name
             Log.i(TAG, "FIT track saved: ${s.folder}/$name (${content.size} bytes; readings: ${sensors.heartRateBpm.size} heart rate, " +
                 "${sensors.cadenceRpm.size} cadence, ${sensors.powerWatts.size} power)")
+            return content
         } catch (e: Exception) {
             Log.e(TAG, "Could not save FIT track", e)
+            return null
         }
     }
 

@@ -36,6 +36,7 @@ import com.open360.core.peer.PeerLink
 import com.open360.core.peer.PeerMessages
 import com.open360.core.peer.PeerSnapshot
 import com.open360.core.peer.StreamHandover
+import com.open360.core.peer.TrackHandover
 import com.open360.core.peer.holdsLink
 import java.util.UUID
 import kotlinx.coroutines.CompletableDeferred
@@ -165,7 +166,14 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
     val gpsEngine = GpsTrackerEngine(application)
     // Heart rate, cadence and power sensors, whose readings go into each recording's FIT file
     val sportsSensors = SportsSensorManager(application)
-    private val trackRecorder = GpxTrackRecorder(application) { from, to -> sportsSensors.readings(from, to) }
+    // On the watch each track is also handed to the phone, where its files can be reached
+    private val trackRecorder = GpxTrackRecorder(
+        application,
+        sensorReadings = { from, to -> sportsSensors.readings(from, to) },
+        onSaved = if (application.packageManager.hasSystemFeature(PackageManager.FEATURE_WATCH)) {
+            { track -> TrackHandover.send(application, track) }
+        } else null
+    )
     private val gpsTimeline = GpsTimeline(keepMs = GPS_HISTORY_MS)
     private val gpsSchedule = GpsStreamSchedule(GPS_SAMPLE_INTERVAL_MS, MAX_WAIT_FOR_NEXT_FIX_MS)
 
