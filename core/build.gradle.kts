@@ -1,12 +1,11 @@
 // The camera link, GPS and sensor code shared by the phone app and the watch app
 plugins {
     alias(libs.plugins.android.library)
-    alias(libs.plugins.kotlin.android)
 }
 
 android {
     namespace = "com.open360.core"
-    compileSdk = 35
+    compileSdk = 37
 
     defaultConfig {
         minSdk = 26
@@ -15,10 +14,6 @@ android {
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17
-    }
-
-    kotlinOptions {
-        jvmTarget = "17"
     }
 }
 
