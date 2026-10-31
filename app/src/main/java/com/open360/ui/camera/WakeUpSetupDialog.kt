@@ -31,6 +31,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import com.open360.core.ble.BleConnectionStatus
 import com.open360.core.ble.WakeUpRegistration
+import com.open360.ui.theme.BlurBehindDialog
 
 private enum class StepState { PENDING, CURRENT, DONE }
 
@@ -74,6 +75,7 @@ fun WakeUpSetupDialog(
         onDismissRequest = onClose,
         title = { Text("Set Up Wake Up") },
         text = {
+            BlurBehindDialog()
             Column(verticalArrangement = Arrangement.spacedBy(16.dp)) {
                 Text(
                     text = "Open360 can switch the camera on from the phone once the camera has allowed this app. This is done once.",

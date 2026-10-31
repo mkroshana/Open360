@@ -24,6 +24,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import com.open360.core.ble.Go2BleProtocol
 import com.open360.core.ble.WakeUpRegistration
+import com.open360.ui.theme.BlurBehindDialog
 import java.util.UUID
 
 /**
@@ -57,6 +58,7 @@ fun WakeUpIdDialog(
         onDismissRequest = onClose,
         title = { Text("Wake-Up ID") },
         text = {
+            BlurBehindDialog()
             Column {
                 Text(
                     text = "The camera knows this app by this ID, and when it is off it only wakes for an ID it has allowed. The set-up makes one for you.",
@@ -113,6 +115,7 @@ private fun WakeUpIdEditDialog(
         onDismissRequest = onDismiss,
         title = { Text(if (current == null) "Enter a Wake-Up ID" else "Change the Wake-Up ID") },
         text = {
+            BlurBehindDialog()
             Column {
                 OutlinedTextField(
                     value = text,

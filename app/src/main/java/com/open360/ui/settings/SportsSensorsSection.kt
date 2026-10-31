@@ -32,6 +32,7 @@ import com.open360.core.sensors.SensorDevice
 import com.open360.core.sensors.SensorKind
 import com.open360.core.sensors.SensorStatus
 import com.open360.core.sensors.SportsSensorsState
+import com.open360.ui.theme.BlurBehindDialog
 
 /**
  * The saved sports sensors, each with what it is sending now, and the way to add one. Their
@@ -96,6 +97,7 @@ fun AddSensorDialog(
         onDismissRequest = onDismiss,
         title = { Text("Add a Sensor") },
         text = {
+            BlurBehindDialog()
             Column {
                 Text(
                     text = "Switch the sensor on. On a Pixel Watch, open Connected Fitness in the watch's quick settings and tap Connect, so it shares your heart rate.",
