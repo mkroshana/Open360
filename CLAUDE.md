@@ -140,6 +140,7 @@ The code is in three Gradle modules: `:core` (the camera link, GPS, sensors and 
 - `WakeUpSetup.kt`, `WakeUpSetupCard.kt`, `WakeUpSetupDialog.kt`: Step-by-step pairing wizard guiding the camera authorization prompt and tracking setup state.
 - `WakeUpIdDialog.kt`: Dialog to inspect, copy, or change the camera's 36-char wake-up authorization ID.
 - `CameraStatusText.kt`: Plain-English formatters for storage, battery, runtime, Action Pod, and warning conditions.
+- `BlurBehindDialog.kt` (in `ui/theme`, since 2026-10-31): Blurs the screen behind the dialog it is composed in with Android's window blur (`FLAG_BLUR_BEHIND`, `blurBehindRadius` 16 dp, Android 12 and later), called in the four phone dialogs (Wake-Up ID and its edit dialog, Set Up Wake Up, Add Sensor). It follows `addCrossWindowBlurEnabledListener`: dim 0.1 while blur is on, the dialog's own 0.6 when Android switches blur off. Checked on the Pixel 9 Pro XL (density 480, so 48 px): all four blurred, and with `settings put global disable_window_blurs 1` while a dialog was open the dim went back to 0.6 and the blur went, then 0.1 and the blur again at 0. Left out: the footage player (full screen and opaque) and the watch's dialogs (Wear's fill the screen). Android has no official API for blurring what is behind a composable inside one window.
 - `CameraViewModel.kt`: Central state orchestrator connecting BLE, GPS, settings, and UI flows.
 
 ### Media Browser, Wi-Fi Transfer & Player
