@@ -53,6 +53,7 @@ import com.open360.ui.footage.FootageTab
 import com.open360.ui.footage.FootageViewModel
 import com.open360.ui.settings.AddSensorDialog
 import com.open360.ui.settings.SettingsScreen
+import com.open360.ui.theme.statusColors
 import java.util.Locale
 
 enum class MainNavTab(val title: String) {
@@ -174,10 +175,10 @@ fun Open360App(
                                 }
                                 else -> {
                                     val statusDotColor = when (dotState) {
-                                        CameraStatusText.StatusDotState.RECORDING -> Color(0xFFFF3B30)
-                                        CameraStatusText.StatusDotState.CONNECTED -> Color(0xFF34C759)
-                                        CameraStatusText.StatusDotState.STANDBY -> Color(0xFFFF9500)
-                                        CameraStatusText.StatusDotState.CONNECTING -> Color(0xFF007AFF)
+                                        CameraStatusText.StatusDotState.RECORDING -> MaterialTheme.statusColors.recording
+                                        CameraStatusText.StatusDotState.CONNECTED -> MaterialTheme.statusColors.ready
+                                        CameraStatusText.StatusDotState.STANDBY -> MaterialTheme.statusColors.waiting
+                                        CameraStatusText.StatusDotState.CONNECTING -> MaterialTheme.colorScheme.primary
                                         CameraStatusText.StatusDotState.DISCONNECTED -> Color.Transparent
                                     }
                                     Box(
@@ -198,7 +199,7 @@ fun Open360App(
                                 Text(
                                     text = deviceSubtitle,
                                     style = MaterialTheme.typography.labelSmall,
-                                    color = if (uiState.isRecording) Color(0xFFFF3B30) else MaterialTheme.colorScheme.onSurfaceVariant,
+                                    color = if (uiState.isRecording) MaterialTheme.statusColors.recording else MaterialTheme.colorScheme.onSurfaceVariant,
                                     fontWeight = if (uiState.isRecording) FontWeight.Bold else FontWeight.Normal
                                 )
                             }

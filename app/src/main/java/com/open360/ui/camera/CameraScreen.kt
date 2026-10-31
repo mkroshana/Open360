@@ -98,6 +98,8 @@ import com.open360.core.ble.CameraMode
 import com.open360.core.gps.GpxTrackState
 import com.open360.core.model.CaptureMode
 import com.open360.core.peer.LinkMove
+import com.open360.ui.theme.TabularFigures
+import com.open360.ui.theme.statusColors
 import java.util.Locale
 
 // Emil Kowalski custom curves & motion tokens
@@ -284,7 +286,7 @@ fun CameraStatusCard(
 
                     val batteryPercent = ble.batteryPercent
                     if (batteryPercent != null) {
-                        val batteryColor = if (batteryPercent > 20) Color(0xFF34C759) else MaterialTheme.colorScheme.error
+                        val batteryColor = if (batteryPercent > 20) MaterialTheme.statusColors.ready else MaterialTheme.colorScheme.error
                         Row(
                             verticalAlignment = Alignment.CenterVertically,
                             horizontalArrangement = Arrangement.spacedBy(4.dp),
@@ -356,11 +358,11 @@ fun CameraStatusCard(
                 Spacer(modifier = Modifier.height(12.dp))
 
                 val statusColor = when {
-                    uiState.linkMove != null -> Color(0xFF007AFF)
-                    server.isCameraConnected -> Color(0xFF34C759)
-                    isAsleep -> Color(0xFFFF9500)
-                    server.isAdvertising || ble.connectionStatus == BleConnectionStatus.SCANNING -> Color(0xFF007AFF)
-                    ble.connectionStatus == BleConnectionStatus.CONNECTING -> Color(0xFF007AFF)
+                    uiState.linkMove != null -> MaterialTheme.colorScheme.primary
+                    server.isCameraConnected -> MaterialTheme.statusColors.ready
+                    isAsleep -> MaterialTheme.statusColors.waiting
+                    server.isAdvertising || ble.connectionStatus == BleConnectionStatus.SCANNING -> MaterialTheme.colorScheme.primary
+                    ble.connectionStatus == BleConnectionStatus.CONNECTING -> MaterialTheme.colorScheme.primary
                     else -> MaterialTheme.colorScheme.outline
                 }
 
@@ -790,7 +792,7 @@ fun GpsTelemetryCard(
                     horizontalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
                     // Satellite fix indicator pill
-                    val fixColor = if (gps.hasFix) Color(0xFF34C759) else Color(0xFFFF9500)
+                    val fixColor = if (gps.hasFix) MaterialTheme.statusColors.ready else MaterialTheme.statusColors.waiting
                     Row(
                         verticalAlignment = Alignment.CenterVertically,
                         horizontalArrangement = Arrangement.spacedBy(5.dp),
@@ -838,8 +840,8 @@ fun GpsTelemetryCard(
             val unitText = if (isSpeedMph) "mph" else "km/h"
 
             val streamActive = isCameraConnected && gps.hasFix
-            val badgeBg = if (streamActive) Color(0xFF34C759).copy(alpha = 0.12f) else MaterialTheme.colorScheme.surfaceVariant
-            val badgeColor = if (streamActive) Color(0xFF34C759) else MaterialTheme.colorScheme.onSurfaceVariant
+            val badgeBg = if (streamActive) MaterialTheme.statusColors.ready.copy(alpha = 0.12f) else MaterialTheme.colorScheme.surfaceVariant
+            val badgeColor = if (streamActive) MaterialTheme.statusColors.ready else MaterialTheme.colorScheme.onSurfaceVariant
             val compactStreamText = if (streamActive) {
                 if (isRecording) {
                     if (track.pointCount > 0) "Sending (${track.pointCount})" else "Sending GPS"
@@ -859,10 +861,8 @@ fun GpsTelemetryCard(
                 ) {
                     Text(
                         text = speedDisplay,
-                        style = MaterialTheme.typography.displayLarge.copy(
+                        style = MaterialTheme.typography.displayLargeEmphasized.merge(TabularFigures).copy(
                             fontSize = 42.sp,
-                            fontWeight = FontWeight.Bold,
-                            fontFamily = FontFamily.Monospace,
                             lineHeight = 42.sp
                         ),
                         color = MaterialTheme.colorScheme.primary
@@ -897,7 +897,7 @@ fun GpsTelemetryCard(
                         modifier = Modifier
                             .align(Alignment.CenterEnd)
                             .clip(RoundedCornerShape(8.dp))
-                            .background(Color(0xFF34C759).copy(alpha = 0.12f))
+                            .background(MaterialTheme.statusColors.ready.copy(alpha = 0.12f))
                             .padding(horizontal = 8.dp, vertical = 4.dp),
                         verticalAlignment = Alignment.CenterVertically,
                         horizontalArrangement = Arrangement.spacedBy(5.dp)
@@ -906,13 +906,13 @@ fun GpsTelemetryCard(
                             imageVector = Icons.Default.CheckCircle,
                             contentDescription = "GPS Status",
                             modifier = Modifier.size(14.dp),
-                            tint = Color(0xFF34C759)
+                            tint = MaterialTheme.statusColors.ready
                         )
                         Text(
                             text = compactStreamText,
                             style = MaterialTheme.typography.labelSmall,
                             fontWeight = FontWeight.Medium,
-                            color = Color(0xFF34C759)
+                            color = MaterialTheme.statusColors.ready
                         )
                     }
                 } else {
@@ -1236,8 +1236,8 @@ fun TactileShutterButton(
     )
 
     val isVideo = currentMode == CaptureMode.VIDEO || isRecording
-    val ringColor = if (isVideo) Color(0xFFFF3B30) else MaterialTheme.colorScheme.outline.copy(alpha = 0.8f)
-    val innerColor = if (isVideo) Color(0xFFFF3B30) else Color.White
+    val ringColor = if (isVideo) MaterialTheme.statusColors.recording else MaterialTheme.colorScheme.outline.copy(alpha = 0.8f)
+    val innerColor = if (isVideo) MaterialTheme.statusColors.recording else Color.White
 
     val busyTransition = rememberInfiniteTransition(label = "busyPulse")
     val busyAlpha by if (isStarting || isStopping) {
@@ -1318,14 +1318,12 @@ private fun RecordingTime(durationSeconds: Long, modeName: String, isRecording: 
                 modifier = Modifier
                     .size(10.dp)
                     .clip(CircleShape)
-                    .background(Color(0xFFFF3B30).copy(alpha = pulseAlpha))
+                    .background(MaterialTheme.statusColors.recording.copy(alpha = pulseAlpha))
             )
             Text(
                 text = formatted,
-                style = MaterialTheme.typography.displaySmall,
-                fontWeight = FontWeight.Bold,
-                fontFamily = FontFamily.Monospace,
-                color = Color(0xFFFF3B30)
+                style = MaterialTheme.typography.displaySmallEmphasized.merge(TabularFigures),
+                color = MaterialTheme.statusColors.recording
             )
         }
         Text(
