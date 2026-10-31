@@ -149,7 +149,10 @@ object CameraStatusText {
         CONNECTING
     }
 
-    /** The camera identity displayed in the top bar title. */
+    /**
+     * The camera identity displayed in the top bar title, or the app's name with no camera, since
+     * the camera card says how the link stands.
+     */
     fun topBarTitle(
         serverConnected: Boolean,
         serverSerial: String?,
@@ -160,7 +163,7 @@ object CameraStatusText {
         serverConnected -> serverSerial?.let { "Insta360 ($it)" } ?: "Insta360 GO 3S"
         bleConnected -> bleDeviceName ?: "Insta360 GO 3S"
         isAdvertising -> "Insta360 GPS Remote"
-        else -> "Not Connected"
+        else -> "Open360"
     }
 
     /** Resolves the status dot state for both Architecture A (GATT server) and Architecture B (BLE client). */

@@ -327,9 +327,9 @@ class CameraStatusTextTest {
                 isAdvertising = true
             )
         )
-        // Disconnected
+        // Disconnected: the app's name, as the camera card says how the link stands
         assertEquals(
-            "Not Connected",
+            "Open360",
             CameraStatusText.topBarTitle(
                 serverConnected = false,
                 serverSerial = null,

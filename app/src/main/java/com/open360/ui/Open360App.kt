@@ -21,8 +21,8 @@ import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.NavigationBar
-import androidx.compose.material3.NavigationBarItem
+import androidx.compose.material3.ShortNavigationBar
+import androidx.compose.material3.ShortNavigationBarItem
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
@@ -193,15 +193,18 @@ fun Open360App(
                             Column {
                                 Text(
                                     text = deviceTitle,
-                                    style = MaterialTheme.typography.titleMedium,
-                                    fontWeight = FontWeight.SemiBold
+                                    style = MaterialTheme.typography.titleMediumEmphasized
                                 )
-                                Text(
-                                    text = deviceSubtitle,
-                                    style = MaterialTheme.typography.labelSmall,
-                                    color = if (uiState.isRecording) MaterialTheme.statusColors.recording else MaterialTheme.colorScheme.onSurfaceVariant,
-                                    fontWeight = if (uiState.isRecording) FontWeight.Bold else FontWeight.Normal
-                                )
+                                // Only on the Footage tab: on the Remote tab the camera card says how
+                                // the link stands, and the control card shows a recording's time
+                                if (currentTab == MainNavTab.FOOTAGE) {
+                                    Text(
+                                        text = deviceSubtitle,
+                                        style = MaterialTheme.typography.labelSmall,
+                                        color = if (uiState.isRecording) MaterialTheme.statusColors.recording else MaterialTheme.colorScheme.onSurfaceVariant,
+                                        fontWeight = if (uiState.isRecording) FontWeight.Bold else FontWeight.Normal
+                                    )
+                                }
                             }
                         }
                     },
@@ -227,23 +230,24 @@ fun Open360App(
                 )
             },
             bottomBar = {
-                NavigationBar {
-                    NavigationBarItem(
+                // Material 3 Expressive's navigation bar, shorter than the one before it
+                ShortNavigationBar {
+                    ShortNavigationBarItem(
                         icon = {
                             Icon(
                                 imageVector = Icons.Default.Videocam,
-                                contentDescription = "Remote"
+                                contentDescription = null
                             )
                         },
                         label = { Text("Remote") },
                         selected = currentTab == MainNavTab.REMOTE,
                         onClick = { currentTab = MainNavTab.REMOTE }
                     )
-                    NavigationBarItem(
+                    ShortNavigationBarItem(
                         icon = {
                             Icon(
                                 imageVector = Icons.Default.VideoLibrary,
-                                contentDescription = "Footage"
+                                contentDescription = null
                             )
                         },
                         label = { Text("Footage") },
