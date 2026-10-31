@@ -1,6 +1,5 @@
 package com.open360.ui.settings
 
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -13,13 +12,14 @@ import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.MonitorHeart
 import androidx.compose.material.icons.filled.PedalBike
 import androidx.compose.material3.AlertDialog
-import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material3.ExperimentalMaterial3ExpressiveApi
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
-import androidx.compose.material3.LinearProgressIndicator
+import androidx.compose.material3.LinearWavyProgressIndicator
 import androidx.compose.material3.ListItem
 import androidx.compose.material3.ListItemDefaults
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.SegmentedListItem
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -45,10 +45,12 @@ fun SportsSensorsSection(
     onReconnectSensor: (String) -> Unit,
     onRemoveSensor: (String) -> Unit
 ) {
-    for (status in sensors.saved) {
-        ListItem(
+    // The saved sensors and Add Sensor, as one segmented list
+    val count = sensors.saved.size + 1
+    sensors.saved.forEachIndexed { index, status ->
+        SegmentedListItem(
+            shapes = ListItemDefaults.segmentedShapes(index = index, count = count),
             leadingContent = { Icon(iconFor(status.device.kinds), contentDescription = null) },
-            headlineContent = { Text(status.device.name) },
             supportingContent = {
                 Text(
                     text = sensorStatusText(status),
@@ -64,26 +66,29 @@ fun SportsSensorsSection(
                         Icon(Icons.Default.Delete, contentDescription = "Remove ${status.device.name}")
                     }
                 }
-            },
-            colors = ListItemDefaults.colors(containerColor = Color.Transparent)
-        )
-        HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
+            }
+        ) {
+            Text(status.device.name)
+        }
     }
-    ListItem(
+    SegmentedListItem(
+        onClick = onAddSensor,
+        shapes = ListItemDefaults.segmentedShapes(index = count - 1, count = count),
         leadingContent = { Icon(Icons.Default.Add, contentDescription = null) },
-        headlineContent = { Text("Add Sensor") },
         supportingContent = {
             Text(
                 text = "Heart rate, cadence or power, saved with each recording for Insta360 Studio",
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
-        },
-        colors = ListItemDefaults.colors(containerColor = Color.Transparent),
-        modifier = Modifier.clickable(onClick = onAddSensor)
-    )
+        }
+    ) {
+        Text("Add Sensor")
+    }
 }
 
 /** Looks for sensors and lists what it finds; tapping one saves it. */
+// LinearWavyProgressIndicator
+@OptIn(ExperimentalMaterial3ExpressiveApi::class)
 @Composable
 fun AddSensorDialog(
     sensors: SportsSensorsState,
@@ -106,7 +111,7 @@ fun AddSensorDialog(
                 )
                 Spacer(Modifier.height(12.dp))
                 if (sensors.scanning) {
-                    LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
+                    LinearWavyProgressIndicator(modifier = Modifier.fillMaxWidth())
                     Spacer(Modifier.height(8.dp))
                 }
                 if (found.isEmpty()) {
@@ -117,11 +122,13 @@ fun AddSensorDialog(
                 }
                 for (device in found) {
                     ListItem(
+                        onClick = { onPick(device) },
                         leadingContent = { Icon(iconFor(device.kinds), contentDescription = null) },
-                        headlineContent = { Text(device.name) },
                         supportingContent = { Text(kindsText(device.kinds)) },
-                        modifier = Modifier.clickable { onPick(device) }
-                    )
+                        colors = ListItemDefaults.colors(containerColor = Color.Transparent)
+                    ) {
+                        Text(device.name)
+                    }
                 }
             }
         },

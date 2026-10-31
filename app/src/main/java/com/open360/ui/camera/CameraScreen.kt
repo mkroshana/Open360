@@ -29,7 +29,6 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -72,8 +71,6 @@ import androidx.compose.material.icons.filled.Warning
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.ButtonGroupDefaults
-import androidx.compose.material3.Card
-import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.ExperimentalMaterial3ExpressiveApi
 import androidx.compose.material3.HorizontalDivider
@@ -116,6 +113,7 @@ import com.open360.core.ble.CameraMode
 import com.open360.core.gps.GpxTrackState
 import com.open360.core.model.CaptureMode
 import com.open360.core.peer.LinkMove
+import com.open360.ui.theme.SurfaceCard
 import com.open360.ui.theme.TabularFigures
 import com.open360.ui.theme.statusColors
 import java.util.Locale
@@ -240,20 +238,6 @@ fun CameraScreen(
     }
 }
 
-/** One of the Remote screen's cards: a single surface, with only status tinted inside it. */
-@Composable
-private fun RemoteCard(
-    modifier: Modifier = Modifier,
-    content: @Composable ColumnScope.() -> Unit
-) {
-    Card(
-        modifier = modifier.fillMaxWidth(),
-        shape = MaterialTheme.shapes.extraLarge,
-        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainer),
-        content = content
-    )
-}
-
 @Composable
 private fun CardTitle(icon: ImageVector, text: String, modifier: Modifier = Modifier) {
     Row(
@@ -329,7 +313,7 @@ fun CameraStatusCard(
     val isAsleep = ble.connectionStatus == BleConnectionStatus.CONNECTED && !ble.isCameraAwake
     val isReady = uiState.isConnected && !isAsleep
 
-    RemoteCard {
+    SurfaceCard {
         Column(modifier = Modifier.padding(20.dp)) {
             if (isReady) {
                 // The camera, its mode and battery, and a restrained Disconnect
@@ -751,7 +735,7 @@ fun GpsTelemetryCard(
         if (minimized) 0f else 180f
     }
 
-    RemoteCard {
+    SurfaceCard {
         Column(
             modifier = Modifier
                 .fillMaxWidth()
@@ -1242,7 +1226,7 @@ fun CameraControlCard(
     val modeLocked = isRecording || isStarting || isStopping || isTakingPhoto
     val shownMode = cameraMode?.takeIf { it.isPhoto == (currentMode == CaptureMode.PHOTO) }
 
-    RemoteCard(
+    SurfaceCard(
         modifier = Modifier.animateContentSize(
             animationSpec = spring(
                 dampingRatio = 0.82f,

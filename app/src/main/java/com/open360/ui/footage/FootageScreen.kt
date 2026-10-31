@@ -8,29 +8,24 @@ import android.graphics.Bitmap
 import android.net.Uri
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
-import androidx.compose.animation.core.animateFloatAsState
-import androidx.compose.animation.core.spring
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Delete
@@ -47,24 +42,27 @@ import androidx.compose.material.icons.filled.Usb
 import androidx.compose.material.icons.filled.VideoLibrary
 import androidx.compose.material.icons.filled.Wifi
 import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.ButtonGroupDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
-import androidx.compose.material3.CircularProgressIndicator
-import androidx.compose.material3.ElevatedCard
+import androidx.compose.material3.ExperimentalMaterial3ExpressiveApi
 import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
-import androidx.compose.material3.LinearProgressIndicator
+import androidx.compose.material3.LinearWavyProgressIndicator
+import androidx.compose.material3.LoadingIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.ToggleButton
+import androidx.compose.material3.ToggleButtonDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.produceState
-import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import com.open360.core.ble.BleCameraState
@@ -73,21 +71,24 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.asImageBitmap
-import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.role
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.open360.core.model.CameraMediaFile
-import com.open360.ui.camera.rememberPressScale
+import com.open360.ui.theme.SurfaceCard
 
 import com.open360.core.network.CameraWifiStatus
 
 /**
- * Text-only sliding pill segmented switcher (Camera, Downloaded, USB) matching ModeSegmentedControl.
+ * Camera, Downloaded and USB as a connected button group, as Video and Photo are on the Remote
+ * screen.
  */
 @Composable
 fun FootageTabSegmentedControl(
@@ -96,75 +97,35 @@ fun FootageTabSegmentedControl(
     modifier: Modifier = Modifier
 ) {
     val tabs = FootageTab.entries
-    val selectedIndex = tabs.indexOf(currentTab)
 
-    val targetOffset by animateFloatAsState(
-        targetValue = selectedIndex.toFloat(),
-        animationSpec = spring(
-            dampingRatio = 0.82f,
-            stiffness = 450f
-        ),
-        label = "footageTabIndicator"
-    )
-
-    BoxWithConstraints(
-        modifier = modifier
-            .fillMaxWidth()
-            .height(44.dp)
-            .clip(RoundedCornerShape(22.dp))
-            .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f))
-            .padding(3.dp)
+    Row(
+        modifier = modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.spacedBy(ButtonGroupDefaults.ConnectedSpaceBetween)
     ) {
-        val tabWidth = maxWidth / tabs.size
-
-        // Sliding indicator pill
-        Box(
-            modifier = Modifier
-                .width(tabWidth)
-                .fillMaxHeight()
-                .graphicsLayer {
-                    translationX = targetOffset * tabWidth.toPx()
-                }
-                .clip(RoundedCornerShape(19.dp))
-                .background(MaterialTheme.colorScheme.primaryContainer)
-        )
-
-        Row(modifier = Modifier.fillMaxSize()) {
-            tabs.forEach { tab ->
-                val isSelected = currentTab == tab
-                val interactionSource = remember { MutableInteractionSource() }
-                val tabScale by rememberPressScale(interactionSource, targetScale = 0.96f)
-
-                val label = when (tab) {
-                    FootageTab.CAMERA -> "Camera"
-                    FootageTab.DOWNLOADED -> "Downloaded"
-                    FootageTab.USB -> "USB"
-                }
-
-                Box(
-                    modifier = Modifier
-                        .weight(1f)
-                        .fillMaxHeight()
-                        .graphicsLayer {
-                            scaleX = tabScale
-                            scaleY = tabScale
-                        }
-                        .clip(RoundedCornerShape(19.dp))
-                        .clickable(
-                            interactionSource = interactionSource,
-                            indication = null
-                        ) {
-                            if (!isSelected) onTabSelected(tab)
-                        },
-                    contentAlignment = Alignment.Center
-                ) {
-                    Text(
-                        text = label,
-                        style = MaterialTheme.typography.labelLarge,
-                        fontWeight = if (isSelected) FontWeight.SemiBold else FontWeight.Medium,
-                        color = if (isSelected) MaterialTheme.colorScheme.onPrimaryContainer else MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                }
+        tabs.forEachIndexed { index, tab ->
+            val isSelected = currentTab == tab
+            ToggleButton(
+                checked = isSelected,
+                onCheckedChange = { if (!isSelected) onTabSelected(tab) },
+                shapes = when (index) {
+                    0 -> ButtonGroupDefaults.connectedLeadingButtonShapes()
+                    tabs.lastIndex -> ButtonGroupDefaults.connectedTrailingButtonShapes()
+                    else -> ButtonGroupDefaults.connectedMiddleButtonShapes()
+                },
+                colors = ToggleButtonDefaults.colors(containerColor = MaterialTheme.colorScheme.surfaceContainerHighest),
+                modifier = Modifier
+                    .weight(1f)
+                    .heightIn(min = 48.dp)
+                    .semantics { role = Role.Tab }
+            ) {
+                Text(
+                    text = when (tab) {
+                        FootageTab.CAMERA -> "Camera"
+                        FootageTab.DOWNLOADED -> "Downloaded"
+                        FootageTab.USB -> "USB"
+                    },
+                    style = MaterialTheme.typography.labelLarge
+                )
             }
         }
     }
@@ -268,6 +229,8 @@ fun FootageScreen(
     }
 }
 
+// LoadingIndicator, LinearWavyProgressIndicator
+@OptIn(ExperimentalMaterial3ExpressiveApi::class)
 @Composable
 private fun CameraWifiTabContent(
     files: List<CameraMediaFile>,
@@ -293,15 +256,12 @@ private fun CameraWifiTabContent(
                 .padding(24.dp),
             contentAlignment = Alignment.Center
         ) {
-            ElevatedCard(
-                modifier = Modifier.fillMaxWidth(),
-                shape = RoundedCornerShape(16.dp)
-            ) {
+            SurfaceCard {
                 Column(
                     modifier = Modifier.padding(24.dp),
                     horizontalAlignment = Alignment.CenterHorizontally
                 ) {
-                    CircularProgressIndicator(modifier = Modifier.size(48.dp))
+                    LoadingIndicator(modifier = Modifier.size(48.dp))
                     Spacer(modifier = Modifier.height(16.dp))
                     Text(
                         text = "Connecting to Camera Wi-Fi",
@@ -333,7 +293,7 @@ private fun CameraWifiTabContent(
     if (isLoading && files.isEmpty()) {
         Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
             Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                CircularProgressIndicator()
+                LoadingIndicator()
                 Spacer(modifier = Modifier.height(12.dp))
                 Text(
                     text = "Loading Camera Footage...",
@@ -352,10 +312,7 @@ private fun CameraWifiTabContent(
                 .padding(20.dp),
             contentAlignment = Alignment.Center
         ) {
-            ElevatedCard(
-                modifier = Modifier.fillMaxWidth(),
-                shape = RoundedCornerShape(16.dp)
-            ) {
+            SurfaceCard {
                 Column(
                     modifier = Modifier.padding(20.dp),
                     horizontalAlignment = Alignment.CenterHorizontally
@@ -383,8 +340,8 @@ private fun CameraWifiTabContent(
                         modifier = Modifier
                             .fillMaxWidth()
                             .background(
-                                MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
-                                RoundedCornerShape(8.dp)
+                                MaterialTheme.colorScheme.surfaceContainerHighest,
+                                MaterialTheme.shapes.medium
                             )
                             .padding(12.dp)
                     ) {
@@ -417,12 +374,14 @@ private fun CameraWifiTabContent(
                     ) {
                         Button(
                             onClick = onConnectWifi,
+                            shapes = ButtonDefaults.shapes(),
                             modifier = Modifier.weight(1f)
                         ) {
                             Text(text = "Connect Wi-Fi")
                         }
                         OutlinedButton(
                             onClick = onOpenWifiSettings,
+                            shapes = ButtonDefaults.shapes(),
                             modifier = Modifier.weight(1f)
                         ) {
                             Text(text = "Wi-Fi Settings")
@@ -433,6 +392,7 @@ private fun CameraWifiTabContent(
                         Spacer(modifier = Modifier.height(16.dp))
                         FilledTonalButton(
                             onClick = onSelectDownloadedTab,
+                            shapes = ButtonDefaults.shapes(),
                             modifier = Modifier.fillMaxWidth()
                         ) {
                             Text(text = "View Downloaded Clips ($downloadedCount Available)")
@@ -481,7 +441,7 @@ private fun CameraWifiTabContent(
 
     LazyColumn(
         modifier = Modifier.fillMaxSize(),
-        verticalArrangement = Arrangement.spacedBy(8.dp),
+        verticalArrangement = Arrangement.spacedBy(12.dp),
         contentPadding = androidx.compose.foundation.layout.PaddingValues(16.dp)
     ) {
         items(files, key = { it.name }) { file ->
@@ -549,7 +509,7 @@ private fun DownloadedTabContent(
 
     LazyColumn(
         modifier = Modifier.fillMaxSize(),
-        verticalArrangement = Arrangement.spacedBy(8.dp),
+        verticalArrangement = Arrangement.spacedBy(12.dp),
         contentPadding = androidx.compose.foundation.layout.PaddingValues(16.dp)
     ) {
         items(files, key = { it.name }) { file ->
@@ -564,6 +524,8 @@ private fun DownloadedTabContent(
     }
 }
 
+// LoadingIndicator, LinearWavyProgressIndicator
+@OptIn(ExperimentalMaterial3ExpressiveApi::class)
 @Composable
 private fun UsbTabContent(
     files: List<CameraMediaFile>,
@@ -599,7 +561,7 @@ private fun UsbTabContent(
                     )
                 }
 
-                Button(onClick = onPickFolder) {
+                Button(onClick = onPickFolder, shapes = ButtonDefaults.shapes()) {
                     Icon(
                         imageVector = Icons.Default.FolderOpen,
                         contentDescription = "Open Folder",
@@ -613,7 +575,7 @@ private fun UsbTabContent(
 
         if (isLoading) {
             Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                CircularProgressIndicator()
+                LoadingIndicator()
             }
             return
         }
@@ -690,7 +652,7 @@ private fun UsbTabContent(
 
         LazyColumn(
             modifier = Modifier.fillMaxSize(),
-            verticalArrangement = Arrangement.spacedBy(8.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp),
             contentPadding = androidx.compose.foundation.layout.PaddingValues(16.dp)
         ) {
             items(files, key = { it.name }) { file ->
@@ -709,6 +671,8 @@ private fun UsbTabContent(
     }
 }
 
+// LoadingIndicator, LinearWavyProgressIndicator
+@OptIn(ExperimentalMaterial3ExpressiveApi::class)
 @Composable
 private fun MediaFileCard(
     file: CameraMediaFile,
@@ -722,10 +686,7 @@ private fun MediaFileCard(
     onDelete: (() -> Unit)? = null,
     loadThumbnail: (suspend (CameraMediaFile) -> Bitmap?)? = null
 ) {
-    ElevatedCard(
-        modifier = Modifier.fillMaxWidth(),
-        shape = RoundedCornerShape(20.dp)
-    ) {
+    SurfaceCard {
         Column(modifier = Modifier.padding(16.dp)) {
             Row(
                 modifier = Modifier.fillMaxWidth(),
@@ -799,7 +760,7 @@ private fun MediaFileCard(
             // Progress bar if downloading/importing
             if (downloadProgress != null) {
                 Spacer(modifier = Modifier.height(8.dp))
-                LinearProgressIndicator(
+                LinearWavyProgressIndicator(
                     progress = { downloadProgress },
                     modifier = Modifier.fillMaxWidth()
                 )
@@ -840,7 +801,7 @@ private fun MediaFileCard(
                         enabled = secondaryActionEnabled,
                         contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 12.dp, vertical = 4.dp),
                         modifier = Modifier.height(36.dp),
-                        shape = RoundedCornerShape(10.dp)
+                        shapes = ButtonDefaults.shapes()
                     ) {
                         if (!secondaryActionEnabled && file.isImported) {
                             Icon(
@@ -869,7 +830,7 @@ private fun MediaFileCard(
                     onClick = onPrimaryAction,
                     contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 14.dp, vertical = 4.dp),
                     modifier = Modifier.height(36.dp),
-                    shape = RoundedCornerShape(10.dp)
+                    shapes = ButtonDefaults.shapes()
                 ) {
                     Icon(
                         imageVector = Icons.Default.PlayArrow,
@@ -909,27 +870,12 @@ private fun ThumbnailBox(
         value = loadThumbnail?.invoke(file)?.asImageBitmap()
     }
 
-    val interactionSource = remember { MutableInteractionSource() }
-    val pressScale by rememberPressScale(interactionSource, targetScale = 0.95f)
-
     Box(
         modifier = Modifier
             .size(68.dp)
-            .graphicsLayer {
-                scaleX = pressScale
-                scaleY = pressScale
-            }
-            .clip(RoundedCornerShape(14.dp))
-            .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f))
-            .then(
-                if (onClick != null) {
-                    Modifier.clickable(
-                        interactionSource = interactionSource,
-                        indication = null,
-                        onClick = onClick
-                    )
-                } else Modifier
-            ),
+            .clip(MaterialTheme.shapes.large)
+            .background(MaterialTheme.colorScheme.surfaceContainerHighest)
+            .then(if (onClick != null) Modifier.clickable(onClick = onClick) else Modifier),
         contentAlignment = Alignment.Center
     ) {
         val loaded = bitmap

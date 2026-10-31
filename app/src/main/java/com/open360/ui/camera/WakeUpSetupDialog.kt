@@ -13,8 +13,9 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material3.AlertDialog
-import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.ExperimentalMaterial3ExpressiveApi
 import androidx.compose.material3.Icon
+import androidx.compose.material3.LoadingIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -137,6 +138,8 @@ fun WakeUpSetupDialog(
  * One step: its number, or a tick once it is done, with its title and what to do. The step the
  * set-up is at also says what it is waiting for.
  */
+// LoadingIndicator
+@OptIn(ExperimentalMaterial3ExpressiveApi::class)
 @Composable
 private fun SetupStepRow(
     number: Int,
@@ -190,7 +193,7 @@ private fun SetupStepRow(
                 Spacer(modifier = Modifier.height(6.dp))
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     if (!statusIsProblem) {
-                        CircularProgressIndicator(modifier = Modifier.size(14.dp), strokeWidth = 2.dp)
+                        LoadingIndicator(modifier = Modifier.size(20.dp))
                         Spacer(modifier = Modifier.width(8.dp))
                     }
                     Text(
