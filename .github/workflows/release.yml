@@ -19,14 +19,33 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Set up JDK 17
+      - name: Set up JDK 21
         uses: actions/setup-java@v4
         with:
           distribution: temurin
-          java-version: "17"
+          java-version: "21"
 
       - name: Set up Android SDK
-        uses: android-actions/setup-android@v3
+        run: |
+          SDK_ROOT="${ANDROID_HOME:-${ANDROID_SDK_ROOT:-/usr/local/lib/android/sdk}}"
+          echo "ANDROID_HOME=$SDK_ROOT" >> "$GITHUB_ENV"
+          echo "ANDROID_SDK_ROOT=$SDK_ROOT" >> "$GITHUB_ENV"
+          if [ -x "$SDK_ROOT/cmdline-tools/latest/bin/sdkmanager" ]; then
+            SDKMANAGER="$SDK_ROOT/cmdline-tools/latest/bin/sdkmanager"
+          else
+            SDKMANAGER="$(ls -d "$SDK_ROOT"/cmdline-tools/*/bin/sdkmanager 2>/dev/null | sort -V | tail -n 1 || command -v sdkmanager)"
+          fi
+          set +o pipefail
+          yes | "$SDKMANAGER" --sdk_root="$SDK_ROOT" --licenses > /dev/null
+          set -o pipefail
+          "$SDKMANAGER" --sdk_root="$SDK_ROOT" "cmdline-tools;latest"
+          if [ -x "$SDK_ROOT/cmdline-tools/latest/bin/sdkmanager" ]; then
+            SDKMANAGER="$SDK_ROOT/cmdline-tools/latest/bin/sdkmanager"
+          fi
+          set +o pipefail
+          yes | "$SDKMANAGER" --sdk_root="$SDK_ROOT" --licenses > /dev/null
+          set -o pipefail
+          "$SDKMANAGER" --sdk_root="$SDK_ROOT" "platform-tools" "platforms;android-37.0" "build-tools;37.0.0"
 
       - name: Set up Gradle
         uses: gradle/actions/setup-gradle@v4
