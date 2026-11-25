@@ -59,7 +59,7 @@ class CameraUsbClient(
 
     companion object {
         private const val TAG = "CameraUsbClient"
-        const val ACTION_USB_PERMISSION = "com.open360.USB_CAMERA_PERMISSION"
+        const val ACTION_USB_PERMISSION = "com.mkroshana.open360.USB_CAMERA_PERMISSION"
 
         /** Inspects all currently attached USB devices and classifies cameras vs Quick Readers. */
         fun inspectAttachedDevices(context: Context): List<AttachedUsbDevice> {

@@ -41,11 +41,11 @@ class GpsTrackerService : Service() {
         private const val NOTIFICATION_ID = 2001
         private const val NOTIFICATION_TITLE = "Camera Connected"
 
-        const val ACTION_START_TRACKING = "com.open360.action.START_GPS_TRACKING"
-        const val ACTION_STOP_TRACKING = "com.open360.action.STOP_GPS_TRACKING"
-        const val ACTION_SET_HOLD_AWAKE = "com.open360.action.SET_HOLD_AWAKE"
-        const val ACTION_SET_TEXT = "com.open360.action.SET_TEXT"
-        const val ACTION_REFRESH_FOREGROUND = "com.open360.action.REFRESH_FOREGROUND"
+        const val ACTION_START_TRACKING = "com.mkroshana.open360.action.START_GPS_TRACKING"
+        const val ACTION_STOP_TRACKING = "com.mkroshana.open360.action.STOP_GPS_TRACKING"
+        const val ACTION_SET_HOLD_AWAKE = "com.mkroshana.open360.action.SET_HOLD_AWAKE"
+        const val ACTION_SET_TEXT = "com.mkroshana.open360.action.SET_TEXT"
+        const val ACTION_REFRESH_FOREGROUND = "com.mkroshana.open360.action.REFRESH_FOREGROUND"
         const val EXTRA_HOLD_AWAKE = "hold_awake"
         const val EXTRA_TEXT = "text"
 

@@ -51,7 +51,7 @@ Open360 exposes a catalog of **20 Insta360 camera models** and **6 transport mod
 
 ## Distribution Channels & Product Flavors
 
-Open360 builds two phone flavors (`com.open360`) and a standalone Wear OS app (`:wear`):
+Open360 builds two phone flavors (`com.mkroshana.open360`) and a standalone Wear OS app (`:wear`):
 
 | Channel | Variant / Modules | Proprietary Dependencies | Notes |
 | --- | --- | --- | --- |
@@ -89,7 +89,7 @@ Open360 builds two phone flavors (`com.open360`) and a standalone Wear OS app (`
 
 ### Release Signing Configuration
 
-For Wear OS Data Layer communication (`play` + `:wear`), both apps must share the same `applicationId` (`com.open360`) and signing certificate. Configure signing in **either** of two ways:
+For Wear OS Data Layer communication (`play` + `:wear`), both apps must share the same `applicationId` (`com.mkroshana.open360`) and signing certificate. Configure signing in **either** of two ways:
 
 1. **Local `keystore.properties` (git-ignored)** in the repository root:
    ```properties

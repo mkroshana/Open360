@@ -6,7 +6,7 @@ Operator checklist for signing, distributing, and maintaining Open360 across **G
 
 ## 1. Shared Upload Keystore & Signing Setup
 
-Because Open360's phone app (`play` flavor) and Wear OS app (`:wear`) communicate over the **Wear OS Data Layer**, Google Play Services enforces that both APKs/AABs share the **exact same `applicationId` (`com.open360`) and signing certificate**. Use a single upload keystore for both `:app` and `:wear`.
+Because Open360's phone app (`play` flavor) and Wear OS app (`:wear`) communicate over the **Wear OS Data Layer**, Google Play Services enforces that both APKs/AABs share the **exact same `applicationId` (`com.mkroshana.open360`) and signing certificate**. Use a single upload keystore for both `:app` and `:wear`.
 
 ### Generate the Upload Keystore
 
@@ -58,7 +58,7 @@ This keeps release builds safely requiring release keys by default while allowin
 
 ### 2.1 App Creation & Play App Signing
 
-1. Create app `Open360` (`com.open360`) in Google Play Console.
+1. Create app `Open360` (`com.mkroshana.open360`) in Google Play Console.
 2. Enroll in **Play App Signing** using the certificate from `open360-upload.jks` as the upload key (or let Play manage the app signing key while uploading with `open360-upload.jks`).
 3. Enable the **Wear OS** form factor under **Setup → Advanced settings → Form factors → Add form factor → Wear OS**.
 
@@ -174,7 +174,7 @@ F-Droid builds the `:app` **`foss`** flavor directly from source, which complete
 2. Verify the resulting `app-foss-release.apk` contains **no** `com.google.android.gms` classes or Play dependency metadata block (`fdroid scanner` / `apkanalyzer`).
 3. Ensure Fastlane metadata under `fastlane/metadata/android/en-US/` (including `images/icon.png`, `images/featureGraphic.png`, and `changelogs/10001.txt`) is committed on the release tag.
 
-### Ready-to-Use `fdroiddata` Recipe (`metadata/com.open360.yml`)
+### Ready-to-Use `fdroiddata` Recipe (`metadata/com.mkroshana.open360.yml`)
 
 ```yaml
 Categories:
@@ -227,4 +227,4 @@ CurrentVersion: 1.0.0
 CurrentVersionCode: 10001
 ```
 
-Submit this recipe via merge request to `fdroid/fdroiddata` after tagging `v1.0.0` and verifying locally with `fdroid build -v -l com.open360:10001`.
+Submit this recipe via merge request to `fdroid/fdroiddata` after tagging `v1.0.0` and verifying locally with `fdroid build -v -l com.mkroshana.open360:10001`.

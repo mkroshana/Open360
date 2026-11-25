@@ -262,7 +262,7 @@ class MainActivity : ComponentActivity() {
 
     /**
      * Stores the wake-up authorization id when the app is started with one:
-     * `adb shell am start -n com.open360/.MainActivity --es wake_authorization_id <id>`.
+     * `adb shell am start -n com.mkroshana.open360/com.open360.MainActivity --es wake_authorization_id <id>`.
      * It can also be entered on the Wake-Up ID card.
      */
     private fun storeWakeAuthorizationId(intent: Intent?) {

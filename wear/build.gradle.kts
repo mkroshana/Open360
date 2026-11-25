@@ -14,7 +14,7 @@ android {
     defaultConfig {
         // The phone app's: the Data Layer that hands over its connection settings only joins
         // apps with the same package name, signed with the same key
-        applicationId = "com.open360"
+        applicationId = "com.mkroshana.open360"
         minSdk = 30
         targetSdk = 35
         versionCode = 20001

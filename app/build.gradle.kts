@@ -11,7 +11,7 @@ android {
     compileSdk = 37
 
     defaultConfig {
-        applicationId = "com.open360"
+        applicationId = "com.mkroshana.open360"
         minSdk = 26
         targetSdk = 36
         versionCode = 10001

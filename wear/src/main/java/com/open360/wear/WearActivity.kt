@@ -195,7 +195,7 @@ class WearActivity : ComponentActivity() {
 
     /**
      * Stores a wake-up ID given on starting, for when the phone's cannot be handed over:
-     * `adb shell am start -n com.open360/com.open360.wear.WearActivity --es wake_authorization_id <id>`.
+     * `adb shell am start -n com.mkroshana.open360/com.open360.wear.WearActivity --es wake_authorization_id <id>`.
      */
     private fun storeWakeAuthorizationId(intent: Intent?) {
         val id = intent?.getStringExtra(EXTRA_WAKE_AUTHORIZATION_ID) ?: return
