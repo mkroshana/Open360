@@ -87,7 +87,7 @@ def main():
     print("=" * 60)
     print(f"Target Camera IP: {CAMERA_IP}")
     print("Ensure your computer's Wi-Fi is connected to the camera's Wi-Fi network.")
-    print("Default camera Wi-Fi password is usually '88888888'.\n")
+    print("Note: GO 3S uses a per-camera Wi-Fi password retrieved over Bluetooth (GET_OPTIONS option 36).\n")
 
     reachable = check_ping()
     if not reachable:

@@ -36,4 +36,49 @@ class GpxParserTest {
         assertEquals(0, summary.pointCount)
         assertEquals(0.0, summary.totalDistanceMeters, 0.0)
     }
+
+    @Test
+    fun testIsoTimestampsWithOffsetAndNoMillis() {
+        val gpxContent = """
+            <?xml version="1.0" encoding="UTF-8"?>
+            <gpx version="1.1">
+            <trk><trkseg>
+            <trkpt lat="37.774900" lon="-122.419400"><ele>10.0</ele><time>2026-10-12T16:30:50Z</time></trkpt>
+            <trkpt lat="37.775000" lon="-122.419400"><ele>10.0</ele><time>2026-10-12T18:30:54+02:00</time></trkpt>
+            </trkseg></trk></gpx>
+        """.trimIndent()
+        val summary = GpxParser.parse(ByteArrayInputStream(gpxContent.toByteArray()))
+        assertEquals(2, summary.pointCount)
+        assertEquals(4000L, summary.durationMs)
+    }
+
+    @Test
+    fun testFormattedDurationWithHoursAndMphUnits() {
+        val summary = GpxTrackSummary(
+            pointCount = 10,
+            totalDistanceMeters = 16093.44,
+            durationMs = 3_725_000L,
+            maxSpeedKmh = 100.0,
+            elevationGainMeters = 120.0
+        )
+        assertEquals("1:02:05", summary.formattedDuration)
+        assertEquals("16.09 km", summary.formattedDistance(false))
+        assertEquals("10.00 mi", summary.formattedDistance(true))
+        assertEquals("100.0 km/h", summary.formattedMaxSpeed(false))
+        assertEquals("62.1 mph", summary.formattedMaxSpeed(true))
+    }
+
+    @Test
+    fun testHighSpeedAllowedUpTo400Kmh() {
+        val gpxContent = """
+            <?xml version="1.0" encoding="UTF-8"?>
+            <gpx version="1.1">
+            <trk><trkseg>
+            <trkpt lat="37.774900" lon="-122.419400"><ele>10.0</ele><time>2026-10-12T16:30:50Z</time></trkpt>
+            <trkpt lat="37.775600" lon="-122.419400"><ele>10.0</ele><time>2026-10-12T16:30:51Z</time></trkpt>
+            </trkseg></trk></gpx>
+        """.trimIndent()
+        val summary = GpxParser.parse(ByteArrayInputStream(gpxContent.toByteArray()))
+        assertTrue("Expected > 250 km/h, was ${summary.maxSpeedKmh}", summary.maxSpeedKmh > 250.0)
+    }
 }

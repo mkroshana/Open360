@@ -1,8 +1,9 @@
 [versions]
-agp = "9.5.0"
+agp = "9.5.3"
 # The oldest that Material 3 1.5 builds with, as it is compiled against Kotlin 2.2.20
 kotlin = "2.2.21"
 coreKtx = "1.15.0"
+coreSplashscreen = "1.2.0"
 junit = "4.13.2"
 junitVersion = "1.2.1"
 espressoCore = "3.6.1"
@@ -10,25 +11,27 @@ lifecycleRuntimeKtx = "2.8.7"
 lifecycleRuntimeCompose = "2.8.7"
 activityCompose = "1.10.1"
 composeBom = "2026.09.00"
-# Material 3 Expressive is only in 1.5, still in beta; 1.4 had its APIs taken out. Needs compile
-# SDK 37 and AGP 9.1
-material3 = "1.5.0-beta02"
+# Material 3 Expressive is in 1.5.0 stable (1.4 had its APIs taken out). Needs compile SDK 37
+# and AGP 9.1+
+material3 = "1.5.0"
 okhttp = "4.12.0"
 kotlinxCoroutines = "1.10.1"
 coilCompose = "2.7.0"
 json = "20240303"
 media3 = "1.5.1"
-documentfile = "1.0.1"
-playServicesWearable = "19.0.0"
-# Kept when the build moved to compile SDK 37 and AGP 9.5 (2026-10-31), which 1.7 needs; 1.7 not yet tried
-wearCompose = "1.6.2"
+documentfile = "1.1.0"
+exifinterface = "1.4.1"
+playServicesWearable = "20.0.1"
+# Wear Compose 1.7 needs compile SDK 37 and AGP 9.5+
+wearCompose = "1.7.2"
 wearOngoing = "1.1.0"
 wear = "1.4.0"
 # Replaces the Fragment 1.2.4 that Google Play services brings in, which fails the release lint check
-fragment = "1.8.9"
+fragment = "1.9.1"
 
 [libraries]
 androidx-core-ktx = { group = "androidx.core", name = "core-ktx", version.ref = "coreKtx" }
+androidx-core-splashscreen = { group = "androidx.core", name = "core-splashscreen", version.ref = "coreSplashscreen" }
 junit = { group = "junit", name = "junit", version.ref = "junit" }
 androidx-junit = { group = "androidx.test.ext", name = "junit", version.ref = "junitVersion" }
 androidx-espresso-core = { group = "androidx.test.espresso", name = "espresso-core", version.ref = "espressoCore" }
@@ -53,6 +56,7 @@ json = { group = "org.json", name = "json", version.ref = "json" }
 androidx-media3-exoplayer = { group = "androidx.media3", name = "media3-exoplayer", version.ref = "media3" }
 androidx-media3-ui = { group = "androidx.media3", name = "media3-ui", version.ref = "media3" }
 androidx-documentfile = { group = "androidx.documentfile", name = "documentfile", version.ref = "documentfile" }
+androidx-exifinterface = { group = "androidx.exifinterface", name = "exifinterface", version.ref = "exifinterface" }
 play-services-wearable = { group = "com.google.android.gms", name = "play-services-wearable", version.ref = "playServicesWearable" }
 wear-compose-material3 = { group = "androidx.wear.compose", name = "compose-material3", version.ref = "wearCompose" }
 wear-compose-foundation = { group = "androidx.wear.compose", name = "compose-foundation", version.ref = "wearCompose" }

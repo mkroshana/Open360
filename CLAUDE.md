@@ -1,5 +1,7 @@
 # Open360 — Project Overview & Architecture Guide
 
+Before building or changing UI, read DESIGN.md.
+
 ## 1. Purpose & Scope
 
 Open360 is an open-source Android application (`com.open360`, Jetpack Compose + Kotlin) designed to replace the official Insta360 GPS Action Remote and commercial watch remote apps (`com.kotlin.insta360gpswatchremote`, `com.aktuna.wear.insta360btctrl`) for Insta360 cameras (GO 3, GO 3S, X3, X4, Ace).

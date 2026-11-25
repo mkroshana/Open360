@@ -93,7 +93,7 @@ sealed interface PeerCommand {
  */
 object PeerMessages {
 
-    private const val SNAPSHOT_VERSION = 1
+    private const val SNAPSHOT_VERSION = 2
 
     fun encodeSnapshot(snapshot: PeerSnapshot, nowElapsedMs: Long, nowWallMs: Long): ByteArray {
         val bytes = ByteArrayOutputStream()
@@ -259,6 +259,8 @@ object PeerMessages {
     private fun DataOutputStream.writeDetails(details: CameraDetails) {
         writeNullable(details.captureSecondsLeft) { writeInt(it) }
         writeNullable(details.cardState) { writeUTF(it.name) }
+        writeNullable(details.freeSpaceBytes) { writeLong(it) }
+        writeNullable(details.totalSpaceBytes) { writeLong(it) }
         writeNullable(details.pod) { pod ->
             writeBoolean(pod.connected)
             writeNullable(pod.battery) { battery ->
@@ -279,6 +281,8 @@ object PeerMessages {
     private fun DataInputStream.readDetails(): CameraDetails {
         val captureSecondsLeft = readNullable { readInt() }
         val cardState = readNullable { Go2BleProtocol.CardState.valueOf(readUTF()) }
+        val freeSpaceBytes = readNullable { readLong() }
+        val totalSpaceBytes = readNullable { readLong() }
         val pod = readNullable {
             val connected = readBoolean()
             val battery = readNullable { Go2BleProtocol.BatteryStatus(readInt(), readBoolean()) }
@@ -289,6 +293,8 @@ object PeerMessages {
         return CameraDetails(
             captureSecondsLeft = captureSecondsLeft,
             cardState = cardState,
+            freeSpaceBytes = freeSpaceBytes,
+            totalSpaceBytes = totalSpaceBytes,
             pod = pod,
             recordingState = recordingState,
             subModes = subModes,

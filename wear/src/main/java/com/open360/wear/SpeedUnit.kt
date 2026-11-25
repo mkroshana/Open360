@@ -1,6 +1,7 @@
 package com.open360.wear
 
 import android.content.Context
+import androidx.core.content.edit
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -20,7 +21,7 @@ class SpeedUnit(context: Context) {
     val inMph: StateFlow<Boolean> = _inMph.asStateFlow()
 
     fun set(inMph: Boolean) {
-        prefs.edit().putBoolean(PREF_MPH, inMph).apply()
+        prefs.edit { putBoolean(PREF_MPH, inMph) }
         _inMph.value = inMph
     }
 }

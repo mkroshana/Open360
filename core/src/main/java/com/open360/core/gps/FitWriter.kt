@@ -106,21 +106,27 @@ object FitWriter {
         var previous: GpsFix? = null
         var lastTime = -1L
         for (fix in fixes) {
-            previous?.let { distanceM += distanceMeters(it, fix) }
-            previous = fix
+            if (fix.latitude.isFinite() && fix.longitude.isFinite()) {
+                previous?.let { distanceM += distanceMeters(it, fix) }
+                previous = fix
+            }
             val time = fitTime(fix.utcMs)
             if (time <= lastTime) continue
             lastTime = time
+            val lat = fix.latitude.takeIf { it.isFinite() } ?: 0.0
+            val lon = fix.longitude.takeIf { it.isFinite() } ?: 0.0
+            val alt = fix.altitudeMeters.takeIf { it.isFinite() } ?: 0.0
+            val spd = fix.speedMps.takeIf { it.isFinite() } ?: 0.0
             data.message(2) {
                 u32(time)
-                s32(semicircles(fix.latitude))
-                s32(semicircles(fix.longitude))
-                u32((distanceM * 100).roundToLong())
+                s32(semicircles(lat))
+                s32(semicircles(lon))
+                u32((distanceM * 100).takeIf { it.isFinite() }?.roundToLong() ?: 0L)
                 // altitude and speed in their 16-bit and their enhanced 32-bit fields
-                u16(((fix.altitudeMeters + 500) * 5).roundToLong().coerceIn(0, 0xFFFE))
-                u16((fix.speedMps * 1000).roundToLong().coerceIn(0, 0xFFFE))
-                u32(((fix.altitudeMeters + 500) * 5).roundToLong().coerceAtLeast(0))
-                u32((fix.speedMps * 1000).roundToLong().coerceAtLeast(0))
+                u16(((alt + 500) * 5).roundToLong().coerceIn(0, 0xFFFE))
+                u16((spd * 1000).roundToLong().coerceIn(0, 0xFFFE))
+                u32(((alt + 500) * 5).roundToLong().coerceAtLeast(0))
+                u32((spd * 1000).roundToLong().coerceAtLeast(0))
                 if (hasHeartRate) {
                     val bpm = SensorTrack.nearest(sensors.heartRateBpm, fix.elapsedMs, MAX_READING_GAP_MS)?.coerceIn(0, 254)
                     bpm?.let { heartRates += it }
@@ -167,7 +173,7 @@ object FitWriter {
             // Studio offers cadence and power only for a cycling activity
             enum(if (hasCadence || hasPower) SPORT_CYCLING else SPORT_GENERIC); enum(0); u16(0); u16(1)
             for ((averageField, _, values) in sensorSummary) {
-                val average = (values.sum().toDouble() / values.size).roundToLong().toInt()
+                val average = (values.sumOf { it.toLong() }.toDouble() / values.size).roundToLong().toInt()
                 if (averageField.size == 1) { u8(average); u8(values.max()) } else { u16(average); u16(values.max()) }
             }
         }

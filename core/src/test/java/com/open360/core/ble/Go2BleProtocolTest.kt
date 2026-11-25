@@ -308,13 +308,62 @@ class Go2BleProtocolTest {
         assertEquals(false, reply.battery?.onExternalPower)
         assertEquals(5652, reply.captureSecondsLeft)
         assertEquals(Go2BleProtocol.CardState.OK, reply.cardState)
-        assertEquals(true, reply.pod?.connected)
+        assertTrue(reply.pod?.connected == true)
         assertEquals(89, reply.pod?.battery?.levelPercent)
+        assertEquals(66_679_341_056L, reply.freeSpaceBytes)
+        assertEquals(128_000_000_000L, reply.totalSpaceBytes)
         // Asked for before the sub-modes were
         assertNull(reply.subModes)
 
         // An OK with nothing in it, such as the one that answers a GPS upload
         assertNull(Go2BleProtocol.parseStatusOptionsReply(ByteArray(0)))
+    }
+
+    @Test
+    fun testParseStorageState() {
+        val info = Go2BleProtocol.parseStorageState(hex("080010808098b3f80118808094ebdc03"))
+        assertEquals(Go2BleProtocol.CardState.OK, info.cardState)
+        assertEquals(66_679_341_056L, info.freeSpaceBytes)
+        assertEquals(128_000_000_000L, info.totalSpaceBytes)
+    }
+
+    @Test
+    fun testMalformedProtoLengthDoesNotCrash() {
+        val malformed = byteArrayOf(0x0A, 0xFF.toByte(), 0xFF.toByte(), 0xFF.toByte(), 0xFF.toByte(), 0x07, 0x01)
+        assertNull(Go2BleProtocol.parseStatusOptionsReply(malformed))
+        assertNull(Go2BleProtocol.parseWifiInfoReply(malformed))
+        assertEquals(Go2BleProtocol.AuthorizationStatus.AUTHORIZED, Go2BleProtocol.parseCheckAuthorizationReply(malformed))
+        assertEquals(Go2BleProtocol.CardState.OK, Go2BleProtocol.parseStorageState(malformed).cardState)
+    }
+
+    @Test
+    fun testBuildCheckAuthorizationPayloadMultiByteLength() {
+        val id = "a".repeat(130)
+        val payload = Go2BleProtocol.buildCheckAuthorizationPayload(id)
+        assertEquals(1 + 2 + 130 + 2, payload.size)
+        assertEquals(0x0A.toByte(), payload[0])
+        assertEquals(0x82.toByte(), payload[1])
+        assertEquals(0x01.toByte(), payload[2])
+        assertEquals(id, String(payload, 3, 130, Charsets.US_ASCII))
+        assertEquals(0x10.toByte(), payload[133])
+        assertEquals(0x02.toByte(), payload[134])
+    }
+
+    @Test
+    fun testBuildGpsRecordNegativeTimestamp() {
+        val record = Go2BleProtocol.buildGpsRecord(
+            timestampMs = -500L,
+            latitude = 6.9,
+            longitude = 79.8,
+            speedMps = 5.0,
+            bearingDegrees = 90.0,
+            altitudeMeters = 10.0,
+            hasFix = true
+        )
+        assertEquals(53, record.size)
+        val buf = ByteBuffer.wrap(record).order(ByteOrder.LITTLE_ENDIAN)
+        assertEquals(-1L, buf.getLong(0))
+        assertEquals(500, buf.getShort(8).toInt() and 0xFFFF)
     }
 
     @Test
@@ -610,5 +659,75 @@ class Go2BleProtocolTest {
         assertEquals("4K|30|UW", display.text)
         assertEquals(null, display.durationSeconds)
         assertEquals(true, display.isModeString)
+    }
+
+    @Test
+    fun testBuildAndParseDeviceIdentityOptions15And48() {
+        val req = Go2BleProtocol.buildDeviceIdentityRequest()
+        assertEquals(
+            listOf(0x0A, 0x02, 15, 48),
+            req.map { it.toInt() and 0xFF }
+        )
+
+        val serial = "IAT123456".toByteArray(Charsets.UTF_8)
+        val cameraType = "Insta360 GO 3S".toByteArray(Charsets.UTF_8)
+        // Options message: field 15 (wire tag 0x7A) + field 48 ((48 << 3) | 2 = 386 -> varint 0x82, 0x03)
+        val optionsBytes = byteArrayOf(0x7A, serial.size.toByte()) + serial +
+            byteArrayOf(0x82.toByte(), 0x03, cameraType.size.toByte()) + cameraType
+        // GetOptionsResp: field 2 = Options
+        val resp = byteArrayOf(0x12, optionsBytes.size.toByte()) + optionsBytes
+
+        val identity = Go2BleProtocol.parseDeviceIdentityReply(resp)
+        assertNotNull(identity)
+        assertEquals("IAT123456", identity!!.serialNumber)
+        assertEquals("Insta360 GO 3S", identity.cameraType)
+    }
+
+    @Test
+    fun testBuildGo2FixedWakePacket() {
+        val pkt = Go2BleProtocol.buildGo2WakePacket()
+        val hex = pkt.joinToString("") { "%02x".format(it) }
+        assertEquals("ff0640080008000000b00000016d90", hex)
+    }
+
+    @Test
+    fun testCameraPostureRequestReplyAndRotateNotification() {
+        assertEquals(listOf(0x0A, 0x01, 93), Go2BleProtocol.buildCameraPostureRequest().map { it.toInt() and 0xFF })
+        assertEquals(listOf(0x0A, 0x02, 48, 93), Go2BleProtocol.buildCameraPostureAndTypeRequest().map { it.toInt() and 0xFF })
+
+        // Option 93 tag in Options message = (93 << 3) | 0 = 744 -> varint 0xE8, 0x05
+        assertEquals(0, Go2BleProtocol.parseCameraPostureReply(hex("085d"))) // proto3 omitted Options for posture 0
+        assertEquals(0, Go2BleProtocol.parseCameraPostureReply(hex("085d1200"))) // empty Options for posture 0
+        assertEquals(90, Go2BleProtocol.parseCameraPostureReply(hex("085d1203e80501")))
+        assertEquals(180, Go2BleProtocol.parseCameraPostureReply(hex("085d1203e80502")))
+        assertEquals(270, Go2BleProtocol.parseCameraPostureReply(hex("085d1203e80503")))
+        assertEquals(0, Go2BleProtocol.parseCameraPostureReply(hex("085d1203e80503"), adjustDegrees = 90)) // Real GO 3S reply
+        assertNull(Go2BleProtocol.parseCameraPostureReply(hex("085d1203e80504"))) // UP preserves prior orientation
+        assertNull(Go2BleProtocol.parseCameraPostureReply(hex("085d1203e80505"))) // DOWN preserves prior orientation
+        assertNull(Go2BleProtocol.parseCameraPostureReply(ByteArray(0)))
+
+        // Combined CAMERA_TYPE (48) + CAMERA_POSTURE (93) reply
+        val cameraType = "Insta360 GO 3S".toByteArray(Charsets.UTF_8)
+        val optionsBytes = byteArrayOf(0x82.toByte(), 0x03, cameraType.size.toByte()) + cameraType + hex("e80503")
+        val combinedResp = byteArrayOf(0x0A, 0x02, 48, 93, 0x12, optionsBytes.size.toByte()) + optionsBytes
+        assertEquals(
+            Go2BleProtocol.CameraPostureAndType(rawPosture = 3, cameraType = "Insta360 GO 3S"),
+            Go2BleProtocol.parseCameraPostureAndTypeReply(combinedResp)
+        )
+        assertEquals(
+            Go2BleProtocol.CameraPostureAndType(rawPosture = 3, cameraType = null),
+            Go2BleProtocol.parseCameraPostureAndTypeReply(hex("085d1203e80503"))
+        )
+
+        assertEquals(90, Go2BleProtocol.parseLiveviewRotateNotification(hex("0801")))
+        assertEquals(180, Go2BleProtocol.parseLiveviewRotateNotification(hex("0802")))
+        assertEquals(270, Go2BleProtocol.parseLiveviewRotateNotification(hex("0803")))
+        assertEquals(0, Go2BleProtocol.parseLiveviewRotateNotification(hex("0800")))
+        assertEquals(0, Go2BleProtocol.parseLiveviewRotateNotification(hex("0803"), adjustDegrees = 90))
+        assertEquals(90, Go2BleProtocol.parseLiveviewRotateNotification(hex("0800"), adjustDegrees = 90))
+        assertEquals(180, Go2BleProtocol.parseLiveviewRotateNotification(hex("0801"), adjustDegrees = 90))
+        assertEquals(270, Go2BleProtocol.parseLiveviewRotateNotification(hex("0802"), adjustDegrees = 90))
+        assertNull(Go2BleProtocol.parseLiveviewRotateNotification(hex("0804")))
+        assertNull(Go2BleProtocol.parseLiveviewRotateNotification(ByteArray(0)))
     }
 }

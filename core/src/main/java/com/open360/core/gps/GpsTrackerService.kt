@@ -17,8 +17,11 @@ import androidx.core.app.NotificationCompat
 import com.open360.core.ble.GpsRemoteBleManager
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 
 /**
@@ -42,8 +45,12 @@ class GpsTrackerService : Service() {
         const val ACTION_STOP_TRACKING = "com.open360.action.STOP_GPS_TRACKING"
         const val ACTION_SET_HOLD_AWAKE = "com.open360.action.SET_HOLD_AWAKE"
         const val ACTION_SET_TEXT = "com.open360.action.SET_TEXT"
+        const val ACTION_REFRESH_FOREGROUND = "com.open360.action.REFRESH_FOREGROUND"
         const val EXTRA_HOLD_AWAKE = "hold_awake"
         const val EXTRA_TEXT = "text"
+
+        private const val WAKE_LOCK_TIMEOUT_MS = 4 * 60 * 60 * 1000L
+        private const val WAKE_LOCK_RENEW_MS = 3 * 60 * 60 * 1000L
 
         /** Starts the service, its notification reading [text] under "Camera Connected". */
         fun start(context: Context, holdAwake: Boolean, text: String) {
@@ -52,11 +59,7 @@ class GpsTrackerService : Service() {
                 putExtra(EXTRA_HOLD_AWAKE, holdAwake)
                 putExtra(EXTRA_TEXT, text)
             }
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                context.startForegroundService(intent)
-            } else {
-                context.startService(intent)
-            }
+            context.startForegroundService(intent)
         }
 
         /** Holds the processor awake, or lets it sleep, while the service is running. */
@@ -72,6 +75,15 @@ class GpsTrackerService : Service() {
         fun setText(context: Context, text: String) {
             val intent = Intent(context, GpsTrackerService::class.java).apply {
                 action = ACTION_SET_TEXT
+                putExtra(EXTRA_TEXT, text)
+            }
+            context.startService(intent)
+        }
+
+        /** Re-applies the foreground service types (e.g. adding health when watch HR turns on). */
+        fun refreshServiceTypes(context: Context, text: String) {
+            val intent = Intent(context, GpsTrackerService::class.java).apply {
+                action = ACTION_REFRESH_FOREGROUND
                 putExtra(EXTRA_TEXT, text)
             }
             context.startService(intent)
@@ -104,6 +116,7 @@ class GpsTrackerService : Service() {
     private val serviceScope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
     private var bleManager: GpsRemoteBleManager? = null
     private var wakeLock: PowerManager.WakeLock? = null
+    private var wakeLockRenewJob: Job? = null
 
     inner class LocalBinder : Binder() {
         val service: GpsTrackerService get() = this@GpsTrackerService
@@ -132,6 +145,9 @@ class GpsTrackerService : Service() {
             ACTION_SET_TEXT -> {
                 getSystemService(NotificationManager::class.java)
                     .notify(NOTIFICATION_ID, buildNotification(NOTIFICATION_TITLE, intent.getStringExtra(EXTRA_TEXT).orEmpty()))
+            }
+            ACTION_REFRESH_FOREGROUND -> {
+                startForegroundTracking(intent.getStringExtra(EXTRA_TEXT).orEmpty())
             }
             ACTION_STOP_TRACKING -> {
                 stopForegroundTracking()
@@ -175,7 +191,14 @@ class GpsTrackerService : Service() {
             .apply { setReferenceCounted(false) }
             .also { wakeLock = it }
         if (!lock.isHeld) Log.i(TAG, "Holding the processor awake")
-        lock.acquire()
+        lock.acquire(WAKE_LOCK_TIMEOUT_MS)
+        wakeLockRenewJob?.cancel()
+        wakeLockRenewJob = serviceScope.launch {
+            while (isActive) {
+                delay(WAKE_LOCK_RENEW_MS)
+                lock.acquire(WAKE_LOCK_TIMEOUT_MS)
+            }
+        }
     }
 
     private fun stopForegroundTracking() {
@@ -185,22 +208,22 @@ class GpsTrackerService : Service() {
     }
 
     private fun releaseWakeLock() {
+        wakeLockRenewJob?.cancel()
+        wakeLockRenewJob = null
         wakeLock?.let { if (it.isHeld) it.release() }
     }
 
     private fun createNotificationChannel() {
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            val channel = NotificationChannel(
-                CHANNEL_ID,
-                "Camera Connection",
-                NotificationManager.IMPORTANCE_LOW
-            ).apply {
-                description = "Shown while Open360 is connected to the camera and sending it GPS"
-                setShowBadge(false)
-            }
-            val nm = getSystemService(NotificationManager::class.java)
-            nm.createNotificationChannel(channel)
+        val channel = NotificationChannel(
+            CHANNEL_ID,
+            "Camera Connection",
+            NotificationManager.IMPORTANCE_LOW
+        ).apply {
+            description = "Shown while Open360 is connected to the camera and sending it GPS"
+            setShowBadge(false)
         }
+        val nm = getSystemService(NotificationManager::class.java)
+        nm.createNotificationChannel(channel)
     }
 
     private fun buildNotification(title: String, text: String): Notification {
@@ -215,7 +238,7 @@ class GpsTrackerService : Service() {
         val builder = NotificationCompat.Builder(this, CHANNEL_ID)
             .setContentTitle(title)
             .setContentText(text)
-            .setSmallIcon(android.R.drawable.ic_menu_mylocation)
+            .setSmallIcon(com.open360.core.R.drawable.ic_open360_mark)
             .setContentIntent(pendingIntent)
             .setOngoing(true)
             .setPriority(NotificationCompat.PRIORITY_LOW)

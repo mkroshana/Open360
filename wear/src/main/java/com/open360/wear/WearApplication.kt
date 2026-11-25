@@ -15,7 +15,7 @@ class WearApplication : Application() {
         // the watch shows it on its face, and tapping it leads back to the remote
         GpsTrackerService.decorateNotification = { context, builder, notificationId, openApp ->
             OngoingActivity.Builder(context, notificationId, builder)
-                .setStaticIcon(android.R.drawable.ic_menu_camera)
+                .setStaticIcon(com.open360.core.R.drawable.ic_open360_mark)
                 .setTouchIntent(openApp)
                 .setStatus(Status.Builder().addTemplate("Camera Connected").build())
                 .build()

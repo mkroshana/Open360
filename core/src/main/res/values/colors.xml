@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <color name="open360_splash_bg">#FFF6F3EC</color>
+    <color name="open360_splash_bezel">#FFDDD6C8</color>
+    <color name="open360_splash_ticks">#FF9C9588</color>
+    <color name="open360_splash_socket_fill">#FFFAF8F3</color>
+    <color name="open360_splash_socket_stroke">#FFDDD6C8</color>
+    <color name="open360_splash_ring">#FF1C1B19</color>
+
+    <!-- Theme-aware camera hardware vector silhouette tokens (light surfaceContainerHighest: #EAE4D7) -->
+    <color name="cam_body_light">#FFFDFBF7</color>
+    <color name="cam_body_dark">#FF242320</color>
+    <color name="cam_body_mid">#FF4B4842</color>
+    <color name="cam_body_stroke">#FF5E5A53</color>
+    <color name="cam_lens_outer">#FF383632</color>
+    <color name="cam_lens_inner">#FF121210</color>
+    <color name="cam_lens_glint">#FFE8E3D9</color>
+    <color name="cam_screen_fill">#FF2C333C</color>
+    <color name="cam_detail_muted">#FF847E73</color>
+    <color name="cam_accent_red">#FFD63329</color>
+</resources>

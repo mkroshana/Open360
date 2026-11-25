@@ -123,3 +123,77 @@ object PacketFramer {
         return Pair(packets, remaining)
     }
 }
+
+/**
+ * Reusable compacting buffer that unpacks length-prefixed Insta360 TCP packets without per-chunk
+ * quadratic array concatenation (essential for 30 fps H.264 video streaming).
+ */
+class PacketStreamUnpacker(initialCapacity: Int = 128 * 1024) {
+
+    companion object {
+        private const val MAX_PACKET_LENGTH = 10 * 1024 * 1024
+    }
+
+    private var buffer = ByteArray(initialCapacity.coerceAtLeast(4096))
+    private var readPos = 0
+    private var writePos = 0
+
+    fun append(src: ByteArray, length: Int = src.size) {
+        if (length <= 0) return
+        require(length <= src.size) { "length ($length) exceeds source size (${src.size})" }
+        ensureTailCapacity(length)
+        System.arraycopy(src, 0, buffer, writePos, length)
+        writePos += length
+    }
+
+    fun drainPackets(onPacket: (ByteArray) -> Unit) {
+        while (writePos - readPos >= 4) {
+            val packetLen = (buffer[readPos].toInt() and 0xFF) or
+                ((buffer[readPos + 1].toInt() and 0xFF) shl 8) or
+                ((buffer[readPos + 2].toInt() and 0xFF) shl 16) or
+                ((buffer[readPos + 3].toInt() and 0xFF) shl 24)
+
+            if (packetLen < 4 || packetLen > MAX_PACKET_LENGTH) {
+                // Invalid length marker; advance by 1 byte to resynchronize
+                readPos++
+                continue
+            }
+
+            if (writePos - readPos < packetLen) {
+                break
+            }
+
+            val payload = buffer.copyOfRange(readPos + 4, readPos + packetLen)
+            readPos += packetLen
+            onPacket(payload)
+        }
+
+        if (readPos == writePos) {
+            readPos = 0
+            writePos = 0
+        }
+    }
+
+    fun reset() {
+        readPos = 0
+        writePos = 0
+    }
+
+    private fun ensureTailCapacity(needed: Int) {
+        if (buffer.size - writePos >= needed) return
+        val unconsumed = writePos - readPos
+        if (readPos > 0) {
+            System.arraycopy(buffer, readPos, buffer, 0, unconsumed)
+            readPos = 0
+            writePos = unconsumed
+        }
+        if (buffer.size - writePos >= needed) return
+
+        var newCapacity = buffer.size
+        val requiredCapacity = unconsumed + needed
+        while (newCapacity < requiredCapacity) {
+            newCapacity *= 2
+        }
+        buffer = buffer.copyOf(newCapacity)
+    }
+}

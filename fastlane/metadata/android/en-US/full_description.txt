@@ -1,0 +1,21 @@
+UNOFFICIAL APP DISCLAIMER: Open360 is an independent, community-developed open-source companion app. It is NOT affiliated with, endorsed by, or sponsored by Insta360 or Arashi Vision Inc.
+
+Open360 lets you control compatible Insta360 cameras over Bluetooth Low Energy (BLE), inject synchronized real-time GPS metadata directly into video recordings, stream Live View, manage footage, and export local GPX and FIT telemetry tracks — on both Android phones and Wear OS watches.
+
+KEY FEATURES
+• BLE Camera Remote & Wake-Up: Wake supported cameras, toggle Video and Photo modes, switch capture modes (Video, FreeFrame PRO, TimeShift, Timelapse, Slow Motion, Loop, Photo, HDR, Interval, Starlapse), trigger recording, and monitor battery, Action Pod status, and remaining storage.
+• Real-Time 10 Hz GPS Metadata Injection: Streams satellite GPS coordinates synchronized against the camera's clock directly into recorded clips so Insta360 Studio aligns speed, route, and timestamps accurately with your video frames.
+• Local GPX & Garmin FIT Export: Automatically writes .gpx and .fit track files to Download/Open360 alongside each recording, named to match your clip when stopped from the app.
+• External BLE Sports Sensors: Pair standard Bluetooth Heart Rate, Cycling Speed & Cadence, and Cycling Power sensors to embed biometric and cycling metrics into exported .fit activity tracks.
+• Standalone Wear OS App (Google Play): Operate your camera from your wrist without a phone nearby—using watch GPS, on-wrist heart rate logging into .fit tracks, a low-power Always-On ambient remote, and seamless camera link & track handover with your phone.
+• Wi-Fi Live View & Footage Manager: View a live camera preview over Wi-Fi, browse camera clips and photos, download full-resolution videos to Download/Open360, or import footage from USB-C drives and SD card folders via Android's folder picker.
+• Material 3 Expressive Design: Built with dark and warm-light editorial themes, optional dynamic wallpaper colors, and clear live telemetry readouts.
+
+HARDWARE & TRANSPORT COMPATIBILITY
+• Hardware-Verified: Tested end-to-end on Insta360 GO 3S and Google Pixel Watch 4 using BLE Direct and Wi-Fi Camera AP.
+• Experimental / Untested Models & Transports: Includes catalog definitions for 19 additional Insta360 cameras (GO, X, ONE R/RS, Ace, Sphere, and Luna series) plus experimental USB-C Direct, Wi-Fi Hotspot/LAN, GPS Remote Server, and Bluetooth Classic SPP transports. These paths are not hardware-verified and may vary by firmware.
+
+PRIVACY FIRST
+• 100% open source (Apache-2.0)
+• Zero analytics, zero crash reporting SDKs, zero ads
+• Zero remote servers — location, sensor readings, and media stay strictly on your devices

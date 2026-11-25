@@ -1,0 +1,86 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    name: Build Release APKs & AABs
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v4
+
+      - name: Decode signing keystore (when configured)
+        env:
+          KEYSTORE_BASE64: ${{ secrets.OPEN360_KEYSTORE_BASE64 }}
+          KEYSTORE_PASSWORD: ${{ secrets.OPEN360_KEYSTORE_PASSWORD }}
+          KEYSTORE_ALIAS: ${{ secrets.OPEN360_KEYSTORE_ALIAS }}
+          KEY_PASSWORD: ${{ secrets.OPEN360_KEY_PASSWORD }}
+        run: |
+          if [ -n "$KEYSTORE_BASE64" ]; then
+            KEYSTORE_FILE="${RUNNER_TEMP}/open360-release.jks"
+            printf '%s' "$KEYSTORE_BASE64" | tr -d '[:space:]' | base64 --decode > "$KEYSTORE_FILE"
+            echo "OPEN360_KEYSTORE_PATH=$KEYSTORE_FILE" >> "$GITHUB_ENV"
+            echo "OPEN360_KEYSTORE_PASSWORD=$KEYSTORE_PASSWORD" >> "$GITHUB_ENV"
+            echo "OPEN360_KEYSTORE_ALIAS=$KEYSTORE_ALIAS" >> "$GITHUB_ENV"
+            if [ -n "$KEY_PASSWORD" ]; then
+              echo "OPEN360_KEY_PASSWORD=$KEY_PASSWORD" >> "$GITHUB_ENV"
+            else
+              echo "OPEN360_KEY_PASSWORD=$KEYSTORE_PASSWORD" >> "$GITHUB_ENV"
+            fi
+          else
+            echo "OPEN360_KEYSTORE_BASE64 is not set; building without release signing secrets."
+          fi
+
+      - name: Grant execute permission for Gradle wrapper
+        run: chmod +x gradlew
+
+      - name: Build release bundles and APKs
+        run: >-
+          ./gradlew
+          :app:bundlePlayRelease
+          :app:assemblePlayRelease
+          :app:assembleFossRelease
+          :wear:bundleRelease
+          :wear:assembleRelease
+
+      - name: Collect release artifacts and generate SHA256SUMS.txt
+        run: |
+          mkdir -p release-artifacts
+          find app/build/outputs wear/build/outputs -type f \( -name '*.apk' -o -name '*.aab' \) -exec cp -v {} release-artifacts/ \;
+          (cd release-artifacts && sha256sum * > SHA256SUMS.txt)
+          cat release-artifacts/SHA256SUMS.txt
+
+      - name: Upload workflow artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: open360-release-artifacts
+          path: release-artifacts/*
+
+      - name: Publish GitHub Release
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          generate_release_notes: true
+          files: release-artifacts/*

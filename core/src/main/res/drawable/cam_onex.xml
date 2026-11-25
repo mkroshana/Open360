@@ -1,0 +1,55 @@
+<?xml version="1.0" encoding="utf-8"?>
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="48dp"
+    android:height="48dp"
+    android:viewportWidth="48"
+    android:viewportHeight="48">
+
+    <path
+        android:fillColor="@color/cam_body_dark"
+        android:strokeColor="@color/cam_body_stroke"
+        android:strokeWidth="1.4"
+        android:pathData="M20.4,3.8 L27.6,3.8 A4.8,4.8 0 0,1 32.4,8.6 L32.4,39.4 A4.8,4.8 0 0,1 27.6,44.2 L20.4,44.2 A4.8,4.8 0 0,1 15.6,39.4 L15.6,8.6 A4.8,4.8 0 0,1 20.4,3.8 Z" />
+
+    <path
+        android:fillColor="@color/cam_lens_outer"
+        android:strokeColor="@color/cam_body_stroke"
+        android:strokeWidth="1.1"
+        android:pathData="M19.2,12.2 A4.8,4.8 0 1,1 28.8,12.2 A4.8,4.8 0 1,1 19.2,12.2 Z" />
+
+    <path
+        android:fillColor="@color/cam_lens_inner"
+        android:strokeColor="@color/cam_detail_muted"
+        android:strokeWidth="0.65"
+        android:pathData="M21,12.2 A3,3 0 1,1 27,12.2 A3,3 0 1,1 21,12.2 Z" />
+
+    <path
+        android:fillColor="@color/cam_lens_glint"
+        android:pathData="M22.12,11.12 A0.8,0.8 0 1,1 23.72,11.12 A0.8,0.8 0 1,1 22.12,11.12 Z" />
+
+    <path
+        android:fillColor="@color/cam_screen_fill"
+        android:strokeColor="@color/cam_detail_muted"
+        android:strokeWidth="0.9"
+        android:pathData="M21.2,21 A2.8,2.8 0 1,1 26.8,21 A2.8,2.8 0 1,1 21.2,21 Z" />
+
+    <path
+        android:fillColor="@color/cam_detail_muted"
+        android:pathData="M23.2,20.4 L24.8,20.4 A0.6,0.6 0 0,1 25.4,21 L25.4,21 A0.6,0.6 0 0,1 24.8,21.6 L23.2,21.6 A0.6,0.6 0 0,1 22.6,21 L22.6,21 A0.6,0.6 0 0,1 23.2,20.4 Z" />
+
+    <path
+        android:fillColor="@color/cam_body_mid"
+        android:strokeColor="@color/cam_body_stroke"
+        android:strokeWidth="0.9"
+        android:pathData="M21.6,27.6 A2.4,2.4 0 1,1 26.4,27.6 A2.4,2.4 0 1,1 21.6,27.6 Z" />
+
+    <path
+        android:fillColor="@color/cam_body_mid"
+        android:strokeColor="@color/cam_body_stroke"
+        android:strokeWidth="0.9"
+        android:pathData="M22.3,35.6 A1.7,1.7 0 1,1 25.7,35.6 A1.7,1.7 0 1,1 22.3,35.6 Z" />
+
+    <path
+        android:fillColor="@color/cam_detail_muted"
+        android:pathData="M22.8,40.8 L25.2,40.8 A0.6,0.6 0 0,1 25.8,41.4 L25.8,41.4 A0.6,0.6 0 0,1 25.2,42 L22.8,42 A0.6,0.6 0 0,1 22.2,41.4 L22.2,41.4 A0.6,0.6 0 0,1 22.8,40.8 Z" />
+</vector>

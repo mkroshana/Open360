@@ -1,0 +1,7 @@
+Initial v1.0.0 release of Open360:
+- BLE remote, wake-up, mode control & status (verified on Insta360 GO 3S)
+- Real-time 10 Hz GPS injection synced to the camera clock
+- Local GPX & FIT export with external BLE HR/cadence/power sensors
+- Standalone Wear OS app with watch heart rate FIT logging & phone handover
+- Wi-Fi Live View, footage download & USB-C/SAF folder import
+- Experimental support for 19 additional models & transports

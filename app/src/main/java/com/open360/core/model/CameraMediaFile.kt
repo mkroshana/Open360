@@ -1,7 +1,9 @@
 package com.open360.core.model
 
 import com.open360.core.gps.GpxTrackSummary
+import java.time.Instant
 import java.time.LocalDateTime
+import java.time.ZoneId
 import java.time.format.DateTimeFormatter
 import java.time.format.DateTimeParseException
 import java.util.Locale
@@ -20,9 +22,13 @@ data class CameraMediaFile(
     val isImported: Boolean = false,
     val hasCompanionGpx: Boolean = false,
     val gpxSummary: GpxTrackSummary? = null,
+    val companionGpxUri: String? = null,
+    val companionFitUri: String? = null,
     // A camera video's low-resolution copy (.lrv) on the camera, for previews
     val previewUrl: String? = null
 ) {
+    val hasCompanionFit: Boolean get() = companionFitUri != null
+
     val formattedSize: String
         get() = when {
             sizeBytes >= 1024 * 1024 * 1024 -> String.format(Locale.US, "%.2f GB", sizeBytes / (1024.0 * 1024 * 1024))
@@ -44,12 +50,16 @@ data class CameraMediaFile(
     val streamUri: String
         get() = contentUri ?: localPath ?: previewUrl ?: fileUrl
 
-    /** The date and time the camera put in the file name, e.g. "15 Oct 2026, 18:15", or null. */
+    /** The date and time from the camera file name or epoch timestamp, e.g. "15 Oct 2026, 18:15", or null. */
     val displayDateTime: String?
-        get() = try {
-            LocalDateTime.parse(dateTime, CAMERA_DATE_TIME).format(DISPLAY_DATE_TIME)
-        } catch (_: DateTimeParseException) {
-            null
+        get() {
+            try {
+                return LocalDateTime.parse(dateTime, CAMERA_DATE_TIME).format(DISPLAY_DATE_TIME)
+            } catch (_: DateTimeParseException) {}
+            val epochSeconds = dateTime.toLongOrNull()?.takeIf { it > 0 } ?: return null
+            return Instant.ofEpochSecond(epochSeconds)
+                .atZone(ZoneId.systemDefault())
+                .format(DISPLAY_DATE_TIME)
         }
 
     private companion object {

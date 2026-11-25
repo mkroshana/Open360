@@ -1,5 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
-<resources>
+<resources xmlns:tools="http://schemas.android.com/tools"
+    tools:ignore="UnusedResources">
     <!--
         The watch's own value for the setting in :core. With the phone's 550 ms, a ride's speed
         changes showed in the watch's GPS 0.29 to 0.34 s before the picture on three clips

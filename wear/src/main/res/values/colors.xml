@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources xmlns:tools="http://schemas.android.com/tools"
+    tools:ignore="UnusedResources">
+    <color name="open360_splash_bg">#FF000000</color>
+    <color name="open360_splash_bezel">#FF2D2C28</color>
+    <color name="open360_splash_ticks">#FF5E5A53</color>
+    <color name="open360_splash_socket_fill">#FF0C0C0B</color>
+    <color name="open360_splash_socket_stroke">#FF46433D</color>
+    <color name="open360_splash_ring">#FFF0EBE1</color>
+</resources>

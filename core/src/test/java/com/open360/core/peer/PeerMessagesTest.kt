@@ -175,4 +175,25 @@ class PeerMessagesTest {
         // Between a drop and the link opened again by itself
         assertTrue(BleCameraState(isReconnecting = true).holdsLink)
     }
+
+    @Test
+    fun testStorageSpaceRoundTripsInSnapshot() {
+        val withStorage = snapshot.copy(
+            camera = camera.copy(
+                details = camera.details.copy(
+                    freeSpaceBytes = 66_679_341_056L,
+                    totalSpaceBytes = 128_000_000_000L
+                )
+            )
+        )
+        val encoded = PeerMessages.encodeSnapshot(withStorage, nowElapsedMs = 500_400L, nowWallMs = 1_761_380_000_300L)
+        val decoded = PeerMessages.decodeSnapshot(encoded, nowElapsedMs = 500_400L, nowWallMs = 1_761_380_000_300L)!!
+        assertEquals(66_679_341_056L, decoded.camera.details.freeSpaceBytes)
+        assertEquals(128_000_000_000L, decoded.camera.details.totalSpaceBytes)
+
+        val withoutStorageBytes = PeerMessages.encodeSnapshot(snapshot, nowElapsedMs = 500_400L, nowWallMs = 1_761_380_000_300L)
+        val withoutStorage = PeerMessages.decodeSnapshot(withoutStorageBytes, nowElapsedMs = 500_400L, nowWallMs = 1_761_380_000_300L)!!
+        assertNull(withoutStorage.camera.details.freeSpaceBytes)
+        assertNull(withoutStorage.camera.details.totalSpaceBytes)
+    }
 }

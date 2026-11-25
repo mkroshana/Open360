@@ -15,8 +15,12 @@ import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 
 import android.content.Context
+import androidx.core.net.toUri
 import com.open360.core.ble.GpsRemoteBleManager
+import com.open360.core.connection.ConnectionPreferences
+import com.open360.core.model.CameraTransportMode
 import com.open360.core.network.CameraWifiConnector
+import com.open360.core.network.CameraWifiResolver
 import com.open360.core.network.CameraWifiStatus
 
 enum class FootageTab(val title: String) {
@@ -47,11 +51,13 @@ class FootageViewModel(application: Application) : AndroidViewModel(application)
 
     // The Bluetooth link to the camera, set by the activity. The camera gives its Wi-Fi password over it.
     var cameraLink: GpsRemoteBleManager? = null
+    var connectionPreferences: ConnectionPreferences? = null
 
     private val _uiState = MutableStateFlow(FootageUiState())
     val uiState: StateFlow<FootageUiState> = _uiState.asStateFlow()
 
     private var downloadJobs = mutableMapOf<String, Job>()
+    private var loadCameraJob: Job? = null
 
     init {
         loadDownloadedFiles()
@@ -59,9 +65,11 @@ class FootageViewModel(application: Application) : AndroidViewModel(application)
         // Sync Wi-Fi connector state into FootageUiState
         viewModelScope.launch {
             wifiConnector.status.collect { status ->
-                _uiState.update { it.copy(wifiStatus = status) }
-                if (status == CameraWifiStatus.CONNECTED && _uiState.value.cameraFiles.isEmpty()) {
-                    loadCameraFiles()
+                _uiState.update { state ->
+                    val stillLoading = if (status == CameraWifiStatus.FAILED ||
+                        status == CameraWifiStatus.DISCONNECTED ||
+                        status == CameraWifiStatus.IDLE) false else state.isLoading
+                    state.copy(wifiStatus = status, isLoading = stillLoading)
                 }
             }
         }
@@ -74,6 +82,24 @@ class FootageViewModel(application: Application) : AndroidViewModel(application)
             wifiConnector.statusMessage.collect { msg ->
                 _uiState.update { it.copy(wifiStatusMessage = msg) }
             }
+        }
+    }
+
+    /** Called once when the Footage screen enters composition. */
+    fun onScreenEntered() {
+        val state = _uiState.value
+        when (state.currentTab) {
+            FootageTab.CAMERA -> {
+                if (state.cameraFiles.isEmpty() && !state.isLoading && state.wifiStatus != CameraWifiStatus.CONNECTING) {
+                    if (wifiConnector.checkAndBindExistingCameraNetwork()) {
+                        loadCameraFiles()
+                    } else {
+                        connectCameraWifi()
+                    }
+                }
+            }
+            FootageTab.DOWNLOADED -> loadDownloadedFiles()
+            FootageTab.USB -> state.usbTreeUri?.let { loadUsbFiles(it) }
         }
     }
 
@@ -103,9 +129,11 @@ class FootageViewModel(application: Application) : AndroidViewModel(application)
      * Refreshes the media list for whichever tab is currently active.
      */
     fun refreshCurrentTab() {
+        val settings = connectionPreferences?.settings?.value
+        val isStation = settings?.preferredTransport == CameraTransportMode.WIFI_STATION
         when (_uiState.value.currentTab) {
             FootageTab.CAMERA -> {
-                if (wifiConnector.boundNetwork != null || wifiConnector.checkAndBindExistingCameraNetwork()) {
+                if (isStation || wifiConnector.boundNetwork != null || wifiConnector.checkAndBindExistingCameraNetwork(allowStationMode = isStation)) {
                     loadCameraFiles()
                 } else {
                     connectCameraWifi()
@@ -117,28 +145,42 @@ class FootageViewModel(application: Application) : AndroidViewModel(application)
     }
 
     /**
-     * Joins the camera's Wi-Fi with the name and password the camera gives over Bluetooth, or
-     * the ones it gave last time when it is not connected.
+     * Joins the camera's Wi-Fi using Connection Methods settings (manual SSID/password or Station IP),
+     * BLE-supplied credentials, or legacy `"88888888"` default fallback.
      */
     fun connectCameraWifi() {
         viewModelScope.launch {
             _uiState.update { it.copy(isLoading = true, errorMessage = null) }
+            val settings = connectionPreferences?.settings?.value
+            val transport = settings?.preferredTransport ?: CameraTransportMode.WIFI_SOFTAP
+            if (transport == CameraTransportMode.WIFI_STATION) {
+                wifiConnector.checkAndBindExistingCameraNetwork(allowStationMode = true)
+                loadCameraFiles()
+                return@launch
+            }
+
             val link = cameraLink
             val info = link?.requestWifiInfo() ?: link?.getSavedWifiInfo()
-            if (info == null) {
+            val creds = CameraWifiResolver.resolveCredentials(
+                manualSsid = settings?.manualWifiSsid,
+                manualPassword = settings?.manualWifiPassword,
+                bleSsid = info?.ssid,
+                blePassword = info?.password,
+                model = link?.state?.value?.resolvedModel ?: settings?.selectedModelOverride
+            )
+            if (creds == null) {
                 _uiState.update {
                     it.copy(
                         isLoading = false,
-                        errorMessage = "The camera gives Open360 its Wi-Fi password over Bluetooth. " +
-                            "Switch the camera on, connect to it on the Remote tab, then try again."
+                        errorMessage = "Camera Wi-Fi SSID unknown. Connect over Bluetooth once, or enter SSID/password in Connection Methods."
                     )
                 }
                 return@launch
             }
 
             wifiConnector.connect(
-                targetSsid = info.ssid,
-                passphrase = info.password,
+                targetSsid = creds.ssid,
+                passphrase = creds.password,
                 onConnected = {
                     loadCameraFiles()
                 },
@@ -146,7 +188,7 @@ class FootageViewModel(application: Application) : AndroidViewModel(application)
                     _uiState.update {
                         it.copy(
                             isLoading = false,
-                            errorMessage = "Camera Wi-Fi (${info.ssid}) not reached. Make sure the camera is on."
+                            errorMessage = "Camera Wi-Fi (${creds.ssid}) not reached. Make sure the camera is on."
                         )
                     }
                 }
@@ -159,9 +201,17 @@ class FootageViewModel(application: Application) : AndroidViewModel(application)
     }
 
     fun loadCameraFiles() {
-        viewModelScope.launch {
+        if (loadCameraJob?.isActive == true) return
+        val settings = connectionPreferences?.settings?.value
+        val endpoint = CameraWifiResolver.resolveEndpoint(
+            transportMode = settings?.preferredTransport ?: CameraTransportMode.WIFI_SOFTAP,
+            customHostIp = settings?.stationHostIp,
+            discoveredGatewayIp = wifiConnector.getBoundGatewayIp()
+        )
+        val boundNetwork = wifiConnector.boundNetwork
+        loadCameraJob = viewModelScope.launch {
             _uiState.update { it.copy(isLoading = true, errorMessage = null) }
-            val result = repository.fetchCameraFiles()
+            val result = repository.fetchCameraFiles(endpoint.host, boundNetwork)
             if (result.isSuccess) {
                 _uiState.update {
                     it.copy(
@@ -174,7 +224,7 @@ class FootageViewModel(application: Application) : AndroidViewModel(application)
                 _uiState.update {
                     it.copy(
                         isLoading = false,
-                        errorMessage = "Could not reach camera. Connect Wi-Fi to camera AP (192.168.42.1)."
+                        errorMessage = "Could not reach camera on ${endpoint.host}. Connect Wi-Fi or adjust Connection Methods."
                     )
                 }
             }
@@ -213,26 +263,27 @@ class FootageViewModel(application: Application) : AndroidViewModel(application)
             _uiState.update {
                 it.copy(downloadProgressMap = it.downloadProgressMap + (file.name to 0.0f))
             }
-
-            val result = repository.downloadCameraFile(file) { bytesRead, totalBytes ->
-                if (totalBytes > 0) {
-                    val progress = (bytesRead.toFloat() / totalBytes.toFloat()).coerceIn(0f, 1f)
-                    _uiState.update {
-                        it.copy(downloadProgressMap = it.downloadProgressMap + (file.name to progress))
+            try {
+                val result = repository.downloadCameraFile(file) { bytesRead, totalBytes ->
+                    if (totalBytes > 0) {
+                        val progress = (bytesRead.toFloat() / totalBytes.toFloat()).coerceIn(0f, 1f)
+                        _uiState.update {
+                            it.copy(downloadProgressMap = it.downloadProgressMap + (file.name to progress))
+                        }
                     }
                 }
-            }
-
-            _uiState.update {
-                it.copy(downloadProgressMap = it.downloadProgressMap - file.name)
-            }
-
-            if (result.isSuccess) {
-                loadDownloadedFiles()
-                loadCameraFiles()
-            } else {
+                if (result.isSuccess) {
+                    loadDownloadedFiles()
+                    loadCameraFiles()
+                } else {
+                    _uiState.update {
+                        it.copy(errorMessage = "Download failed: ${result.exceptionOrNull()?.message}")
+                    }
+                }
+            } finally {
+                downloadJobs.remove(file.name)
                 _uiState.update {
-                    it.copy(errorMessage = "Download failed: ${result.exceptionOrNull()?.message}")
+                    it.copy(downloadProgressMap = it.downloadProgressMap - file.name)
                 }
             }
         }
@@ -243,37 +294,47 @@ class FootageViewModel(application: Application) : AndroidViewModel(application)
         val uriStr = file.contentUri ?: return
         if (_uiState.value.downloadProgressMap.containsKey(file.name)) return
 
-        viewModelScope.launch {
+        val job = viewModelScope.launch {
             _uiState.update {
                 it.copy(downloadProgressMap = it.downloadProgressMap + (file.name to 0.0f))
             }
-
-            val result = repository.importFromUsb(
-                sourceUri = Uri.parse(uriStr),
-                name = file.name,
-                sizeBytes = file.sizeBytes
-            ) { bytesRead, totalBytes ->
-                if (totalBytes > 0) {
-                    val progress = (bytesRead.toFloat() / totalBytes.toFloat()).coerceIn(0f, 1f)
-                    _uiState.update {
-                        it.copy(downloadProgressMap = it.downloadProgressMap + (file.name to progress))
+            try {
+                val result = repository.importFromUsb(
+                    sourceUri = uriStr.toUri(),
+                    name = file.name,
+                    sizeBytes = file.sizeBytes
+                ) { bytesRead, totalBytes ->
+                    if (totalBytes > 0) {
+                        val progress = (bytesRead.toFloat() / totalBytes.toFloat()).coerceIn(0f, 1f)
+                        _uiState.update {
+                            it.copy(downloadProgressMap = it.downloadProgressMap + (file.name to progress))
+                        }
                     }
                 }
-            }
 
-            _uiState.update {
-                it.copy(downloadProgressMap = it.downloadProgressMap - file.name)
-            }
-
-            if (result.isSuccess) {
-                loadDownloadedFiles()
-                val tree = _uiState.value.usbTreeUri
-                if (tree != null) loadUsbFiles(tree)
-            } else {
+                if (result.isSuccess) {
+                    loadDownloadedFiles()
+                    val tree = _uiState.value.usbTreeUri
+                    if (tree != null) loadUsbFiles(tree)
+                } else {
+                    _uiState.update {
+                        it.copy(errorMessage = "Import failed: ${result.exceptionOrNull()?.message}")
+                    }
+                }
+            } finally {
+                downloadJobs.remove(file.name)
                 _uiState.update {
-                    it.copy(errorMessage = "Import failed: ${result.exceptionOrNull()?.message}")
+                    it.copy(downloadProgressMap = it.downloadProgressMap - file.name)
                 }
             }
+        }
+        downloadJobs[file.name] = job
+    }
+
+    fun cancelTransfer(fileName: String) {
+        downloadJobs.remove(fileName)?.cancel()
+        _uiState.update {
+            it.copy(downloadProgressMap = it.downloadProgressMap - fileName)
         }
     }
 
@@ -281,12 +342,21 @@ class FootageViewModel(application: Application) : AndroidViewModel(application)
         viewModelScope.launch {
             repository.deleteLocalFile(file)
             loadDownloadedFiles()
-            loadCameraFiles()
+            if (wifiConnector.boundNetwork != null || _uiState.value.cameraFiles.isNotEmpty()) {
+                loadCameraFiles()
+            }
+            val tree = _uiState.value.usbTreeUri
+            if (tree != null && _uiState.value.usbFiles.isNotEmpty()) {
+                loadUsbFiles(tree)
+            }
         }
     }
 
     /** A thumbnail for a file on the camera, or null when it has none. */
     suspend fun cameraThumbnail(file: CameraMediaFile): Bitmap? = repository.loadCameraThumbnail(file)
+
+    /** A thumbnail for a downloaded or USB file, or null when none could be read. */
+    suspend fun localThumbnail(file: CameraMediaFile): Bitmap? = repository.loadLocalThumbnail(file)
 
     fun playFile(file: CameraMediaFile) {
         _uiState.update { it.copy(activePlayerFile = file) }

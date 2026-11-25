@@ -42,6 +42,12 @@ object CameraFileList {
         }
     }
 
+    /** Capture date/time parsed from a camera file name such as VID_20261015_181505_00_095.mp4, or null. */
+    fun parseDateTimeFromName(name: String): String? {
+        val match = NAME.matchEntire(fileName(name)) ?: return null
+        return formatDateTime(match.groupValues[3], match.groupValues[4])
+    }
+
     private fun fileName(path: String) = path.substringAfterLast('/')
 
     private fun url(baseUrl: String, path: String) = baseUrl.trimEnd('/') + "/" + path.trimStart('/')

@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <application>
+        <!-- The watch app's GPX and FIT files, handed over after each recording -->
+        <service
+            android:name=".core.watch.WatchTrackReceiver"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="com.google.android.gms.wearable.DATA_CHANGED" />
+                <data
+                    android:scheme="wear"
+                    android:host="*"
+                    android:pathPrefix="/open360/track/" />
+            </intent-filter>
+        </service>
+    </application>
+</manifest>

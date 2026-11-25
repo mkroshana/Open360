@@ -1,5 +1,6 @@
 package com.open360.core.ble
 
+import com.open360.core.protocol.LiveStreamProtocol
 import java.io.ByteArrayOutputStream
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
@@ -33,7 +34,7 @@ object Go2BleProtocol {
     const val ENVELOPE_HEADER_SIZE = 5
     const val CRC_SIZE = 2
 
-    // Official Insta360 command codes
+    // Camera command codes
     const val CMD_TAKE_PICTURE = 0x03
     const val CMD_START_CAPTURE = 0x04
     const val CMD_STOP_CAPTURE = 0x05
@@ -59,6 +60,7 @@ object Go2BleProtocol {
     const val NOTIF_CURRENT_CAPTURE_STATUS = 0x2010
     const val NOTIF_AUTHORIZATION_RESULT = 0x2011
     const val NOTIF_TEMPERATURE = 0x2016
+    const val NOTIF_CAM_WIFI_START = 0x2017
     const val NOTIF_CHARGE_BOX_STATUS = 0x201E
     const val NOTIF_CAPTURE_TIME_LEFT = 0x2021
     const val NOTIF_PERIODIC_STATUS = 0x2026
@@ -270,19 +272,40 @@ object Go2BleProtocol {
     /** The camera's storage states, CardState in the published definitions. */
     enum class CardState { OK, NO_CARD, FULL, INVALID_FORMAT, WRITE_PROTECTED, ERROR }
 
+    /** Storage card state and capacities (in bytes) from a StorageState message. */
+    data class StorageInfo(
+        val cardState: CardState,
+        val freeSpaceBytes: Long? = null,
+        val totalSpaceBytes: Long? = null
+    )
+
+    /**
+     * Decodes a StorageState message: field 1 is CardState, field 2 is free space (bytes) and
+     * field 3 is total space (bytes).
+     */
+    fun parseStorageState(payload: ByteArray): StorageInfo {
+        val fields = readProtoFields(payload)
+        val cardState = cardStateFrom(fields[1] as? Long ?: 0L)
+        val freeBytes = (fields[2] as? Long)?.takeIf { it >= 0 }
+        val totalBytes = (fields[3] as? Long)?.takeIf { it > 0 }
+        return StorageInfo(cardState, freeBytes, totalBytes)
+    }
+
     /**
      * Decodes the storage update notification (0x2006, NotificationCardUpdate). Field 1 is the
      * state; a message without it means the default, which is OK.
      */
     fun parseStorageUpdate(payload: ByteArray): CardState =
-        when (readProtoFields(payload)[1] as? Long ?: 0L) {
-            0L -> CardState.OK
-            1L -> CardState.NO_CARD
-            2L -> CardState.FULL
-            3L -> CardState.INVALID_FORMAT
-            4L -> CardState.WRITE_PROTECTED
-            else -> CardState.ERROR
-        }
+        cardStateFrom(readProtoFields(payload)[1] as? Long ?: 0L)
+
+    private fun cardStateFrom(value: Long): CardState = when (value) {
+        0L -> CardState.OK
+        1L -> CardState.NO_CARD
+        2L -> CardState.FULL
+        3L -> CardState.INVALID_FORMAT
+        4L -> CardState.WRITE_PROTECTED
+        else -> CardState.ERROR
+    }
 
     // OptionType values in the published definitions. In a reply each option sits in the
     // Options field with the same number.
@@ -293,6 +316,8 @@ object Go2BleProtocol {
     private const val OPTION_WIFI_INFO = 36
     private const val OPTION_PHOTO_SUB_MODE = 40
     private const val OPTION_VIDEO_SUB_MODE = 41
+    const val OPTION_SERIAL_NUMBER = 15
+    const val OPTION_CAMERA_TYPE = 48
 
     /** The sub-mode the camera gives for the one of Photo and Video it is not in. */
     const val SUB_MODE_NONE = 100
@@ -309,7 +334,7 @@ object Go2BleProtocol {
     /**
      * Builds the payload of a SetOptions request that puts the camera in Photo ([photo] true) or
      * Video, in [subMode]: field 1 names the one option and field 2 is an Options message
-     * holding its value, empty for 0. This is what the Insta360 app sends, for example
+     * holding its value, empty for 0, for example
      * `08 28 12 00` for single photo and `08 29 12 03 c8 02 05` for video sub-mode 5. It must
      * name one option only: given both, a GO 3S took both and ended in Video.
      */
@@ -358,7 +383,9 @@ object Go2BleProtocol {
         val captureSecondsLeft: Int?,
         val cardState: CardState?,
         val pod: ChargeBoxStatus?,
-        val subModes: SubModes? = null
+        val subModes: SubModes? = null,
+        val freeSpaceBytes: Long? = null,
+        val totalSpaceBytes: Long? = null
     )
 
     /**
@@ -368,15 +395,18 @@ object Go2BleProtocol {
     fun parseStatusOptionsReply(payload: ByteArray): StatusOptions? {
         val options = readProtoFields(payload)[2] as? ByteArray ?: return null
         val fields = readProtoFields(options)
+        val storage = (fields[OPTION_STORAGE_STATE] as? ByteArray)?.let { parseStorageState(it) }
         return StatusOptions(
             battery = (fields[OPTION_BATTERY_STATUS] as? ByteArray)?.let { readBatteryStatus(it) },
             captureSecondsLeft = (fields[OPTION_REMAINING_CAPTURE_TIME] as? Long)
                 ?.takeIf { it in 0..Int.MAX_VALUE }?.toInt(),
             // StorageState starts with the same CardState as the storage update notification
-            cardState = (fields[OPTION_STORAGE_STATE] as? ByteArray)?.let { parseStorageUpdate(it) },
+            cardState = storage?.cardState,
             pod = (fields[OPTION_CHARGEBOX_CONNECTED_STATUS] as? ByteArray)?.let { parseChargeBoxStatus(it) },
             // A GO 3S gives both, the one it is not in as SUB_MODE_NONE
-            subModes = subModesOf(fields[OPTION_PHOTO_SUB_MODE], fields[OPTION_VIDEO_SUB_MODE])
+            subModes = subModesOf(fields[OPTION_PHOTO_SUB_MODE], fields[OPTION_VIDEO_SUB_MODE]),
+            freeSpaceBytes = storage?.freeSpaceBytes,
+            totalSpaceBytes = storage?.totalSpaceBytes
         )
     }
 
@@ -401,6 +431,84 @@ object Go2BleProtocol {
         return WifiInfo(ssid, password)
     }
 
+    /** Camera serial number & reported model string read from `GetOptions` options 15 and 48. */
+    data class DeviceIdentity(val serialNumber: String?, val cameraType: String?)
+
+    /** Builds the payload of a `GetOptions` request asking for serial number (15) and camera type (48). */
+    fun buildDeviceIdentityRequest(): ByteArray =
+        byteArrayOf(0x0A, 0x02, OPTION_SERIAL_NUMBER.toByte(), OPTION_CAMERA_TYPE.toByte())
+
+    /**
+     * Decodes [buildDeviceIdentityRequest]'s `GetOptionsResp` (field 2 -> `Options`). Missing fields are
+     * returned as null; returns null only when the reply contains no `Options` message at all.
+     */
+    fun parseDeviceIdentityReply(payload: ByteArray): DeviceIdentity? {
+        val options = readProtoFields(payload)[2] as? ByteArray ?: return null
+        val fields = readProtoFields(options)
+        val serial = (fields[OPTION_SERIAL_NUMBER] as? ByteArray)
+            ?.toString(Charsets.UTF_8)
+            ?.trim('\u0000', ' ')
+            ?.takeIf { it.isNotEmpty() }
+        val cameraType = (fields[OPTION_CAMERA_TYPE] as? ByteArray)
+            ?.toString(Charsets.UTF_8)
+            ?.trim('\u0000', ' ')
+            ?.takeIf { it.isNotEmpty() }
+        if (serial == null && cameraType == null) return null
+        return DeviceIdentity(serialNumber = serial, cameraType = cameraType)
+    }
+
+    /** Camera model string and raw `CAMERA_POSTURE` (`0..5`) from a combined `GetOptions` reply. */
+    data class CameraPostureAndType(val rawPosture: Int?, val cameraType: String?)
+
+    /** Builds the payload of a `GetOptions` request asking for `CAMERA_POSTURE` (option 93). */
+    fun buildCameraPostureRequest(): ByteArray =
+        byteArrayOf(0x0A, 0x01, LiveStreamProtocol.OPTION_CAMERA_POSTURE.toByte())
+
+    /** Builds a `GetOptions` request asking for both `CAMERA_TYPE` (48) and `CAMERA_POSTURE` (93). */
+    fun buildCameraPostureAndTypeRequest(): ByteArray =
+        byteArrayOf(0x0A, 0x02, OPTION_CAMERA_TYPE.toByte(), LiveStreamProtocol.OPTION_CAMERA_POSTURE.toByte())
+
+    /**
+     * Decodes [buildCameraPostureAndTypeRequest]'s `GetOptionsResp`. Proto3 may omit `Options`
+     * or omit field 93 when posture is `0` (`CAMERA_POSTURE_ROTATE_0`).
+     */
+    fun parseCameraPostureAndTypeReply(payload: ByteArray): CameraPostureAndType? {
+        val top = readProtoFields(payload)
+        val options = top[2] as? ByteArray
+        if (options != null) {
+            val fields = readProtoFields(options)
+            val cameraType = (fields[OPTION_CAMERA_TYPE] as? ByteArray)
+                ?.toString(Charsets.UTF_8)
+                ?.trim('\u0000', ' ')
+                ?.takeIf { it.isNotEmpty() }
+            val rawLong = fields[LiveStreamProtocol.OPTION_CAMERA_POSTURE] as? Long
+            val rawPosture = when {
+                rawLong != null -> rawLong.toInt().takeIf { it in 0..5 }
+                else -> 0
+            }
+            return CameraPostureAndType(rawPosture = rawPosture, cameraType = cameraType)
+        }
+        return if (top[1] != null) CameraPostureAndType(rawPosture = 0, cameraType = null) else null
+    }
+
+    /**
+     * Decodes the reply to [buildCameraPostureRequest]: returns clockwise preview rotation degrees
+     * (`0`, `90`, `180`, `270`) adjusted by [adjustDegrees], or `null` when missing or pointed straight up/down.
+     */
+    fun parseCameraPostureReply(payload: ByteArray, adjustDegrees: Int = 0): Int? {
+        val raw = parseCameraPostureAndTypeReply(payload)?.rawPosture ?: return null
+        return LiveStreamProtocol.cameraPostureToDegrees(raw, adjustDegrees)
+    }
+
+    /**
+     * Decodes `CAMERA_NOTIFICATION_LIVEVIEW_BEGIN_ROTATE` (`0x201B`, `NotificationCameraPostureUpdate`):
+     * returns clockwise preview rotation degrees adjusted by [adjustDegrees], or `null` when empty, UP, or DOWN.
+     */
+    fun parseLiveviewRotateNotification(payload: ByteArray, adjustDegrees: Int = 0): Int? {
+        val posture = (readProtoFields(payload)[1] as? Long)?.toInt() ?: return null
+        return LiveStreamProtocol.cameraPostureToDegrees(posture, adjustDegrees)
+    }
+
     // The camera's clock: LOCAL_TIME, TIME_ZONE and GEOGRAPHIC_TIME_ZONE in the published definitions
     private const val OPTION_LOCAL_TIME = 12
     private const val OPTION_TIME_ZONE = 13
@@ -423,8 +531,8 @@ object Go2BleProtocol {
     }
 
     /**
-     * Builds the payload of a SetOptions request that sets the camera's clock, as the Insta360 app
-     * does when it connects: options 12 (whole UTC seconds), 13 (the zone in seconds east of UTC)
+     * Builds the payload of a SetOptions request that sets the camera's clock on connection:
+     * options 12 (whole UTC seconds), 13 (the zone in seconds east of UTC)
      * and 175 (the zone's name, such as Asia/Colombo).
      */
     fun buildSetClockPayload(utcSeconds: Long, zoneOffsetSeconds: Int, zoneId: String): ByteArray {
@@ -559,7 +667,7 @@ object Go2BleProtocol {
                 1 -> pos += 8
                 2 -> {
                     val length = readVarint().toInt()
-                    if (length < 0 || pos + length > data.size) return fields
+                    if (length < 0 || length > data.size - pos) return fields
                     fields += number to data.copyOfRange(pos, pos + length)
                     pos += length
                 }
@@ -588,8 +696,8 @@ object Go2BleProtocol {
         hasFix: Boolean = true
     ): ByteArray {
         val buf = ByteBuffer.allocate(GPS_RECORD_SIZE).order(ByteOrder.LITTLE_ENDIAN)
-        buf.putLong(timestampMs / 1000)
-        buf.putShort((timestampMs % 1000).toShort())
+        buf.putLong(Math.floorDiv(timestampMs, 1000L))
+        buf.putShort(Math.floorMod(timestampMs, 1000L).toShort())
         buf.put((if (hasFix) 'A' else 'V').code.toByte())
         buf.putDouble(abs(latitude))
         buf.put((if (latitude >= 0.0) 'N' else 'S').code.toByte())
@@ -638,13 +746,13 @@ object Go2BleProtocol {
 
     /**
      * Builds a CheckAuthorization request, which asks the camera whether it has authorized an
-     * id: the id (field 1) and a second field of 2, as the Insta360 app was seen to send it.
+     * id: the id (field 1) and a second field of 2.
      * A GO 3S that does not know the id answers unauthorized and then asks on its own screen
      * whether to connect to a new app.
      */
     fun buildCheckAuthorizationPayload(authorizationId: String): ByteArray {
         val id = authorizationId.toByteArray(Charsets.US_ASCII)
-        return byteArrayOf(0x0A, id.size.toByte()) + id + byteArrayOf(0x10, 0x02)
+        return byteArrayOf(0x0A) + encodeVarint(id.size) + id + byteArrayOf(0x10, 0x02)
     }
 
     /** The camera's answer to CheckAuthorization, AuthorizationStatus in the published definitions. */
@@ -652,7 +760,7 @@ object Go2BleProtocol {
 
     /**
      * Decodes the reply to CheckAuthorization. Field 1 is the status; a reply that leaves it out
-     * carries the default, AUTHORIZED, which is what the camera sent for the Insta360 app's id.
+     * carries the default, AUTHORIZED.
      * Null when the payload is not a CheckAuthorization reply at all: anything but field 1 once,
      * as a number. A GO 3S just woken over Bluetooth once sent the reply to the status request
      * ([buildStatusOptionsRequest]) under the check's sequence number.
@@ -692,8 +800,7 @@ object Go2BleProtocol {
     /**
      * Builds the message that switches on a GO camera that is powered off but connected over
      * Bluetooth: FF 0C 02, the length, the authorization id as 36 ASCII characters, and the
-     * checksum. Captured from the Insta360 app, which writes it as the first thing after
-     * subscribing to notifications. The id is the one that app registered with the camera.
+     * checksum, written right after subscribing to notifications using a registered wake-up id.
      */
     fun buildWakeAuthorizationPacket(authorizationId: String): ByteArray {
         val id = authorizationId.toByteArray(Charsets.US_ASCII)
@@ -720,6 +827,14 @@ object Go2BleProtocol {
         }
         return packet.innerData.firstOrNull() == 1.toByte()
     }
+
+    /**
+     * Fixed GO 2 BLE wake-up packet (`ff 06 40 08 00 08 00 00 00 b0 00 00 01 6d 90`) for GO 2
+     * wake-up compatibility.
+     */
+    fun buildGo2WakePacket(): ByteArray = byteArrayOf(
+        0xFF.toByte(), 0x06, 0x40, 0x08, 0x00, 0x08, 0x00, 0x00, 0x00, 0xB0.toByte(), 0x00, 0x00, 0x01, 0x6D, 0x90.toByte()
+    )
 
     const val REMOTE_BTN_POWER = 0x00
     const val REMOTE_BTN_MODE = 0x01

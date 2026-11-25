@@ -109,6 +109,7 @@ class GpxTrackRecorder(
     val state: StateFlow<GpxTrackState> = _state.asStateFlow()
 
     private var session: Session? = null
+    private var previousSession: Session? = null
 
     /**
      * A recording has started, with its GPS streamed from [startElapsedMs] on the monotonic
@@ -124,7 +125,10 @@ class GpxTrackRecorder(
                 if (current.fixes.isEmpty()) current.startElapsedMs = startElapsedMs
                 return@launch
             }
-            if (current != null && !current.finalized) finalize(current)
+            if (current != null) {
+                if (!current.finalized) finalize(current)
+                previousSession = current
+            }
             session = Session(startElapsedMs)
             _state.value = GpxTrackState(isRecording = true)
         }
@@ -172,17 +176,24 @@ class GpxTrackRecorder(
      */
     fun setVideoFileName(videoFileName: String) {
         scope.launch {
-            val s = session ?: return@launch
-            if (s.videoFileName == videoFileName) return@launch
-            s.videoFileName = videoFileName
-            if (s.finalized && s.fixes.isNotEmpty()) {
+            val active = session
+            // If a new recording has already started before the previous one's stop reply arrived,
+            // rename the previous recording instead of attaching its name to the active track.
+            val target = if (active != null && active.stopElapsedMs == Long.MAX_VALUE && !active.finalized) {
+                previousSession
+            } else {
+                active
+            } ?: return@launch
+            if (target.videoFileName == videoFileName) return@launch
+            target.videoFileName = videoFileName
+            if (target.finalized && target.fixes.isNotEmpty()) {
                 // The name arrived after the file was completed
                 try {
-                    rewrite(s)
+                    rewrite(target)
                 } catch (e: Exception) {
                     Log.e(TAG, "Could not rename GPX track", e)
                 } finally {
-                    closeFile(s)
+                    closeFile(target)
                 }
             }
         }

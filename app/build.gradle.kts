@@ -1,3 +1,6 @@
+import java.io.File
+import java.util.Properties
+
 plugins {
     alias(libs.plugins.android.application)
     alias(libs.plugins.kotlin.compose)
@@ -10,20 +13,79 @@ android {
     defaultConfig {
         applicationId = "com.open360"
         minSdk = 26
-        targetSdk = 35
-        versionCode = 1
+        targetSdk = 36
+        versionCode = 10001
         versionName = "1.0.0"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
 
+    dependenciesInfo {
+        includeInApk = false
+        includeInBundle = true
+    }
+
+    flavorDimensions += "distribution"
+    productFlavors {
+        create("play") {
+            dimension = "distribution"
+            buildConfigField("boolean", "HAS_WEAR_DATA_LAYER", "true")
+            buildConfigField("String", "DISTRIBUTION_CHANNEL", "\"play\"")
+        }
+        create("foss") {
+            dimension = "distribution"
+            buildConfigField("boolean", "HAS_WEAR_DATA_LAYER", "false")
+            buildConfigField("String", "DISTRIBUTION_CHANNEL", "\"foss\"")
+        }
+    }
+
+    val keystoreProps = Properties().apply {
+        val propsFile = rootProject.file("keystore.properties")
+        if (propsFile.isFile) {
+            propsFile.inputStream().use { load(it) }
+        }
+    }
+    fun resolveSigningValue(envVar: String, propKey: String): String? =
+        providers.environmentVariable(envVar).orNull?.takeIf { it.isNotBlank() }
+            ?: keystoreProps.getProperty(propKey)?.takeIf { it.isNotBlank() }
+
+    val keystorePath = resolveSigningValue("OPEN360_KEYSTORE_PATH", "storeFile")?.trim()
+    val keystorePassword = resolveSigningValue("OPEN360_KEYSTORE_PASSWORD", "storePassword")
+    val keyAliasValue = (resolveSigningValue("OPEN360_KEYSTORE_ALIAS", "keyAlias")
+        ?: resolveSigningValue("OPEN360_KEY_ALIAS", "keyAlias"))?.trim()
+    val keyPasswordValue = resolveSigningValue("OPEN360_KEY_PASSWORD", "keyPassword")
+    val keystoreFile = keystorePath?.let { path ->
+        val candidate = File(path)
+        if (candidate.isAbsolute) candidate else rootProject.file(path)
+    }?.takeIf { it.isFile }
+
+    val releaseSigningConfig = if (
+        keystoreFile != null &&
+        keystorePassword != null &&
+        keyAliasValue != null &&
+        keyPasswordValue != null
+    ) {
+        signingConfigs.maybeCreate("release").apply {
+            storeFile = keystoreFile
+            storePassword = keystorePassword
+            keyAlias = keyAliasValue
+            keyPassword = keyPasswordValue
+        }
+    } else {
+        null
+    }
+
     buildTypes {
         release {
-            isMinifyEnabled = false
+            isMinifyEnabled = true
+            isShrinkResources = true
             proguardFiles(
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro"
             )
+            if (releaseSigningConfig != null) {
+                signingConfig = releaseSigningConfig
+            }
         }
     }
 
@@ -34,6 +96,11 @@ android {
 
     buildFeatures {
         compose = true
+        buildConfig = true
+    }
+
+    testOptions {
+        unitTests.isReturnDefaultValues = true
     }
 }
 
@@ -60,8 +127,11 @@ dependencies {
     implementation(libs.androidx.media3.exoplayer)
     implementation(libs.androidx.media3.ui)
     implementation(libs.androidx.documentfile)
+    implementation(libs.androidx.exifinterface)
     // Hands the connection settings to the watch app
-    implementation(libs.play.services.wearable)
+    "playImplementation"(libs.play.services.wearable)
+    // Replaces Fragment 1.2.4 brought in by play-services-wearable, fixing InvalidFragmentVersionForActivityResult lint check
+    "playImplementation"(libs.androidx.fragment)
 
     testImplementation(libs.junit)
     testImplementation(libs.kotlinx.coroutines.test)

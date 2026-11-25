@@ -13,3 +13,8 @@
 *.apk
 *.aab
 gradle-daemon-jvm.properties
+keystore.properties
+*.jks
+*.keystore
+.kotlin/
+

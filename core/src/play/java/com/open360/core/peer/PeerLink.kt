@@ -1,9 +1,9 @@
 package com.open360.core.peer
 
 import android.content.Context
-import android.net.Uri
 import android.os.SystemClock
 import android.util.Log
+import androidx.core.net.toUri
 import com.google.android.gms.wearable.MessageClient
 import com.google.android.gms.wearable.MessageEvent
 import com.google.android.gms.wearable.Wearable
@@ -46,7 +46,7 @@ class PeerLink(
      * there is one, on the main thread.
      */
     fun start(onReady: (hasDevice: Boolean) -> Unit) {
-        messageClient.addListener(this, Uri.parse("wear://*$PATH_PREFIX"), MessageClient.FILTER_PREFIX)
+        messageClient.addListener(this, "wear://*$PATH_PREFIX".toUri(), MessageClient.FILTER_PREFIX)
             .addOnFailureListener { logUnavailable(it) }
         readNodes(onReady)
     }

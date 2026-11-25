@@ -4,6 +4,9 @@ import com.open360.core.ble.CameraMode
 import com.open360.core.ble.Go2BleProtocol.CardState
 import com.open360.core.ble.Go2BleProtocol.ChargeBoxStatus
 import com.open360.core.ble.WakeUpRegistration
+import com.open360.core.model.CameraTransportMode
+import com.open360.core.model.CaptureMode
+import com.open360.core.model.Insta360CameraModel
 import java.util.Locale
 
 /**
@@ -27,6 +30,24 @@ object CameraStatusText {
 
     /** A number of photos left, such as "1,105". */
     fun photosLeft(count: Int): String = String.format(Locale.US, "%,d", count)
+
+    /** Free and total camera storage in SI GB/MB, e.g. "66.7 / 128 GB free". */
+    fun storageSpace(freeBytes: Long, totalBytes: Long): String {
+        val totalGb = totalBytes / 1_000_000_000.0
+        val totalText = if (totalGb >= 10.0) String.format(Locale.US, "%.0f GB", totalGb)
+        else String.format(Locale.US, "%.1f GB", totalGb)
+        val freeText = if (freeBytes >= 1_000_000_000L) {
+            String.format(Locale.US, "%.1f", freeBytes / 1_000_000_000.0)
+        } else {
+            val freeMb = freeBytes / 1_000_000.0
+            return "${String.format(Locale.US, "%.0f", freeMb)} MB / $totalText free"
+        }
+        return "$freeText / $totalText free"
+    }
+
+    /** Compact free/total storage for the top status bar, e.g. "66.7 / 128 GB" or "500 MB / 64 GB". */
+    fun storageSpaceCompact(freeBytes: Long, totalBytes: Long): String =
+        storageSpace(freeBytes, totalBytes).removeSuffix(" free")
 
     /** What is wrong with the camera's storage, or null when nothing is. */
     fun storageProblem(state: CardState?): String? = when (state) {
@@ -98,12 +119,19 @@ object CameraStatusText {
         batteryPercent: Int?,
         pod: ChargeBoxStatus?,
         captureSecondsLeft: Int?,
-        cardState: CardState?
+        cardState: CardState?,
+        freeSpaceBytes: Long? = null,
+        totalSpaceBytes: Long? = null,
+        temperatureHigh: Boolean = false,
+        batteryLow: Boolean = false
     ): Boolean {
         return batteryPercent != null ||
-            (pod?.connected == true && pod.battery != null) ||
+            (pod?.connected == true && (pod.battery != null || !pod.isOn)) ||
             captureSecondsLeft != null ||
-            storageProblem(cardState) != null
+            (freeSpaceBytes != null && totalSpaceBytes != null) ||
+            storageProblem(cardState) != null ||
+            temperatureHigh ||
+            batteryLow
     }
 
     /** What the camera says about the wake-up ID, or null when it has not been asked. */
@@ -150,20 +178,41 @@ object CameraStatusText {
     }
 
     /**
-     * The camera identity displayed in the top bar title, or the app's name with no camera, since
-     * the camera card says how the link stands.
+     * The camera identity displayed in the top camera status bar; never falls back to the app name.
      */
     fun topBarTitle(
         serverConnected: Boolean,
         serverSerial: String?,
         bleConnected: Boolean,
         bleDeviceName: String?,
-        isAdvertising: Boolean
+        isAdvertising: Boolean,
+        bleScanning: Boolean = false,
+        bleConnecting: Boolean = false,
+        savedSerialSuffix: String? = null,
+        resolvedModel: Insta360CameraModel? = null,
+        directConnected: Boolean = false,
+        directConnecting: Boolean = false,
+        directLabel: String? = null,
+        transportMode: CameraTransportMode? = null
     ): String = when {
-        serverConnected -> serverSerial?.let { "Insta360 ($it)" } ?: "Insta360 GO 3S"
-        bleConnected -> bleDeviceName ?: "Insta360 GO 3S"
+        serverConnected -> serverSerial?.let { "Insta360 ($it)" }
+            ?: resolvedModel?.displayName
+            ?: "Insta360 GO 3S"
+        bleConnected -> bleDeviceName?.takeIf { it.isNotBlank() }
+            ?: resolvedModel?.displayName
+            ?: "Insta360 GO 3S"
+        directConnected -> directLabel?.takeIf { it.isNotBlank() }
+            ?: resolvedModel?.displayName
+            ?: transportMode?.label
+            ?: "Insta360 Camera"
         isAdvertising -> "Insta360 GPS Remote"
-        else -> "Open360"
+        !savedSerialSuffix.isNullOrBlank() -> resolvedModel?.let { "${it.shortName} $savedSerialSuffix" }
+            ?: "GO 3S $savedSerialSuffix"
+        bleConnecting || directConnecting -> resolvedModel?.let { "Connecting ${it.shortName}" }
+            ?: "Connecting to Camera"
+        bleScanning -> resolvedModel?.let { "Looking for ${it.shortName}" }
+            ?: "Looking for Camera"
+        else -> "No Camera Connected"
     }
 
     /** Resolves the status dot state for both Architecture A (GATT server) and Architecture B (BLE client). */
@@ -180,6 +229,52 @@ object CameraStatusText {
         isAsleep -> StatusDotState.STANDBY
         isAdvertising || bleScanning || bleConnecting -> StatusDotState.CONNECTING
         else -> StatusDotState.DISCONNECTED
+    }
+
+    /** Formats a live recording timer as `MM:SS` under 1 hour or `H:MM:SS` at/over 1 hour. */
+    fun formatRecordingDuration(durationSeconds: Long): String {
+        val safe = durationSeconds.coerceAtLeast(0L)
+        val hours = safe / 3600
+        val mins = (safe % 3600) / 60
+        val secs = safe % 60
+        return if (hours > 0) {
+            String.format(Locale.US, "%d:%02d:%02d", hours, mins, secs)
+        } else {
+            String.format(Locale.US, "%02d:%02d", mins, secs)
+        }
+    }
+
+    /** Primary capture action wording for the sticky recording bar and shutter descriptions. */
+    fun recordingBarActionLabel(
+        currentMode: CaptureMode,
+        shownMode: CameraMode?,
+        isRecording: Boolean,
+        isStarting: Boolean,
+        isStopping: Boolean,
+        isTakingPhoto: Boolean
+    ): String = when {
+        isTakingPhoto -> "Taking Photo..."
+        isStopping -> "Stopping..."
+        isRecording -> if (shownMode?.isPhoto == true) "Stop ${shownMode.label}" else "Stop Recording"
+        isStarting -> "Starting..."
+        currentMode == CaptureMode.PHOTO -> when {
+            shownMode == null || shownMode == CameraMode.PHOTO -> "Take Photo"
+            shownMode.isContinuous -> "Start ${shownMode.label}"
+            else -> "Take ${shownMode.label}"
+        }
+        else -> "Start Recording"
+    }
+
+    /** Short readiness hint shown in the sticky bar only while capture is unavailable. */
+    fun recordingBarHint(
+        isConnected: Boolean,
+        isAsleep: Boolean,
+        isMovingLink: Boolean
+    ): String? = when {
+        isMovingLink -> "Moving the link..."
+        !isConnected -> "Connect camera to control"
+        isAsleep -> "Camera in standby"
+        else -> null
     }
 
     const val LOW_BATTERY_PERCENT = 20

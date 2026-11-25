@@ -22,6 +22,7 @@ import android.os.ParcelUuid
 import android.os.SystemClock
 import android.util.Log
 import androidx.core.content.ContextCompat
+import androidx.core.content.edit
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -83,6 +84,7 @@ class SportsSensorManager(private val context: Context) {
 
     // Opened on the main thread, looked at from Bluetooth callbacks
     private val links = ConcurrentHashMap<String, Link>()
+    private val lastReadingMs = ConcurrentHashMap<Pair<String, SensorKind>, Long>()
     private var started = false
     private var scanCallback: ScanCallback? = null
     private val scanTimeout = Runnable { stopScan() }
@@ -106,9 +108,23 @@ class SportsSensorManager(private val context: Context) {
     fun stop() {
         started = false
         stopScan()
+        handler.removeCallbacksAndMessages(null)
         links.values.forEach { it.close() }
         links.clear()
-        _state.update { s -> s.copy(saved = s.saved.map { it.copy(connected = false) }) }
+        lastReadingMs.clear()
+        _state.update { s ->
+            s.copy(
+                saved = s.saved.map {
+                    it.copy(
+                        connected = false,
+                        reconnecting = false,
+                        heartRateBpm = null,
+                        cadenceRpm = null,
+                        powerWatts = null
+                    )
+                }
+            )
+        }
     }
 
     /** The readings taken between [fromElapsedMs] and [toElapsedMs] on the monotonic clock. */
@@ -130,7 +146,16 @@ class SportsSensorManager(private val context: Context) {
                 val name = result.scanRecord?.deviceName ?: result.device.name ?: result.device.address
                 val device = SensorDevice(result.device.address, name, kinds)
                 _state.update { s ->
-                    if (s.found.any { it.address == device.address }) s else s.copy(found = s.found + device)
+                    val existing = s.found.firstOrNull { it.address == device.address }
+                    if (existing == null) {
+                        s.copy(found = s.found + device)
+                    } else if (device.kinds.all { it in existing.kinds }) {
+                        s
+                    } else {
+                        s.copy(found = s.found.map {
+                            if (it.address == device.address) it.copy(kinds = it.kinds + device.kinds) else it
+                        })
+                    }
                 }
             }
 
@@ -239,6 +264,7 @@ class SportsSensorManager(private val context: Context) {
     }
 
     private fun record(kind: SensorKind, address: String, value: Int) {
+        lastReadingMs[address to kind] = SystemClock.elapsedRealtime()
         addToLog(kind, value)
         _state.update { s ->
             s.copy(saved = s.saved.map { status ->
@@ -254,7 +280,7 @@ class SportsSensorManager(private val context: Context) {
     }
 
     private fun clearIfStale(kind: SensorKind, address: String) {
-        val newest = synchronized(log) { log.getValue(kind).lastOrNull()?.elapsedMs } ?: return
+        val newest = lastReadingMs[address to kind] ?: return
         if (SystemClock.elapsedRealtime() - newest < CURRENT_FOR_MS) return
         _state.update { s ->
             s.copy(saved = s.saved.map { status ->
@@ -270,7 +296,10 @@ class SportsSensorManager(private val context: Context) {
     private fun setConnected(address: String, connected: Boolean) {
         _state.update { s ->
             s.copy(saved = s.saved.map {
-                if (it.device.address == address) it.copy(connected = connected) else it
+                if (it.device.address == address) {
+                    if (connected) it.copy(connected = true)
+                    else it.copy(connected = false, heartRateBpm = null, cadenceRpm = null, powerWatts = null)
+                } else it
             })
         }
     }
@@ -295,7 +324,7 @@ class SportsSensorManager(private val context: Context) {
         val entries = _state.value.saved.map { s ->
             "${s.device.address}|${s.device.name.replace('|', ' ')}|${s.device.kinds.joinToString(",") { it.name }}"
         }.toSet()
-        prefs.edit().putStringSet(PREF_SAVED, entries).apply()
+        prefs.edit { putStringSet(PREF_SAVED, entries) }
     }
 
     /**
@@ -325,6 +354,10 @@ class SportsSensorManager(private val context: Context) {
         }
 
         override fun onConnectionStateChange(gatt: BluetoothGatt, status: Int, newState: Int) {
+            if (links[device.address] !== this) {
+                if (newState == BluetoothProfile.STATE_DISCONNECTED) gatt.close()
+                return
+            }
             if (newState == BluetoothProfile.STATE_CONNECTED) {
                 Log.i(TAG, "${device.name} linked")
                 setConnected(device.address, true)
@@ -334,7 +367,7 @@ class SportsSensorManager(private val context: Context) {
                 Log.i(TAG, "${device.name} unlinked, status $status")
                 setConnected(device.address, false)
                 setReconnecting(device.address, false)
-                if (!started || links[device.address] !== this) return
+                if (!started) return
                 if (direct) {
                     // A direct link that failed or ended goes back to waiting in the background
                     close()
@@ -347,6 +380,7 @@ class SportsSensorManager(private val context: Context) {
         }
 
         override fun onServicesDiscovered(gatt: BluetoothGatt, status: Int) {
+            if (links[device.address] !== this || status != BluetoothGatt.GATT_SUCCESS) return
             pendingSubscriptions.clear()
             for ((service, measurement) in SensorProfiles.MEASUREMENTS) {
                 gatt.getService(service)?.getCharacteristic(measurement)?.let { pendingSubscriptions += it }
@@ -358,6 +392,7 @@ class SportsSensorManager(private val context: Context) {
         // A Pixel Watch can change its services after the link is up, which leaves what was
         // subscribed to on linking out of date, so the services are looked up and subscribed to again
         override fun onServiceChanged(gatt: BluetoothGatt) {
+            if (links[device.address] !== this) return
             Log.i(TAG, "${device.name}: services changed, looking again")
             gatt.discoverServices()
         }
@@ -377,17 +412,20 @@ class SportsSensorManager(private val context: Context) {
         }
 
         override fun onDescriptorWrite(gatt: BluetoothGatt, descriptor: BluetoothGattDescriptor, status: Int) {
+            if (links[device.address] !== this) return
             Log.i(TAG, "${device.name}: subscribed to ${descriptor.characteristic.uuid}, status $status")
             subscribeNext(gatt)
         }
 
         override fun onCharacteristicChanged(gatt: BluetoothGatt, characteristic: BluetoothGattCharacteristic, value: ByteArray) {
+            if (links[device.address] !== this) return
             handle(characteristic.uuid, value)
         }
 
         @Deprecated("Deprecated in Java")
         @Suppress("DEPRECATION")
         override fun onCharacteristicChanged(gatt: BluetoothGatt, characteristic: BluetoothGattCharacteristic) {
+            if (links[device.address] !== this) return
             if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU) handle(characteristic.uuid, characteristic.value ?: return)
         }
 

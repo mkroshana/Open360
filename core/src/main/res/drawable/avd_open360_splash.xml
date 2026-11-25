@@ -1,0 +1,235 @@
+<?xml version="1.0" encoding="utf-8"?>
+<animated-vector xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:aapt="http://schemas.android.com/aapt">
+
+    <aapt:attr name="android:drawable">
+        <vector
+            android:width="108dp"
+            android:height="108dp"
+            android:viewportWidth="108"
+            android:viewportHeight="108">
+
+            <group
+                android:name="bezel_group"
+                android:pivotX="54"
+                android:pivotY="54"
+                android:rotation="0">
+                <path
+                    android:name="bezel_ring"
+                    android:fillColor="#00000000"
+                    android:pathData="M23.3,54 A30.7,30.7 0 1,0 84.7,54 A30.7,30.7 0 1,0 23.3,54 Z"
+                    android:strokeColor="@color/open360_splash_bezel"
+                    android:strokeWidth="0.9" />
+                <path
+                    android:name="compass_ticks"
+                    android:fillColor="#00000000"
+                    android:pathData="M54,21.6 L54,25.0 M54,83.0 L54,86.4 M21.6,54 L25.0,54 M83.0,54 L86.4,54"
+                    android:strokeAlpha="1"
+                    android:strokeColor="@color/open360_splash_ticks"
+                    android:strokeLineCap="round"
+                    android:strokeWidth="1.3" />
+            </group>
+
+            <group
+                android:name="socket_group"
+                android:pivotX="54"
+                android:pivotY="54"
+                android:scaleX="1"
+                android:scaleY="1">
+                <path
+                    android:name="lens_socket"
+                    android:fillColor="@color/open360_splash_socket_fill"
+                    android:pathData="M38.2,54 A15.8,15.8 0 1,0 69.8,54 A15.8,15.8 0 1,0 38.2,54 Z"
+                    android:strokeColor="@color/open360_splash_socket_stroke"
+                    android:strokeWidth="1.0" />
+            </group>
+
+            <group
+                android:name="ring_group"
+                android:pivotX="54"
+                android:pivotY="54"
+                android:rotation="0">
+                <path
+                    android:name="open_ring"
+                    android:fillColor="#00000000"
+                    android:pathData="M76.32,48.44 A23,23 0 1,1 59.56,31.68"
+                    android:strokeAlpha="1"
+                    android:strokeColor="@color/open360_splash_ring"
+                    android:strokeLineCap="round"
+                    android:strokeWidth="5.2"
+                    android:trimPathEnd="1" />
+            </group>
+
+            <group
+                android:name="orbital_node_group"
+                android:pivotX="70.26"
+                android:pivotY="37.74"
+                android:scaleX="1"
+                android:scaleY="1">
+                <path
+                    android:name="orbital_node"
+                    android:fillColor="@color/open360_splash_ring"
+                    android:pathData="M66.76,37.74 A3.5,3.5 0 1,0 73.76,37.74 A3.5,3.5 0 1,0 66.76,37.74 Z" />
+            </group>
+
+            <group
+                android:name="shutter_group"
+                android:pivotX="54"
+                android:pivotY="54"
+                android:scaleX="1"
+                android:scaleY="1">
+                <path
+                    android:name="shutter_core"
+                    android:pathData="M43.6,54 A10.4,10.4 0 1,0 64.4,54 A10.4,10.4 0 1,0 43.6,54 Z">
+                    <aapt:attr name="android:fillColor">
+                        <gradient
+                            android:centerX="51.09"
+                            android:centerY="49.84"
+                            android:gradientRadius="15.39"
+                            android:type="radial">
+                            <item android:color="#FFFF766B" android:offset="0.0" />
+                            <item android:color="#FFFF5449" android:offset="0.52" />
+                            <item android:color="#FFD4352B" android:offset="1.0" />
+                        </gradient>
+                    </aapt:attr>
+                </path>
+            </group>
+        </vector>
+    </aapt:attr>
+
+    <target android:name="ring_group">
+        <aapt:attr name="android:animation">
+            <objectAnimator
+                android:duration="320"
+                android:interpolator="@interpolator/ease_out_cubic"
+                android:propertyName="rotation"
+                android:valueFrom="-24"
+                android:valueTo="0"
+                android:valueType="floatType" />
+        </aapt:attr>
+    </target>
+
+    <target android:name="open_ring">
+        <aapt:attr name="android:animation">
+            <set android:ordering="together">
+                <objectAnimator
+                    android:duration="320"
+                    android:interpolator="@interpolator/ease_out_cubic"
+                    android:propertyName="trimPathEnd"
+                    android:valueFrom="0"
+                    android:valueTo="1"
+                    android:valueType="floatType" />
+                <objectAnimator
+                    android:duration="180"
+                    android:interpolator="@interpolator/ease_out_cubic"
+                    android:propertyName="strokeAlpha"
+                    android:valueFrom="0.2"
+                    android:valueTo="1"
+                    android:valueType="floatType" />
+            </set>
+        </aapt:attr>
+    </target>
+
+    <target android:name="orbital_node_group">
+        <aapt:attr name="android:animation">
+            <set android:ordering="together">
+                <set android:ordering="sequentially">
+                    <objectAnimator
+                        android:duration="140"
+                        android:propertyName="scaleX"
+                        android:valueFrom="0"
+                        android:valueTo="0"
+                        android:valueType="floatType" />
+                    <objectAnimator
+                        android:duration="200"
+                        android:interpolator="@interpolator/ease_out_cubic"
+                        android:propertyName="scaleX"
+                        android:valueFrom="0"
+                        android:valueTo="1"
+                        android:valueType="floatType" />
+                </set>
+                <set android:ordering="sequentially">
+                    <objectAnimator
+                        android:duration="140"
+                        android:propertyName="scaleY"
+                        android:valueFrom="0"
+                        android:valueTo="0"
+                        android:valueType="floatType" />
+                    <objectAnimator
+                        android:duration="200"
+                        android:interpolator="@interpolator/ease_out_cubic"
+                        android:propertyName="scaleY"
+                        android:valueFrom="0"
+                        android:valueTo="1"
+                        android:valueType="floatType" />
+                </set>
+            </set>
+        </aapt:attr>
+    </target>
+
+    <target android:name="shutter_group">
+        <aapt:attr name="android:animation">
+            <set android:ordering="together">
+                <objectAnimator
+                    android:duration="280"
+                    android:interpolator="@interpolator/ease_out_cubic"
+                    android:propertyName="scaleX"
+                    android:valueFrom="0.74"
+                    android:valueTo="1"
+                    android:valueType="floatType" />
+                <objectAnimator
+                    android:duration="280"
+                    android:interpolator="@interpolator/ease_out_cubic"
+                    android:propertyName="scaleY"
+                    android:valueFrom="0.74"
+                    android:valueTo="1"
+                    android:valueType="floatType" />
+            </set>
+        </aapt:attr>
+    </target>
+
+    <target android:name="socket_group">
+        <aapt:attr name="android:animation">
+            <set android:ordering="together">
+                <objectAnimator
+                    android:duration="260"
+                    android:interpolator="@interpolator/ease_out_cubic"
+                    android:propertyName="scaleX"
+                    android:valueFrom="0.86"
+                    android:valueTo="1"
+                    android:valueType="floatType" />
+                <objectAnimator
+                    android:duration="260"
+                    android:interpolator="@interpolator/ease_out_cubic"
+                    android:propertyName="scaleY"
+                    android:valueFrom="0.86"
+                    android:valueTo="1"
+                    android:valueType="floatType" />
+            </set>
+        </aapt:attr>
+    </target>
+
+    <target android:name="bezel_group">
+        <aapt:attr name="android:animation">
+            <objectAnimator
+                android:duration="280"
+                android:interpolator="@interpolator/ease_out_cubic"
+                android:propertyName="rotation"
+                android:valueFrom="10"
+                android:valueTo="0"
+                android:valueType="floatType" />
+        </aapt:attr>
+    </target>
+
+    <target android:name="compass_ticks">
+        <aapt:attr name="android:animation">
+            <objectAnimator
+                android:duration="260"
+                android:interpolator="@interpolator/ease_out_cubic"
+                android:propertyName="strokeAlpha"
+                android:valueFrom="0"
+                android:valueTo="1"
+                android:valueType="floatType" />
+        </aapt:attr>
+    </target>
+</animated-vector>

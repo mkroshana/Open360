@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <style name="Theme.Open360.Wear" parent="@android:style/Theme.DeviceDefault">
+        <item name="android:windowBackground">@color/open360_splash_bg</item>
+    </style>
+
+    <style name="Theme.Open360.Wear.Splash" parent="Theme.SplashScreen">
+        <item name="windowSplashScreenBackground">@color/open360_splash_bg</item>
+        <item name="windowSplashScreenAnimatedIcon">@drawable/avd_open360_splash</item>
+        <item name="windowSplashScreenAnimationDuration">360</item>
+        <item name="postSplashScreenTheme">@style/Theme.Open360.Wear</item>
+    </style>
+</resources>

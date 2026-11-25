@@ -14,8 +14,11 @@ import androidx.activity.viewModels
 import androidx.compose.runtime.mutableStateOf
 import androidx.lifecycle.lifecycleScope
 import androidx.core.content.ContextCompat
+import androidx.core.content.edit
+import androidx.core.splashscreen.SplashScreen.Companion.installSplashScreen
 import androidx.wear.ambient.AmbientLifecycleObserver
 import com.open360.core.ble.BleConnectionStatus
+import com.open360.core.ui.configureOpen360Splash
 import com.open360.ui.camera.CameraViewModel
 import com.open360.wear.ui.WearApp
 import kotlinx.coroutines.flow.distinctUntilChanged
@@ -29,12 +32,17 @@ import kotlinx.coroutines.launch
 class WearActivity : ComponentActivity() {
     private companion object {
         const val EXTRA_WAKE_AUTHORIZATION_ID = "wake_authorization_id"
+        const val PREFS_NAME = "open360_wear_prefs"
+        const val KEY_PERMISSION_DISCLOSURE_ACCEPTED = "wear_permission_disclosure_accepted"
+        const val STATE_SHOW_PERMISSION_DISCLOSURE = "show_permission_disclosure"
     }
 
     private val cameraViewModel: CameraViewModel by viewModels()
     private lateinit var phoneSettings: PhoneSettingsReceiver
     private lateinit var heartRate: WatchHeartRate
     private lateinit var speedUnit: SpeedUnit
+    private val isSplashRevealed = mutableStateOf(false)
+    private val showPermissionDisclosure = mutableStateOf(false)
 
     // When the screen dims the remote stays up in the watch's low-power always-on mode, so a
     // glance shows whether the camera is recording
@@ -54,13 +62,14 @@ class WearActivity : ComponentActivity() {
 
     private val permissionLauncher = registerForActivityResult(
         ActivityResultContracts.RequestMultiplePermissions()
-    ) { results ->
+    ) { _ ->
         heartRate.onPermissionChanged()
-        // The heart rate is optional; the camera needs the rest
-        if (results.filterKeys { it != Manifest.permission.BODY_SENSORS }.values.all { it }) {
+        if (hasLocationPermission()) {
+            cameraViewModel.gpsEngine.startTracking()
+        }
+        if (hasBlePermissions()) {
             // What the view model tried on starting, before it was allowed to. Opening the app
             // links to the camera but never switches it on.
-            cameraViewModel.gpsEngine.startTracking()
             cameraViewModel.connectBle()
             cameraViewModel.sportsSensors.start()
         } else {
@@ -69,7 +78,17 @@ class WearActivity : ComponentActivity() {
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
+        val splashScreen = installSplashScreen()
         super.onCreate(savedInstanceState)
+        isSplashRevealed.value = savedInstanceState != null
+        configureOpen360Splash(
+            splashScreen = splashScreen,
+            savedInstanceState = savedInstanceState,
+            coldHoldMs = 300L,
+            exitDurationMs = 240L
+        ) {
+            isSplashRevealed.value = true
+        }
         lifecycle.addObserver(ambientObserver)
         phoneSettings = PhoneSettingsReceiver(this, ::applyPhoneSettings)
         heartRate = WatchHeartRate(applicationContext, cameraViewModel.sportsSensors)
@@ -82,6 +101,14 @@ class WearActivity : ComponentActivity() {
                 .distinctUntilChanged()
                 .collect { heartRate.setWanted(it) }
         }
+        lifecycleScope.launch {
+            heartRate.state
+                .map { it.enabled && it.permitted }
+                .distinctUntilChanged()
+                .collect { enabled ->
+                    if (enabled) cameraViewModel.refreshBackgroundServiceTypes()
+                }
+        }
         // The view model puts the Wake-Up set-up forward on a first run without an ID. On the
         // watch the ID comes from the phone, where the set-up is done, so it is not put forward
         // here; Wake Up pressed without an ID still says where to set it up.
@@ -89,13 +116,47 @@ class WearActivity : ComponentActivity() {
             cameraViewModel.closeWakeUpSetup()
         }
 
-        requestMissingPermissions()
+        val prefs = getSharedPreferences(PREFS_NAME, MODE_PRIVATE)
+        val disclosureAccepted = prefs.getBoolean(KEY_PERMISSION_DISCLOSURE_ACCEPTED, false)
+        showPermissionDisclosure.value = savedInstanceState?.getBoolean(STATE_SHOW_PERMISSION_DISCLOSURE) ?: false
+
+        val missing = missingPermissions()
+        if (savedInstanceState == null && missing.isNotEmpty()) {
+            if (disclosureAccepted) {
+                permissionLauncher.launch(missing.toTypedArray())
+            } else {
+                showPermissionDisclosure.value = true
+            }
+        }
         storeWakeAuthorizationId(intent)
         runDebugRequest(intent)
 
         setContent {
-            WearApp(viewModel = cameraViewModel, heartRate = heartRate, speedUnit = speedUnit, isAmbient = isAmbient.value)
+            WearApp(
+                viewModel = cameraViewModel,
+                heartRate = heartRate,
+                speedUnit = speedUnit,
+                isAmbient = isAmbient.value,
+                revealed = isSplashRevealed.value,
+                showPermissionDisclosure = showPermissionDisclosure.value,
+                onAcceptPermissionDisclosure = {
+                    prefs.edit { putBoolean(KEY_PERMISSION_DISCLOSURE_ACCEPTED, true) }
+                    showPermissionDisclosure.value = false
+                    val stillMissing = missingPermissions()
+                    if (stillMissing.isNotEmpty()) {
+                        permissionLauncher.launch(stillMissing.toTypedArray())
+                    }
+                },
+                onSkipPermissionDisclosure = {
+                    showPermissionDisclosure.value = false
+                }
+            )
         }
+    }
+
+    override fun onSaveInstanceState(outState: Bundle) {
+        super.onSaveInstanceState(outState)
+        outState.putBoolean(STATE_SHOW_PERMISSION_DISCLOSURE, showPermissionDisclosure.value)
     }
 
     override fun onStart() {
@@ -156,7 +217,18 @@ class WearActivity : ComponentActivity() {
         }
     }
 
-    private fun requestMissingPermissions() {
+    private fun hasLocationPermission(): Boolean =
+        ContextCompat.checkSelfPermission(this, Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED ||
+            ContextCompat.checkSelfPermission(this, Manifest.permission.ACCESS_COARSE_LOCATION) == PackageManager.PERMISSION_GRANTED
+
+    private fun hasBlePermissions(): Boolean = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+        ContextCompat.checkSelfPermission(this, Manifest.permission.BLUETOOTH_SCAN) == PackageManager.PERMISSION_GRANTED &&
+            ContextCompat.checkSelfPermission(this, Manifest.permission.BLUETOOTH_CONNECT) == PackageManager.PERMISSION_GRANTED
+    } else {
+        hasLocationPermission()
+    }
+
+    private fun missingPermissions(): List<String> {
         val wanted = buildList {
             add(Manifest.permission.ACCESS_FINE_LOCATION)
             add(Manifest.permission.ACCESS_COARSE_LOCATION)
@@ -170,7 +242,6 @@ class WearActivity : ComponentActivity() {
             }
             add(Manifest.permission.BODY_SENSORS)
         }
-        val missing = wanted.filter { ContextCompat.checkSelfPermission(this, it) != PackageManager.PERMISSION_GRANTED }
-        if (missing.isNotEmpty()) permissionLauncher.launch(missing.toTypedArray())
+        return wanted.filter { ContextCompat.checkSelfPermission(this, it) != PackageManager.PERMISSION_GRANTED }
     }
 }

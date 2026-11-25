@@ -1,7 +1,9 @@
 package com.open360.core.repository
 
+import com.open360.core.model.CameraMediaFile
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -67,5 +69,14 @@ class CameraFileListTest {
         assertNull(files[2].displayDateTime)
         // A clip without a copy plays in full
         assertEquals(files[1].fileUrl, files[1].streamUri)
+    }
+
+    @Test
+    fun testParseDateTimeFromNameAndEpochDisplayDateTime() {
+        assertEquals("2026-10-15 18:15:05", CameraFileList.parseDateTimeFromName("PRO_VID_20261015_181505_00_095.mp4"))
+        assertEquals("2026-10-10 20:28:41", CameraFileList.parseDateTimeFromName("IMG_20261010_202841_00_001.jpg"))
+        assertNull(CameraFileList.parseDateTimeFromName("notes.txt"))
+        val epochFile = CameraMediaFile(name = "clip.mp4", fileUrl = "content://x", dateTime = "1760552105")
+        assertNotNull(epochFile.displayDateTime)
     }
 }

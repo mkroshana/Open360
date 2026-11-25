@@ -1,4 +1,7 @@
 // The watch app: the camera remote with the watch's own GPS, sharing :core with the phone app
+import java.io.File
+import java.util.Properties
+
 plugins {
     alias(libs.plugins.android.application)
     alias(libs.plugins.kotlin.compose)
@@ -14,17 +17,64 @@ android {
         applicationId = "com.open360"
         minSdk = 30
         targetSdk = 35
-        versionCode = 1
+        versionCode = 20001
         versionName = "1.0.0"
+        missingDimensionStrategy("distribution", "play")
+    }
+
+    val keystoreProps = Properties().apply {
+        val propsFile = rootProject.file("keystore.properties")
+        if (propsFile.isFile) {
+            propsFile.inputStream().use { load(it) }
+        }
+    }
+    fun resolveSigningValue(envVar: String, propKey: String): String? =
+        providers.environmentVariable(envVar).orNull?.takeIf { it.isNotBlank() }
+            ?: keystoreProps.getProperty(propKey)?.takeIf { it.isNotBlank() }
+
+    val keystorePath = resolveSigningValue("OPEN360_KEYSTORE_PATH", "storeFile")?.trim()
+    val keystorePassword = resolveSigningValue("OPEN360_KEYSTORE_PASSWORD", "storePassword")
+    val keyAliasValue = (resolveSigningValue("OPEN360_KEYSTORE_ALIAS", "keyAlias")
+        ?: resolveSigningValue("OPEN360_KEY_ALIAS", "keyAlias"))?.trim()
+    val keyPasswordValue = resolveSigningValue("OPEN360_KEY_PASSWORD", "keyPassword")
+    val keystoreFile = keystorePath?.let { path ->
+        val candidate = File(path)
+        if (candidate.isAbsolute) candidate else rootProject.file(path)
+    }?.takeIf { it.isFile }
+
+    val releaseSigningConfig = if (
+        keystoreFile != null &&
+        keystorePassword != null &&
+        keyAliasValue != null &&
+        keyPasswordValue != null
+    ) {
+        signingConfigs.maybeCreate("release").apply {
+            storeFile = keystoreFile
+            storePassword = keystorePassword
+            keyAlias = keyAliasValue
+            keyPassword = keyPasswordValue
+        }
+    } else {
+        null
     }
 
     buildTypes {
         // The build to install on the watch: Compose in a debug build is too slow there, with
-        // 42% of frames late while scrolling against 1.6% for this one (2026-10-22). Signed with
-        // the debug key, as the phone app's debug build is, since the Data Layer that hands over
-        // the connection settings only joins apps signed with the same key.
+        // 42% of frames late while scrolling against 1.6% for this one (2026-10-22). Keep release
+        // builds unsigned by default; supply release credentials or pass
+        // -Popen360LocalWearDebugSign=true for local watch testing against a debug-signed phone app.
         release {
-            signingConfig = signingConfigs.getByName("debug")
+            isMinifyEnabled = true
+            isShrinkResources = true
+            proguardFiles(
+                getDefaultProguardFile("proguard-android-optimize.txt"),
+                "proguard-rules.pro"
+            )
+            if (releaseSigningConfig != null) {
+                signingConfig = releaseSigningConfig
+            } else if (providers.gradleProperty("open360LocalWearDebugSign").orNull == "true") {
+                signingConfig = signingConfigs.getByName("debug")
+            }
         }
     }
 
@@ -35,6 +85,7 @@ android {
 
     buildFeatures {
         compose = true
+        buildConfig = true
     }
 }
 

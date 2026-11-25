@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <style name="Theme.Open360" parent="@android:style/Theme.Material.NoActionBar">
+        <item name="android:windowBackground">@color/open360_splash_bg</item>
+        <item name="android:statusBarColor">@android:color/transparent</item>
+        <item name="android:navigationBarColor">@android:color/transparent</item>
+    </style>
+
+    <style name="Theme.Open360.Splash" parent="Theme.SplashScreen">
+        <item name="windowSplashScreenBackground">@color/open360_splash_bg</item>
+        <item name="windowSplashScreenAnimatedIcon">@drawable/avd_open360_splash</item>
+        <item name="windowSplashScreenAnimationDuration">360</item>
+        <item name="postSplashScreenTheme">@style/Theme.Open360</item>
+    </style>
+</resources>

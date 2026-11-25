@@ -9,6 +9,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Bolt
 import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.MonitorHeart
 import androidx.compose.material.icons.filled.PedalBike
 import androidx.compose.material.icons.filled.PowerSettingsNew
@@ -48,6 +49,7 @@ import com.open360.core.sensors.SensorStatus
 import com.open360.core.sensors.SportsSensorManager
 import com.open360.ui.camera.CameraStatusText
 import com.open360.ui.camera.CameraViewModel
+import com.open360.wear.BuildConfig
 import com.open360.wear.SpeedUnit
 import com.open360.wear.WatchHeartRate
 import com.open360.wear.WatchHeartRateState
@@ -76,6 +78,7 @@ fun SettingsScreen(
     val transformationSpec = rememberTransformationSpec()
     val registration = uiState.bleState.wakeUpRegistration
     var wakeUpInfoOpen by remember { mutableStateOf(false) }
+    var aboutOpen by remember { mutableStateOf(false) }
 
     ScreenScaffold(scrollState = listState) { contentPadding ->
         TransformingLazyColumn(state = listState, contentPadding = contentPadding) {
@@ -176,6 +179,22 @@ fun SettingsScreen(
                     label = { Text("Add Sensor") }
                 )
             }
+            item {
+                ListHeader(
+                    modifier = Modifier.transformedHeight(this, transformationSpec),
+                    transformation = SurfaceTransformation(transformationSpec)
+                ) { Text("About") }
+            }
+            item {
+                FilledTonalButton(
+                    onClick = { aboutOpen = true },
+                    modifier = Modifier.fillMaxWidth().transformedHeight(this, transformationSpec),
+                    transformation = SurfaceTransformation(transformationSpec),
+                    icon = { Icon(Icons.Filled.Info, contentDescription = null) },
+                    secondaryLabel = { Text("Unofficial • v${BuildConfig.VERSION_NAME}") },
+                    label = { Text("About Open360") }
+                )
+            }
         }
     }
 
@@ -191,6 +210,18 @@ fun SettingsScreen(
         },
         // Information only, so one button that closes it
         edgeButton = { AlertDialogDefaults.EdgeButton(onClick = { wakeUpInfoOpen = false }) }
+    )
+
+    AlertDialog(
+        visible = aboutOpen,
+        onDismissRequest = { aboutOpen = false },
+        title = { Text("About Open360") },
+        text = {
+            Text(
+                "Unofficial open-source companion app (v${BuildConfig.VERSION_NAME}). Not affiliated with or endorsed by Insta360 or Arashi Vision Inc.\n\nAll camera control, GPS, and sensor data stay on your devices and camera; nothing is uploaded."
+            )
+        },
+        edgeButton = { AlertDialogDefaults.EdgeButton(onClick = { aboutOpen = false }) }
     )
 }
 

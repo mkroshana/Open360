@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Compatible Insta360 camera USB Vendor IDs -->
+    <usb-device vendor-id="11802" /> <!-- 0x2E1A Arashi Vision / Insta360 -->
+    <usb-device vendor-id="16981" /> <!-- 0x4255 Insta360 Secondary -->
+    <usb-device vendor-id="11804" /> <!-- 0x2E1C Insta360 Alt -->
+    <!-- Quick Reader / Storage reader VIDs -->
+    <usb-device vendor-id="9527" />  <!-- 0x2537 -->
+    <usb-device vendor-id="1802" />  <!-- 0x070A -->
+    <usb-device vendor-id="1507" />  <!-- 0x05E3 -->
+</resources>

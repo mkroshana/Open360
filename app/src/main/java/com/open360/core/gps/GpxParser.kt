@@ -2,6 +2,8 @@ package com.open360.core.gps
 
 import java.io.InputStream
 import java.text.SimpleDateFormat
+import java.time.Instant
+import java.time.OffsetDateTime
 import java.util.Locale
 import java.util.TimeZone
 import javax.xml.parsers.DocumentBuilderFactory
@@ -25,37 +27,60 @@ data class GpxTrackSummary(
     val elevationGainMeters: Double
 ) {
     val formattedDistance: String
-        get() = when {
+        get() = formattedDistance(inMph = false)
+
+    fun formattedDistance(inMph: Boolean): String = if (inMph) {
+        val miles = totalDistanceMeters / 1609.344
+        if (miles >= 0.1) String.format(Locale.US, "%.2f mi", miles)
+        else String.format(Locale.US, "%.0f ft", totalDistanceMeters * 3.28084)
+    } else {
+        when {
             totalDistanceMeters >= 1000.0 -> String.format(Locale.US, "%.2f km", totalDistanceMeters / 1000.0)
             else -> String.format(Locale.US, "%.0f m", totalDistanceMeters)
         }
+    }
 
     val formattedDuration: String
         get() {
             val totalSeconds = (durationMs / 1000).coerceAtLeast(0)
-            val minutes = totalSeconds / 60
+            val hours = totalSeconds / 3600
+            val minutes = (totalSeconds % 3600) / 60
             val seconds = totalSeconds % 60
-            return String.format(Locale.US, "%02d:%02d", minutes, seconds)
+            return if (hours > 0) {
+                String.format(Locale.US, "%d:%02d:%02d", hours, minutes, seconds)
+            } else {
+                String.format(Locale.US, "%02d:%02d", minutes, seconds)
+            }
         }
 
     val formattedMaxSpeed: String
-        get() = String.format(Locale.US, "%.1f km/h", maxSpeedKmh)
+        get() = formattedMaxSpeed(inMph = false)
+
+    fun formattedMaxSpeed(inMph: Boolean): String = if (inMph) {
+        String.format(Locale.US, "%.1f mph", maxSpeedKmh * 0.621371)
+    } else {
+        String.format(Locale.US, "%.1f km/h", maxSpeedKmh)
+    }
 }
 
 object GpxParser {
 
     private fun parseUtcTime(isoTime: String): Long {
+        if (isoTime.isBlank()) return 0L
         return try {
-            val format = SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss", Locale.US)
-            format.timeZone = TimeZone.getTimeZone("UTC")
-            val clean = if (isoTime.contains(".")) {
-                isoTime.substringBefore(".")
-            } else {
-                isoTime.substringBefore("Z")
-            }
-            format.parse(clean)?.time ?: 0L
+            Instant.parse(isoTime).toEpochMilli()
         } catch (_: Exception) {
-            0L
+            try {
+                OffsetDateTime.parse(isoTime).toInstant().toEpochMilli()
+            } catch (_: Exception) {
+                try {
+                    val format = SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss", Locale.US)
+                    format.timeZone = TimeZone.getTimeZone("UTC")
+                    format.parse(isoTime.substringBefore("."))?.time ?: 0L
+                } catch (_: Exception) {
+                    0L
+                }
+            }
         }
     }
 
@@ -113,7 +138,7 @@ object GpxParser {
             val dtMs = curr.timestampMs - prev.timestampMs
             if (dtMs in 100..10_000 && d > 0.1) {
                 val speedKmh = (d / (dtMs / 1000.0)) * 3.6
-                if (speedKmh < 200.0 && speedKmh > maxSpeedKmh) {
+                if (speedKmh < 400.0 && speedKmh > maxSpeedKmh) {
                     maxSpeedKmh = speedKmh
                 }
             }

@@ -1,5 +1,6 @@
 package com.open360.core.ble
 
+import com.open360.core.model.CaptureMode
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
@@ -85,5 +86,27 @@ class CameraModeTest {
         }
         // and selected with the SET_OPTIONS the camera took for it
         assertTrue(hex("08281203c00207").contentEquals(Go2BleProtocol.buildSetSubModePayload(true, CameraMode.STARLAPSE.subMode)))
+    }
+
+    @Test
+    fun testModeFromCaptureState() {
+        assertEquals(CameraMode.VIDEO, CameraMode.ofCaptureState(1))
+        assertEquals(CameraMode.TIMELAPSE, CameraMode.ofCaptureState(2))
+        assertEquals(CameraMode.INTERVAL_PHOTO, CameraMode.ofCaptureState(3))
+        assertEquals(CameraMode.SLOW_MOTION, CameraMode.ofCaptureState(7))
+        assertEquals(CameraMode.TIMESHIFT, CameraMode.ofCaptureState(13))
+        assertEquals(CameraMode.FREEFRAME_PRO, CameraMode.ofCaptureState(17))
+        assertEquals(CameraMode.LOOP_RECORDING, CameraMode.ofCaptureState(18))
+        assertEquals(CameraMode.STARLAPSE, CameraMode.ofCaptureState(19))
+        assertNull(CameraMode.ofCaptureState(0))
+        assertNull(CameraMode.ofCaptureState(99))
+    }
+
+    @Test
+    fun testModesForAndFromCaptureMode() {
+        assertEquals(CameraMode.group(photo = false), CameraMode.modesFor(CaptureMode.VIDEO))
+        assertEquals(CameraMode.group(photo = true), CameraMode.modesFor(CaptureMode.PHOTO))
+        assertEquals(CameraMode.VIDEO, CameraMode.fromCaptureMode(CaptureMode.VIDEO))
+        assertEquals(CameraMode.PHOTO, CameraMode.fromCaptureMode(CaptureMode.PHOTO))
     }
 }

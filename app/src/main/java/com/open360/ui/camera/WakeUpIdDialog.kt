@@ -11,12 +11,15 @@ import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.platform.LocalClipboardManager
+import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontFamily
@@ -25,6 +28,7 @@ import androidx.compose.ui.unit.dp
 import com.open360.core.ble.Go2BleProtocol
 import com.open360.core.ble.WakeUpRegistration
 import com.open360.ui.theme.BlurBehindDialog
+import kotlinx.coroutines.delay
 import java.util.UUID
 
 /**
@@ -39,8 +43,18 @@ fun WakeUpIdDialog(
     onSave: (String) -> Boolean,
     onClose: () -> Unit
 ) {
+    @Suppress("DEPRECATION")
     val clipboard = LocalClipboardManager.current
+    val haptic = LocalHapticFeedback.current
     var editing by remember { mutableStateOf(false) }
+    var copied by remember { mutableStateOf(false) }
+
+    LaunchedEffect(copied) {
+        if (copied) {
+            delay(1800)
+            copied = false
+        }
+    }
 
     if (editing) {
         WakeUpIdEditDialog(
@@ -93,7 +107,13 @@ fun WakeUpIdDialog(
         dismissButton = {
             Row {
                 if (id != null) {
-                    TextButton(onClick = { clipboard.setText(AnnotatedString(id)) }) { Text("Copy") }
+                    TextButton(
+                        onClick = {
+                            clipboard.setText(AnnotatedString(id))
+                            haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                            copied = true
+                        }
+                    ) { Text(if (copied) "Copied" else "Copy") }
                 }
                 TextButton(onClick = { editing = true }) { Text(if (id == null) "Enter an ID" else "Change") }
             }

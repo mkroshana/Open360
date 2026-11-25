@@ -11,6 +11,7 @@ import android.location.LocationManager
 import android.location.altitude.AltitudeConverter
 import android.os.Build
 import android.os.Bundle
+import android.os.Handler
 import android.os.HandlerThread
 import android.os.SystemClock
 import android.util.Log
@@ -33,16 +34,30 @@ class GpsTrackerEngine(private val context: Context) {
         private const val TAG = "GpsTrackerEngine"
         private const val UPDATE_INTERVAL_MS = 1000L
         private const val MIN_DISTANCE_METERS = 0f
+        private const val FIX_STALE_MS = 5500L
     }
 
     private val locationManager = context.getSystemService(Context.LOCATION_SERVICE) as? LocationManager
     private val _telemetry = MutableStateFlow(GpsTelemetry())
     val telemetry: StateFlow<GpsTelemetry> = _telemetry.asStateFlow()
 
+    @Volatile
     private var isTracking = false
     private var locationCallback: ((Double, Double, Double) -> Unit)? = null
     private var locationThread: HandlerThread? = null
+    private var locationHandler: Handler? = null
     private var altitudeSourceLogged = false
+
+    private val staleFixRunnable = Runnable {
+        if (!isTracking) return@Runnable
+        _telemetry.update { current ->
+            if (current.hasFix && SystemClock.elapsedRealtime() - current.fixElapsedRealtimeMs >= 5000L) {
+                current.copy(hasFix = false)
+            } else {
+                current
+            }
+        }
+    }
 
     fun hasLocationPermission(): Boolean {
         val fine = ContextCompat.checkSelfPermission(context, Manifest.permission.ACCESS_FINE_LOCATION)
@@ -77,6 +92,10 @@ class GpsTrackerEngine(private val context: Context) {
                     fixElapsedRealtimeMs = location.elapsedRealtimeNanos / 1_000_000
                 )
             }
+            locationHandler?.let {
+                it.removeCallbacks(staleFixRunnable)
+                it.postDelayed(staleFixRunnable, FIX_STALE_MS)
+            }
 
             locationCallback?.invoke(location.latitude, location.longitude, altitude ?: _telemetry.value.altitudeMeters)
         }
@@ -84,7 +103,12 @@ class GpsTrackerEngine(private val context: Context) {
         @Deprecated("Deprecated in Java")
         override fun onStatusChanged(provider: String?, status: Int, extras: Bundle?) {}
         override fun onProviderEnabled(provider: String) {}
-        override fun onProviderDisabled(provider: String) {}
+        override fun onProviderDisabled(provider: String) {
+            if (provider == LocationManager.GPS_PROVIDER) {
+                locationHandler?.removeCallbacks(staleFixRunnable)
+                _telemetry.update { it.copy(hasFix = false, satellitesInFix = 0, satellitesTotal = 0) }
+            }
+        }
     }
 
     private var gnssCallback: GnssStatus.Callback? = null
@@ -159,50 +183,56 @@ class GpsTrackerEngine(private val context: Context) {
         // Fixes arrive on a worker thread because the sea level conversion can touch disk
         val thread = HandlerThread("GpsTrackerEngine").apply { start() }
         locationThread = thread
+        val handler = Handler(thread.looper)
+        locationHandler = handler
 
         try {
-            // Subscribe to GPS provider for high accuracy
-            if (lm.isProviderEnabled(LocationManager.GPS_PROVIDER)) {
-                lm.requestLocationUpdates(
-                    LocationManager.GPS_PROVIDER,
-                    UPDATE_INTERVAL_MS,
-                    MIN_DISTANCE_METERS,
-                    locationListener,
-                    thread.looper
-                )
+            // Subscribe to GPS provider for high accuracy, even if Location is currently toggled off
+            // so enabling Location later starts fixes immediately.
+            if (LocationManager.GPS_PROVIDER in lm.allProviders) {
+                try {
+                    lm.requestLocationUpdates(
+                        LocationManager.GPS_PROVIDER,
+                        UPDATE_INTERVAL_MS,
+                        MIN_DISTANCE_METERS,
+                        locationListener,
+                        thread.looper
+                    )
+                } catch (e: IllegalArgumentException) {
+                    Log.w(TAG, "GPS provider unavailable", e)
+                }
             }
 
             // The network provider is left out on purpose: its Wi-Fi and cell positions can be
             // tens of metres off and would be written into the video as if they were GPS.
 
             // Track satellite counts and GNSS fix
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
-                val cb = object : GnssStatus.Callback() {
-                    override fun onSatelliteStatusChanged(status: GnssStatus) {
-                        var inFixCount = 0
-                        val total = status.satelliteCount
-                        for (i in 0 until total) {
-                            if (status.usedInFix(i)) {
-                                inFixCount++
-                            }
-                        }
-                        _telemetry.update {
-                            it.copy(
-                                satellitesInFix = inFixCount,
-                                satellitesTotal = total,
-                                hasFix = inFixCount >= 4 || it.hasFix
-                            )
+            val cb = object : GnssStatus.Callback() {
+                override fun onSatelliteStatusChanged(status: GnssStatus) {
+                    var inFixCount = 0
+                    val total = status.satelliteCount
+                    for (i in 0 until total) {
+                        if (status.usedInFix(i)) {
+                            inFixCount++
                         }
                     }
+                    _telemetry.update {
+                        it.copy(
+                            satellitesInFix = inFixCount,
+                            satellitesTotal = total
+                        )
+                    }
                 }
-                gnssCallback = cb
-                lm.registerGnssStatusCallback(cb, null)
             }
+            gnssCallback = cb
+            lm.registerGnssStatusCallback(cb, handler)
 
             Log.i(TAG, "GPS tracking started at 1 Hz")
         } catch (e: Exception) {
             Log.e(TAG, "Failed to start GPS tracking", e)
             isTracking = false
+            handler.removeCallbacksAndMessages(null)
+            locationHandler = null
             thread.quitSafely()
             locationThread = null
         }
@@ -216,20 +246,22 @@ class GpsTrackerEngine(private val context: Context) {
         if (!isTracking) return
         isTracking = false
         locationCallback = null
+        locationHandler?.removeCallbacksAndMessages(null)
+        locationHandler = null
+        locationThread?.quitSafely()
+        locationThread = null
 
-        val lm = locationManager ?: return
-        try {
-            lm.removeUpdates(locationListener)
-            locationThread?.quitSafely()
-            locationThread = null
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
+        val lm = locationManager
+        if (lm != null) {
+            try {
+                lm.removeUpdates(locationListener)
                 gnssCallback?.let { lm.unregisterGnssStatusCallback(it) }
                 gnssCallback = null
+            } catch (e: Exception) {
+                Log.e(TAG, "Error stopping GPS tracking", e)
             }
-            _telemetry.update { it.copy(hasFix = false) }
-            Log.i(TAG, "GPS tracking stopped")
-        } catch (e: Exception) {
-            Log.e(TAG, "Error stopping GPS tracking", e)
         }
+        _telemetry.update { it.copy(hasFix = false, satellitesInFix = 0, satellitesTotal = 0) }
+        Log.i(TAG, "GPS tracking stopped")
     }
 }

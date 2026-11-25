@@ -5,6 +5,7 @@ import android.content.Context
 import android.content.pm.PackageManager
 import android.os.SystemClock
 import android.util.Log
+import androidx.core.content.edit
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.open360.core.R
@@ -92,6 +93,7 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
         // Whether GPS and the camera link are kept going with the display off; on unless turned off
         private const val PREF_KEEP_GPS_IN_BACKGROUND = "keep_gps_in_background"
         private const val PREF_GPS_CARD_MINIMIZED = "gps_card_minimized"
+        private const val PREF_SPEED_IN_MPH = "speed_in_mph"
 
         // The camera reports "recording" about a second after the clip really starts: on three
         // GO 3S clips the time between its start and stop reports was 0.85 to 1.06 s shorter
@@ -159,6 +161,27 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
         private const val RESUME_WAIT_FOR_RECORDING_MS = 5000L
 
         private const val SERVICE_TEXT_OWN_LINK = "GPS is sent to the camera while recording"
+
+        internal fun applyLocalModeSwitch(
+            mode: CaptureMode,
+            current: RemoteUiState,
+            bleManager: GpsRemoteBleManager,
+            updateMode: (CaptureMode) -> Unit
+        ) {
+            val ble = current.bleState
+            // Not while a recording or photo capture runs: what a switch would do to it is not known
+            if (current.isRecording || ble.isCaptureStarting || ble.isCaptureStopping || ble.isTakingPhoto) return
+            updateMode(mode)
+
+            // A camera that is on is switched too, so its own button and the pod's screen match.
+            // One that is off acts on commands when it next wakes, so it is sent nothing.
+            val photo = mode == CaptureMode.PHOTO
+            if (ble.connectionStatus == BleConnectionStatus.CONNECTED && ble.isCameraAwake &&
+                bleManager.effectiveSubModes()?.isPhoto != photo
+            ) {
+                bleManager.setCameraMode(photo)
+            }
+        }
     }
 
     val bleManager = GpsRemoteBleManager(application)
@@ -186,6 +209,7 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
 
     private val _uiState = MutableStateFlow(
         RemoteUiState(
+            isSpeedMph = settings.getBoolean(PREF_SPEED_IN_MPH, false),
             keepGpsActiveInBackground = settings.getBoolean(PREF_KEEP_GPS_IN_BACKGROUND, true),
             isGpsCardMinimized = settings.getBoolean(PREF_GPS_CARD_MINIMIZED, true)
         )
@@ -199,7 +223,11 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
     private val thisDevice =
         if (application.packageManager.hasSystemFeature(PackageManager.FEATURE_WATCH)) PeerDevice.WATCH else PeerDevice.PHONE
     private val peerName = if (thisDevice == PeerDevice.PHONE) "watch" else "phone"
-    private val peerLink = PeerLink(application, ::onPeerSnapshot, ::onPeerCommand)
+    private val peerLink = PeerLink(
+        application,
+        onSnapshot = { snapshot -> viewModelScope.launch { onPeerSnapshot(snapshot) } },
+        onCommand = { command -> viewModelScope.launch { onPeerCommand(command) } }
+    )
     private var peer: PeerSnapshot? = null
     private var peerHeardAtMs = 0L
     private val peerAnswered = CompletableDeferred<Unit>()
@@ -373,13 +401,23 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
             }
         }
 
-        // Collect GPS updates and feed directly into the 10 Hz GATT server stream
+        // Collect GPS updates for UI, Architecture A server, GPX track, and interpolation timeline
         viewModelScope.launch {
+            var lastFixElapsedMs = 0L
             gpsEngine.telemetry.collect { gps ->
                 updateState { it.copy(gpsState = gps) }
                 gattServer.updateGpsTelemetry(gps)
-                // The track keeps only the fixes taken while a recording is running
-                gps.toFix()?.let { trackRecorder.addFix(it) }
+                val fix = gps.toFix() ?: return@collect
+                if (fix.elapsedMs <= lastFixElapsedMs) return@collect
+                lastFixElapsedMs = fix.elapsedMs
+                trackRecorder.addFix(fix)
+                gpsTimeline.add(fix)
+                // A stream handed over takes this device's own fixes too, once they are current
+                val resumed = resumedStream
+                if (resumed != null && SystemClock.elapsedRealtime() - fix.elapsedMs <= CURRENT_FIX_MS) {
+                    resumed.hasOwnFix = true
+                    resumed.fixes.add(fix.inGpsTime())
+                }
             }
         }
 
@@ -387,21 +425,6 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
         viewModelScope.launch {
             trackRecorder.state.collect { track ->
                 updateState { it.copy(trackState = track) }
-            }
-        }
-
-        // Keep the recent fixes for interpolating the samples sent to the camera
-        viewModelScope.launch {
-            gpsEngine.telemetry.collect { gps ->
-                gps.toFix()?.let { fix ->
-                    gpsTimeline.add(fix)
-                    // A stream handed over takes this device's own fixes too, once they are current
-                    val resumed = resumedStream
-                    if (resumed != null && SystemClock.elapsedRealtime() - fix.elapsedMs <= CURRENT_FIX_MS) {
-                        resumed.hasOwnFix = true
-                        resumed.fixes.add(fix.inGpsTime())
-                    }
-                }
             }
         }
 
@@ -849,13 +872,13 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
         // Nothing to wake when the camera is already on
         if (ble.connectionStatus == BleConnectionStatus.CONNECTED && ble.isCameraAwake) return
 
-        // A GO camera only wakes for an app it has allowed, which the set-up takes care of
-        if (_uiState.value.wakeUpId == null) openWakeUpSetup()
+        // A GO camera (except GO 2 fixed wake packet / pure iBeacon models) wakes via an allowed ID
+        val requiresWakeAuth = ble.resolvedModel?.supportsBleWakeAuth ?: true
+        if (requiresWakeAuth && _uiState.value.wakeUpId == null) openWakeUpSetup()
 
         // A GO camera that is off still accepts a connection and is woken over a fresh one.
         // The beacon is for cameras that sleep without advertising.
-        val suffix = serialSuffix ?: "8JY3HF"
-        bleManager.startWakeUpBroadcast(suffix)
+        bleManager.startWakeUpBroadcast(serialSuffix)
         bleManager.wakeByConnecting()
     }
 
@@ -909,19 +932,8 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
             if (!isShownCameraBusy()) peerLink.sendCommand(PeerCommand.SetCaptureMode(mode))
             return
         }
-        val current = _uiState.value
-        val ble = current.bleState
-        // Not while a recording runs: what a switch would do to it is not known
-        if (current.isRecording || ble.isCaptureStarting || ble.isCaptureStopping) return
-        updateState { it.copy(currentMode = mode) }
-
-        // A camera that is on is switched too, so its own button and the pod's screen match.
-        // One that is off acts on commands when it next wakes, so it is sent nothing.
-        val photo = mode == CaptureMode.PHOTO
-        if (ble.connectionStatus == BleConnectionStatus.CONNECTED && ble.isCameraAwake &&
-            ble.details.subModes?.isPhoto != photo
-        ) {
-            bleManager.setCameraMode(photo)
+        applyLocalModeSwitch(mode, _uiState.value, bleManager) { nextMode ->
+            updateState { it.copy(currentMode = nextMode) }
         }
     }
 
@@ -933,7 +945,7 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
         }
         val current = _uiState.value
         val ble = current.bleState
-        if (current.isRecording || ble.isCaptureStarting || ble.isCaptureStopping) return
+        if (current.isRecording || ble.isCaptureStarting || ble.isCaptureStopping || ble.isTakingPhoto) return
         if (ble.connectionStatus != BleConnectionStatus.CONNECTED || !ble.isCameraAwake) return
         updateState { it.copy(currentMode = if (mode.isPhoto) CaptureMode.PHOTO else CaptureMode.VIDEO) }
         bleManager.setCameraMode(mode)
@@ -942,11 +954,17 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
     // Whether the camera shown is recording or confirming a start or stop, when its mode is held
     private fun isShownCameraBusy(): Boolean {
         val camera = _shownState.value.bleState
-        return camera.isRecording || camera.isCaptureStarting || camera.isCaptureStopping
+        return camera.isRecording || camera.isCaptureStarting || camera.isCaptureStopping || camera.isTakingPhoto
     }
 
     fun toggleSpeedUnit() {
-        updateState { it.copy(isSpeedMph = !it.isSpeedMph) }
+        setSpeedMph(!_uiState.value.isSpeedMph)
+    }
+
+    fun setSpeedMph(inMph: Boolean) {
+        if (_uiState.value.isSpeedMph == inMph) return
+        settings.edit { putBoolean(PREF_SPEED_IN_MPH, inMph) }
+        updateState { it.copy(isSpeedMph = inMph) }
     }
 
     /**
@@ -1009,15 +1027,25 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
 
     fun toggleKeepGpsInBackground() {
         val keep = !_uiState.value.keepGpsActiveInBackground
-        settings.edit().putBoolean(PREF_KEEP_GPS_IN_BACKGROUND, keep).apply()
+        settings.edit { putBoolean(PREF_KEEP_GPS_IN_BACKGROUND, keep) }
         updateState { it.copy(keepGpsActiveInBackground = keep) }
         updateBackgroundService()
     }
 
     fun toggleGpsCardMinimized() {
         val minimized = !_uiState.value.isGpsCardMinimized
-        settings.edit().putBoolean(PREF_GPS_CARD_MINIMIZED, minimized).apply()
+        settings.edit { putBoolean(PREF_GPS_CARD_MINIMIZED, minimized) }
         updateState { it.copy(isGpsCardMinimized = minimized) }
+    }
+
+    /** Re-applies foreground service types when running (e.g. adding health for Watch Heart Rate). */
+    fun refreshBackgroundServiceTypes() {
+        if (!backgroundServiceRunning) return
+        try {
+            GpsTrackerService.refreshServiceTypes(getApplication(), serviceText)
+        } catch (e: Exception) {
+            Log.w(TAG, "Could not refresh the background service types", e)
+        }
     }
 
     /**
@@ -1122,7 +1150,8 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
             // Each of the camera's modes is captured with its own command. Its mode is used when
             // it is one of those the Video and Photo choice shows; otherwise normal video or a
             // single photo.
-            val mode = CameraMode.inGroup(ble.details.subModes, photo = current.currentMode == CaptureMode.PHOTO)
+            val subModes = bleManager.effectiveSubModes() ?: ble.details.subModes
+            val mode = CameraMode.inGroup(subModes, photo = current.currentMode == CaptureMode.PHOTO)
             val singleShot = mode?.let { !it.isContinuous } ?: (current.currentMode == CaptureMode.PHOTO)
             if (ble.isCaptureStarting || ble.isCaptureStopping) {
                 // Waiting for the camera to confirm the last tap
@@ -1306,6 +1335,8 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
         // The other app stops showing this one's link straight away, rather than once it goes quiet
         sendSnapshot(ownSnapshot())
         peerLink.stop()
+        moveJob?.cancel()
+        takeJob?.cancel()
         recordingTimerJob?.cancel()
         gpsStreamJob?.cancel()
         if (backgroundServiceRunning) {

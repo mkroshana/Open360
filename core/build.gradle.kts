@@ -9,21 +9,37 @@ android {
 
     defaultConfig {
         minSdk = 26
+        consumerProguardFiles("consumer-rules.pro")
+    }
+
+    flavorDimensions += "distribution"
+    productFlavors {
+        create("play") {
+            dimension = "distribution"
+        }
+        create("foss") {
+            dimension = "distribution"
+        }
     }
 
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17
     }
+
+    testOptions {
+        unitTests.isReturnDefaultValues = true
+    }
 }
 
 dependencies {
     implementation(libs.androidx.core.ktx)
+    api(libs.androidx.core.splashscreen)
     api(libs.androidx.lifecycle.viewmodel.ktx)
     api(libs.kotlinx.coroutines.core)
     implementation(libs.kotlinx.coroutines.android)
     // The Wear OS Data Layer, over which the phone and watch apps control the camera through each other
-    implementation(libs.play.services.wearable)
+    "playImplementation"(libs.play.services.wearable)
 
     testImplementation(libs.junit)
     testImplementation(libs.kotlinx.coroutines.test)

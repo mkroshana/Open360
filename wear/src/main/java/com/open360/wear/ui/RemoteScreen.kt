@@ -129,12 +129,15 @@ fun RemoteScreen(
 ) {
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
     val heart by heartRate.state.collectAsStateWithLifecycle()
+    val sensors by viewModel.sportsSensors.state.collectAsStateWithLifecycle()
     val inMph by speedUnit.inMph.collectAsStateWithLifecycle()
     val ble = uiState.bleState
     val gps = uiState.gpsState
     // Read again with each GPS update, which comes at least once a second while tracking
     val gpsReady = RemoteText.gpsReady(gps.hasFix, SystemClock.elapsedRealtime() - gps.fixElapsedRealtimeMs)
     val haptic = LocalHapticFeedback.current
+    val liveHeartRateBpm = heart.bpm
+        ?: sensors.saved.firstOrNull { it.connected && it.heartRateBpm != null }?.heartRateBpm
 
     val cameraOn = ble.connectionStatus == BleConnectionStatus.CONNECTED && ble.isCameraAwake
     val mode = when {
@@ -147,10 +150,12 @@ fun RemoteScreen(
     val shownMode = RemoteText.shownMode(uiState.currentMode, cameraMode)
     // Waiting for the camera to confirm the last tap, a photo included: the shutter shows it and
     // takes no other tap until then
-    val busy = ble.isCaptureStarting || ble.isCaptureStopping || ble.isTakingPhoto
+    val busy = ble.isCaptureStarting || ble.isCaptureStopping || ble.isTakingPhoto || uiState.linkMove != null
     val shutterLabel = RemoteText.shutter(uiState.currentMode, cameraMode, uiState.isRecording, ble.isCaptureStarting, ble.isCaptureStopping, ble.isTakingPhoto)
     // The camera last linked to, by the name it advertises, before this link names it
-    val cameraName = remember(ble.deviceName) { ble.deviceName ?: "GO 3S ${viewModel.bleManager.getSavedSerialSuffix()}" }
+    val cameraName = remember(ble.deviceName) {
+        ble.deviceName ?: viewModel.bleManager.getSavedSerialSuffix().takeIf { it.isNotBlank() }?.let { "GO 3S $it" } ?: "Insta360 Camera"
+    }
 
     val onShutter = {
         haptic.performHapticFeedback(HapticFeedbackType.LongPress)
@@ -204,7 +209,9 @@ fun RemoteScreen(
                                 if (mode == RemoteMode.RECORDING) RecordingTimer(RemoteText.elapsed(uiState.recordingDurationSeconds))
                                 else ReadyHeader(ble, throughPhone = uiState.linkedThroughPeer)
                                 Text(
-                                    text = shownMode?.label ?: uiState.currentMode.displayName,
+                                    text = (if (mode == RemoteMode.RECORDING) CameraStatusText.recordingMode(ble.details.recordingState) else null)
+                                        ?: shownMode?.label
+                                        ?: uiState.currentMode.displayName,
                                     style = MaterialTheme.typography.labelSmall,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                                     maxLines = 1,
@@ -246,7 +253,7 @@ fun RemoteScreen(
                                     isRecording = mode == RemoteMode.RECORDING,
                                     left = captureLeft(ble.details),
                                     speed = if (gpsReady) RemoteText.speed(gps.speedKmh, gps.speedMph, inMph) else null,
-                                    heartRateBpm = heart.bpm
+                                    heartRateBpm = liveHeartRateBpm
                                 )
                             }
                         }
@@ -297,7 +304,7 @@ private fun OfflineRemote(
             ) {
                 Icon(linkIcon(button), contentDescription = null, modifier = Modifier.size(20.dp))
                 Spacer(Modifier.width(6.dp))
-                Text(button.label)
+                Text(if (isMovingLink) "Moving..." else button.label)
             }
         }
     ) { contentPadding ->
@@ -307,7 +314,14 @@ private fun OfflineRemote(
             verticalArrangement = Arrangement.spacedBy(6.dp),
             horizontalAlignment = Alignment.CenterHorizontally
         ) {
-            item { OfflineHeader(ble, cameraName, if (isMovingLink) RemoteText.MOVING_LINK else RemoteText.status(ble, false, 0)) }
+            item {
+                OfflineHeader(
+                    ble = ble,
+                    cameraName = cameraName,
+                    status = if (isMovingLink) RemoteText.MOVING_LINK else RemoteText.status(ble, false, 0),
+                    isMovingLink = isMovingLink
+                )
+            }
             hint?.let { item { Note(it) } }
             // GPS and Settings share one row, so the screen fits above the edge button
             item {
@@ -478,12 +492,13 @@ private fun UnderShutterLine(
  * linked to or woken, the status as the title, coloured by what it means, and the camera's name.
  */
 @Composable
-private fun OfflineHeader(ble: BleCameraState, cameraName: String, status: String) {
+private fun OfflineHeader(ble: BleCameraState, cameraName: String, status: String, isMovingLink: Boolean = false) {
     val linked = ble.connectionStatus == BleConnectionStatus.CONNECTED
-    val looking = ble.isWaking || ble.isReconnecting ||
+    val looking = isMovingLink || ble.isWaking || ble.isReconnecting ||
         ble.connectionStatus == BleConnectionStatus.SCANNING || ble.connectionStatus == BleConnectionStatus.CONNECTING
     // Amber for a camera that is off or being switched on, the theme's colour while looking for it
     val statusColor = when {
+        isMovingLink -> MaterialTheme.colorScheme.primary
         ble.isWaking || (linked && !looking) -> StandbyOrange
         looking -> MaterialTheme.colorScheme.primary
         else -> MaterialTheme.colorScheme.onSurface
@@ -681,6 +696,11 @@ private fun cameraReport(details: CameraDetails, lastVideoFile: String?, lastVid
         details.captureSecondsLeft?.let { left ->
             if (details.subModes?.isPhoto == true) add(ReportLine("Photos Left", CameraStatusText.photosLeft(left)))
             else add(ReportLine("Time Left", CameraStatusText.timeLeft(left)))
+        }
+        val freeBytes = details.freeSpaceBytes
+        val totalBytes = details.totalSpaceBytes
+        if (freeBytes != null && totalBytes != null) {
+            add(ReportLine("Storage", CameraStatusText.storageSpace(freeBytes, totalBytes)))
         }
     }
     details.pod?.let { add(ReportLine("Action Pod", CameraStatusText.pod(it), isProblem = CameraStatusText.podIsLow(it))) }

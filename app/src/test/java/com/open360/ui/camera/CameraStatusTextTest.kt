@@ -122,7 +122,18 @@ class CameraStatusTextTest {
         // When any relevant status is available -> true
         assertTrue(CameraStatusText.hasTopStatus(90, null, null, null))
         assertTrue(CameraStatusText.hasTopStatus(null, pod, null, null))
+        assertTrue(
+            CameraStatusText.hasTopStatus(
+                null,
+                ChargeBoxStatus(connected = true, battery = null, isOn = false),
+                null,
+                null
+            )
+        )
         assertTrue(CameraStatusText.hasTopStatus(null, null, 1200, null))
+        assertTrue(CameraStatusText.hasTopStatus(null, null, null, null, freeSpaceBytes = 36_600_000_000L, totalSpaceBytes = 128_000_000_000L))
+        assertTrue(CameraStatusText.hasTopStatus(null, null, null, null, temperatureHigh = true))
+        assertTrue(CameraStatusText.hasTopStatus(null, null, null, null, batteryLow = true))
         assertTrue(CameraStatusText.hasTopStatus(null, null, null, CardState.FULL))
         assertTrue(CameraStatusText.hasTopStatus(null, null, null, CardState.NO_CARD))
     }
@@ -327,9 +338,44 @@ class CameraStatusTextTest {
                 isAdvertising = true
             )
         )
-        // Disconnected: the app's name, as the camera card says how the link stands
+        // Disconnected with saved serial suffix -> saved camera identity
         assertEquals(
-            "Open360",
+            "GO 3S 8JY3HF",
+            CameraStatusText.topBarTitle(
+                serverConnected = false,
+                serverSerial = null,
+                bleConnected = false,
+                bleDeviceName = null,
+                isAdvertising = false,
+                savedSerialSuffix = "8JY3HF"
+            )
+        )
+        // Disconnected and scanning/connecting without saved serial
+        assertEquals(
+            "Looking for Camera",
+            CameraStatusText.topBarTitle(
+                serverConnected = false,
+                serverSerial = null,
+                bleConnected = false,
+                bleDeviceName = null,
+                isAdvertising = false,
+                bleScanning = true
+            )
+        )
+        assertEquals(
+            "Connecting to Camera",
+            CameraStatusText.topBarTitle(
+                serverConnected = false,
+                serverSerial = null,
+                bleConnected = false,
+                bleDeviceName = null,
+                isAdvertising = false,
+                bleConnecting = true
+            )
+        )
+        // Disconnected without saved serial -> never falls back to app name
+        assertEquals(
+            "No Camera Connected",
             CameraStatusText.topBarTitle(
                 serverConnected = false,
                 serverSerial = null,
@@ -496,6 +542,148 @@ class CameraStatusTextTest {
                 bleScanning = false,
                 bleConnecting = false
             )
+        )
+    }
+
+    @Test
+    fun testStorageSpaceFormatting() {
+        assertEquals("66.7 / 128 GB free", CameraStatusText.storageSpace(66_679_341_056L, 128_000_000_000L))
+        assertEquals("500 MB / 64 GB free", CameraStatusText.storageSpace(500_000_000L, 64_000_000_000L))
+        assertEquals("4.5 / 8.0 GB free", CameraStatusText.storageSpace(4_500_000_000L, 8_000_000_000L))
+        assertEquals("66.7 / 128 GB", CameraStatusText.storageSpaceCompact(66_679_341_056L, 128_000_000_000L))
+        assertEquals("500 MB / 64 GB", CameraStatusText.storageSpaceCompact(500_000_000L, 64_000_000_000L))
+    }
+
+    @Test
+    fun testTopBarTitleForMultiModelAndDirectTransports() {
+        assertEquals(
+            "Insta360 X5",
+            CameraStatusText.topBarTitle(
+                serverConnected = false,
+                serverSerial = null,
+                bleConnected = true,
+                bleDeviceName = null,
+                isAdvertising = false,
+                resolvedModel = com.open360.core.model.Insta360CameraModel.X5
+            )
+        )
+        assertEquals(
+            "ONE X (USB-C)",
+            CameraStatusText.topBarTitle(
+                serverConnected = false,
+                serverSerial = null,
+                bleConnected = false,
+                bleDeviceName = null,
+                isAdvertising = false,
+                resolvedModel = com.open360.core.model.Insta360CameraModel.ONE_X,
+                directConnected = true,
+                directLabel = "ONE X (USB-C)",
+                transportMode = com.open360.core.model.CameraTransportMode.USB_C_DIRECT
+            )
+        )
+        assertEquals(
+            "Wi-Fi Hotspot / LAN",
+            CameraStatusText.topBarTitle(
+                serverConnected = false,
+                serverSerial = null,
+                bleConnected = false,
+                bleDeviceName = null,
+                isAdvertising = false,
+                directConnected = true,
+                directLabel = "",
+                transportMode = com.open360.core.model.CameraTransportMode.WIFI_STATION
+            )
+        )
+    }
+
+    @Test
+    fun testUnifiedRecordingBarFormatters() {
+        assertEquals("00:00", CameraStatusText.formatRecordingDuration(0L))
+        assertEquals("01:05", CameraStatusText.formatRecordingDuration(65L))
+        assertEquals("1:02:09", CameraStatusText.formatRecordingDuration(3729L))
+
+        assertEquals(
+            "Start Recording",
+            CameraStatusText.recordingBarActionLabel(
+                currentMode = com.open360.core.model.CaptureMode.VIDEO,
+                shownMode = com.open360.core.ble.CameraMode.VIDEO,
+                isRecording = false,
+                isStarting = false,
+                isStopping = false,
+                isTakingPhoto = false
+            )
+        )
+        assertEquals(
+            "Take Photo",
+            CameraStatusText.recordingBarActionLabel(
+                currentMode = com.open360.core.model.CaptureMode.PHOTO,
+                shownMode = com.open360.core.ble.CameraMode.PHOTO,
+                isRecording = false,
+                isStarting = false,
+                isStopping = false,
+                isTakingPhoto = false
+            )
+        )
+        assertEquals(
+            "Take HDR Photo",
+            CameraStatusText.recordingBarActionLabel(
+                currentMode = com.open360.core.model.CaptureMode.PHOTO,
+                shownMode = com.open360.core.ble.CameraMode.HDR_PHOTO,
+                isRecording = false,
+                isStarting = false,
+                isStopping = false,
+                isTakingPhoto = false
+            )
+        )
+        assertEquals(
+            "Start Interval Photo",
+            CameraStatusText.recordingBarActionLabel(
+                currentMode = com.open360.core.model.CaptureMode.PHOTO,
+                shownMode = com.open360.core.ble.CameraMode.INTERVAL_PHOTO,
+                isRecording = false,
+                isStarting = false,
+                isStopping = false,
+                isTakingPhoto = false
+            )
+        )
+        assertEquals(
+            "Stop Recording",
+            CameraStatusText.recordingBarActionLabel(
+                currentMode = com.open360.core.model.CaptureMode.VIDEO,
+                shownMode = com.open360.core.ble.CameraMode.VIDEO,
+                isRecording = true,
+                isStarting = false,
+                isStopping = false,
+                isTakingPhoto = false
+            )
+        )
+        assertEquals(
+            "Taking Photo...",
+            CameraStatusText.recordingBarActionLabel(
+                currentMode = com.open360.core.model.CaptureMode.PHOTO,
+                shownMode = com.open360.core.ble.CameraMode.PHOTO,
+                isRecording = false,
+                isStarting = false,
+                isStopping = false,
+                isTakingPhoto = true
+            )
+        )
+
+        assertEquals(
+            "Connect camera to control",
+            CameraStatusText.recordingBarHint(isConnected = false, isAsleep = false, isMovingLink = false)
+        )
+        assertEquals(
+            "Camera in standby",
+            CameraStatusText.recordingBarHint(isConnected = true, isAsleep = true, isMovingLink = false)
+        )
+        assertEquals(
+            "Moving the link...",
+            CameraStatusText.recordingBarHint(isConnected = true, isAsleep = false, isMovingLink = true)
+        )
+        assertEquals(
+            null,
+            CameraStatusText.recordingBarHint(isConnected = true, isAsleep = false, isMovingLink = false)
         )
     }
 }

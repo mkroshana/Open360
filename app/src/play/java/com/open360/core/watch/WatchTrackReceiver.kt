@@ -7,6 +7,9 @@ import android.os.Build
 import android.os.Environment
 import android.provider.MediaStore
 import android.util.Log
+import androidx.annotation.RequiresApi
+import androidx.core.content.edit
+import androidx.core.net.toUri
 import com.google.android.gms.tasks.Tasks
 import com.google.android.gms.wearable.Asset
 import com.google.android.gms.wearable.DataEvent
@@ -65,7 +68,11 @@ class WatchTrackReceiver : WearableListenerService() {
 
     private fun read(asset: Asset): ByteArray {
         val response = Tasks.await(Wearable.getDataClient(this).getFdForAsset(asset), ASSET_TIMEOUT_S, TimeUnit.SECONDS)
-        return response.inputStream.use { it.readBytes() }
+        return try {
+            response.inputStream.use { it.readBytes() }
+        } finally {
+            response.release()
+        }
     }
 
     /** Saves [bytes] as [name], over the file saved for this recording's [kind] before, if any. */
@@ -74,7 +81,7 @@ class WatchTrackReceiver : WearableListenerService() {
         val key = "$recordingId.$kind"
         val saved = prefs.getString(key, null)
         val location = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-            saveToDownloads(saved?.let(Uri::parse), name, mimeType, bytes).toString()
+            saveToDownloads(saved?.toUri(), name, mimeType, bytes).toString()
         } else {
             // Before Android 10 the shared Download folder needs a storage permission
             val dir = File(getExternalFilesDir(null), "tracks").apply { mkdirs() }
@@ -83,9 +90,10 @@ class WatchTrackReceiver : WearableListenerService() {
             target.writeBytes(bytes)
             target.absolutePath
         }
-        prefs.edit().putString(key, location).apply()
+        prefs.edit { putString(key, location) }
     }
 
+    @RequiresApi(Build.VERSION_CODES.Q)
     private fun saveToDownloads(saved: Uri?, name: String, mimeType: String, bytes: ByteArray): Uri {
         val resolver = contentResolver
         // The earlier copy, renamed, unless it has been deleted since or is no longer this
@@ -93,7 +101,7 @@ class WatchTrackReceiver : WearableListenerService() {
         val existing = saved?.takeIf {
             try {
                 resolver.update(it, ContentValues().apply { put(MediaStore.Downloads.DISPLAY_NAME, name) }, null, null) > 0
-            } catch (_: SecurityException) {
+            } catch (_: Exception) {
                 false
             }
         }
@@ -114,6 +122,6 @@ class WatchTrackReceiver : WearableListenerService() {
         val prefs = getSharedPreferences(PREFS, Context.MODE_PRIVATE)
         val cutoff = System.currentTimeMillis() - REMEMBER_MS
         val old = prefs.all.keys.filter { (it.substringBefore('.').toLongOrNull() ?: 0L) < cutoff }
-        if (old.isNotEmpty()) prefs.edit().apply { old.forEach(::remove) }.apply()
+        if (old.isNotEmpty()) prefs.edit { old.forEach(::remove) }
     }
 }

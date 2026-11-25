@@ -1,0 +1,18 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="864" height="864" viewBox="0 0 108 108">
+  <defs>
+    <radialGradient id="fg_grad_0" cx="54" cy="54" r="16.5" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#080807" />
+      <stop offset="82%" stop-color="#0C0C0B" />
+      <stop offset="100%" stop-color="#181715" />
+    </radialGradient>
+    <radialGradient id="fg_grad_1" cx="51.09" cy="49.84" r="15.39" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#FF766B" />
+      <stop offset="52%" stop-color="#FF5449" />
+      <stop offset="100%" stop-color="#D4352B" />
+    </radialGradient>
+  </defs>
+  <path d="M38.2,54 A15.8,15.8 0 1,0 69.8,54 A15.8,15.8 0 1,0 38.2,54 Z" fill="url(#fg_grad_0)" stroke="#46433D" stroke-width="1.0" />
+  <path d="M76.32,48.44 A23,23 0 1,1 59.56,31.68" fill="none" stroke="#F0EBE1" stroke-width="5.2" stroke-linecap="round" />
+  <path d="M66.76,37.74 A3.5,3.5 0 1,0 73.76,37.74 A3.5,3.5 0 1,0 66.76,37.74 Z" fill="#F0EBE1" />
+  <path d="M43.6,54 A10.4,10.4 0 1,0 64.4,54 A10.4,10.4 0 1,0 43.6,54 Z" fill="url(#fg_grad_1)" />
+</svg>

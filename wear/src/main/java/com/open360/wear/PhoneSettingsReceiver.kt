@@ -1,8 +1,8 @@
 package com.open360.wear
 
 import android.content.Context
-import android.net.Uri
 import android.util.Log
+import androidx.core.net.toUri
 import com.google.android.gms.wearable.DataClient
 import com.google.android.gms.wearable.DataEvent
 import com.google.android.gms.wearable.DataEventBuffer
@@ -26,7 +26,7 @@ class PhoneSettingsReceiver(
     }
 
     private val dataClient = Wearable.getDataClient(context)
-    private val uri = Uri.parse("wear://*${SharedConnectionSettings.PATH}")
+    private val uri = "wear://*${SharedConnectionSettings.PATH}".toUri()
 
     /** Reads the settings held on the watch, then follows any change while the app is open. */
     fun start() {

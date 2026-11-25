@@ -9,6 +9,7 @@ import android.hardware.SensorEventListener
 import android.hardware.SensorManager
 import android.util.Log
 import androidx.core.content.ContextCompat
+import androidx.core.content.edit
 import com.open360.core.sensors.SensorKind
 import com.open360.core.sensors.SportsSensorManager
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -65,7 +66,7 @@ class WatchHeartRate(private val context: Context, private val sensors: SportsSe
     }
 
     fun setEnabled(enabled: Boolean) {
-        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit().putBoolean(PREF_ENABLED, enabled).apply()
+        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit { putBoolean(PREF_ENABLED, enabled) }
         _state.update { it.copy(enabled = enabled) }
         update()
     }

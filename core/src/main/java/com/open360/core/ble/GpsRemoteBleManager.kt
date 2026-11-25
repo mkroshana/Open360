@@ -23,8 +23,11 @@ import android.content.pm.PackageManager
 import android.os.Build
 import android.os.ParcelUuid
 import android.os.SystemClock
+import com.open360.core.model.BleWakeStrategy
+import com.open360.core.model.Insta360CameraModel
 import android.util.Log
 import androidx.core.content.ContextCompat
+import androidx.core.content.edit
 import com.open360.core.gps.GpsSendPacer
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
@@ -63,6 +66,8 @@ data class CameraDetails(
     // mode the camera gives the photos left here instead.
     val captureSecondsLeft: Int? = null,
     val cardState: Go2BleProtocol.CardState? = null,
+    val freeSpaceBytes: Long? = null,
+    val totalSpaceBytes: Long? = null,
     val pod: Go2BleProtocol.ChargeBoxStatus? = null,
     // CameraCaptureState of the recording in progress (1 Video, 17 PRO Video), null when idle
     val recordingState: Int? = null,
@@ -133,9 +138,21 @@ data class BleCameraState(
     val details: CameraDetails = CameraDetails(),
     val deviceName: String? = null,
     val deviceAddress: String? = null,
+    val cameraModel: Insta360CameraModel? = null,
+    val reportedDeviceType: String? = null,
+    val reportedSerialNumber: String? = null,
     val lastGpsSentTimeMs: Long = 0L,
-    val lastError: String? = null
-)
+    val lastError: String? = null,
+    val isCameraWifiReady: Boolean = false
+) {
+    /** Best resolved [Insta360CameraModel] from reported type, advertised name, or serial prefix. */
+    val resolvedModel: Insta360CameraModel?
+        get() = cameraModel ?: Insta360CameraModel.resolveByIdentity(
+            deviceType = reportedDeviceType,
+            deviceName = deviceName,
+            serialNumber = reportedSerialNumber
+        )
+}
 
 /**
  * Manages Bluetooth Low Energy (BLE) communication with Insta360 cameras (GO 3 / GO 3S).
@@ -264,18 +281,27 @@ class GpsRemoteBleManager(private val context: Context) {
     private val _state = MutableStateFlow(BleCameraState())
     val state: StateFlow<BleCameraState> = _state.asStateFlow()
 
+    @Volatile
     private var activeGatt: BluetoothGatt? = null
+    @Volatile
     private var writeCharacteristic: BluetoothGattCharacteristic? = null
     private var sequenceNumber = 1
 
     private val writeChannel = Channel<ByteArray>(Channel.UNLIMITED)
+    @Volatile
     private var pendingWriteAck: CompletableDeferred<Boolean>? = null
 
+    @Volatile
     private var attMtu = 23
     private var activeScanCallback: ScanCallback? = null
+    @Volatile
     private var keepAliveJob: Job? = null
+    @Volatile
     private var captureChangeTimeoutJob: Job? = null
+    @Volatile
     private var photoTimeoutJob: Job? = null
+    @Volatile
+    private var startCaptureSeq = -1
     @Volatile
     private var stopCaptureSeq = -1
     // The take-picture command awaiting its answer, which comes once the photo is taken
@@ -305,10 +331,21 @@ class GpsRemoteBleManager(private val context: Context) {
     private var startCommandAtMs: Long? = null
     // The photo and video sub-modes the camera was last seen in, so a switch to Photo or Video
     // goes back to that one (PRO Video stays PRO Video). 0 is single photo and normal video.
+    private data class PendingSubModeWrite(
+        val subModes: Go2BleProtocol.SubModes,
+        val generation: Long
+    )
+    private val subModeLock = Any()
+    private var subModeGeneration = 0L
+    private var lastAppliedSubModeGeneration = 0L
+    private var deferredConfirmedSubMode: PendingSubModeWrite? = null
+    private val pendingSubModeWrites = HashMap<Int, PendingSubModeWrite>()
     @Volatile
     private var lastPhotoSubMode = 0
     @Volatile
     private var lastVideoSubMode = 0
+    @Volatile
+    internal var onPacketQueuedForTesting: ((ByteArray) -> Unit)? = null
     private val gpsQueue = ConcurrentLinkedQueue<ByteArray>()
     // Completed by the camera's answer to the wake-up authorization
     @Volatile
@@ -325,6 +362,7 @@ class GpsRemoteBleManager(private val context: Context) {
     private var authorizationCheckReply: CompletableDeferred<Go2BleProtocol.AuthorizationStatus?>? = null
     @Volatile
     private var authorizationOutcome: CompletableDeferred<Go2BleProtocol.AuthorizationResult>? = null
+    @Volatile
     private var wakeJob: Job? = null
 
     // The request for the camera's Wi-Fi details, matched to its reply by sequence number
@@ -332,6 +370,8 @@ class GpsRemoteBleManager(private val context: Context) {
     private var wifiInfoQuerySeq = -1
     @Volatile
     private var wifiInfoReply: CompletableDeferred<Go2BleProtocol.WifiInfo?>? = null
+    @Volatile
+    private var deviceIdentityQuerySeq = -1
 
     // When the camera first answered on the current link, null until it does, and whether the
     // link was opened by an automatic reconnection
@@ -349,14 +389,18 @@ class GpsRemoteBleManager(private val context: Context) {
     private data class ClockAnswer(val sentAtMs: Long, val answeredAtMs: Long, val utcSeconds: Long)
     private val clockQueries = ConcurrentHashMap<Int, Long>()
     private val clockAnswers = ConcurrentLinkedQueue<ClockAnswer>()
+    @Volatile
     private var clockJob: Job? = null
 
     private val reconnectPolicy = ReconnectPolicy(EARLY_DROP_MS, MAX_AUTO_RECONNECTS)
+    @Volatile
     private var reconnectJob: Job? = null
+    @Volatile
     private var idleLinkJob: Job? = null
 
     // Both are used only by the write queue worker
     private val gpsPacer = GpsSendPacer(GPS_SEND_RECORDS_PER_SECOND, GPS_SEND_MAX_BURST)
+    @Volatile
     private var gpsFlushRetry: Job? = null
 
     // Placed on the write queue to tell the worker that gpsQueue has records to send
@@ -375,11 +419,11 @@ class GpsRemoteBleManager(private val context: Context) {
         }
     }
 
-    @Synchronized
-    private fun nextSeq(): Int {
+    private fun nextSeq(): Int = synchronized(subModeLock) {
         val s = sequenceNumber
         sequenceNumber = if (sequenceNumber >= 254) 1 else sequenceNumber + 1
-        return s
+        pendingSubModeWrites.remove(s)
+        s
     }
 
     private fun hasPermission(permission: String): Boolean {
@@ -419,30 +463,31 @@ class GpsRemoteBleManager(private val context: Context) {
     fun saveWakeAuthorizationId(id: String): Boolean {
         if (!Go2BleProtocol.isValidAuthorizationId(id)) return false
         val prefs = context.getSharedPreferences("open360_ble_prefs", Context.MODE_PRIVATE)
-        prefs.edit().putString(PREF_WAKE_AUTHORIZATION_ID, id).apply()
+        prefs.edit { putString(PREF_WAKE_AUTHORIZATION_ID, id) }
         return true
     }
 
     fun getSavedSerialSuffix(): String {
         val prefs = context.getSharedPreferences("open360_ble_prefs", Context.MODE_PRIVATE)
-        return prefs.getString("camera_serial_suffix", "8JY3HF") ?: "8JY3HF"
+        return prefs.getString("camera_serial_suffix", "") ?: ""
     }
 
     fun saveSerialSuffix(suffix: String) {
         if (suffix.isNotBlank()) {
             val prefs = context.getSharedPreferences("open360_ble_prefs", Context.MODE_PRIVATE)
-            prefs.edit().putString("camera_serial_suffix", suffix).apply()
+            prefs.edit { putString("camera_serial_suffix", suffix) }
         }
     }
 
     @SuppressLint("MissingPermission")
     fun startWakeUpBroadcast(serialSuffix: String? = null, onComplete: (() -> Unit)? = null) {
+        val targetSuffix = serialSuffix?.takeIf { it.isNotBlank() } ?: getSavedSerialSuffix()
+        if (targetSuffix.isBlank()) return
+
         if (!canAdvertise()) {
             _state.update { it.copy(lastError = "Open360 is not allowed to use Bluetooth. Allow Nearby Devices for it in the phone's settings.") }
             return
         }
-
-        val targetSuffix = serialSuffix?.takeIf { it.isNotBlank() } ?: getSavedSerialSuffix()
 
         val advertiser = bluetoothAdapter?.bluetoothLeAdvertiser ?: run {
             _state.update { it.copy(lastError = "Bluetooth is off or not available") }
@@ -499,7 +544,10 @@ class GpsRemoteBleManager(private val context: Context) {
      * Scans for the camera and connects via BLE GATT.
      */
     @SuppressLint("MissingPermission")
-    fun startScanAndConnect(targetSerialSuffix: String? = null) {
+    fun startScanAndConnect(
+        targetSerialSuffix: String? = null,
+        preferredModel: Insta360CameraModel? = null
+    ) {
         if (!canScan()) {
             _state.update { it.copy(lastError = "Open360 is not allowed to use Bluetooth. Allow Nearby Devices for it in the phone's settings.") }
             return
@@ -517,10 +565,9 @@ class GpsRemoteBleManager(private val context: Context) {
 
         _state.update { it.copy(connectionStatus = BleConnectionStatus.SCANNING, lastError = null) }
 
-        val filters = mutableListOf<ScanFilter>()
-        // Filter by known services
-        filters.add(ScanFilter.Builder().setServiceUuid(ParcelUuid(SERVICE_BE80)).build())
-        filters.add(ScanFilter.Builder().setServiceUuid(ParcelUuid(SERVICE_CE80)).build())
+        // Scan broadly in low-latency foreground mode and classify in BleScanMatcher so cameras
+        // advertising BE80, CE80, AE00, 0x4F47 manufacturer data, or model/iBeacon prefixes are all found.
+        val filters = emptyList<ScanFilter>()
 
         val settings = ScanSettings.Builder()
             .setScanMode(ScanSettings.SCAN_MODE_LOW_LATENCY)
@@ -531,21 +578,25 @@ class GpsRemoteBleManager(private val context: Context) {
                 if (activeScanCallback !== this) return
                 val device = result?.device ?: return
                 val name = device.name ?: result.scanRecord?.deviceName ?: ""
+                val serviceUuids = result.scanRecord?.serviceUuids?.map { it.uuid }.orEmpty()
+                val mfgData = result.scanRecord?.manufacturerSpecificData
+                val manufacturerIds = if (mfgData != null) {
+                    List(mfgData.size()) { idx -> mfgData.keyAt(idx) }
+                } else {
+                    emptyList()
+                }
+                val match = BleScanMatcher.evaluate(
+                    deviceName = name,
+                    serviceUuids = serviceUuids,
+                    manufacturerIds = manufacturerIds,
+                    targetSerialSuffix = targetSerialSuffix
+                )
 
-                // Match Insta360 camera prefixes or explicit serial suffix
-                val isInsta360 = name.startsWith("GO 3", ignoreCase = true) ||
-                        name.startsWith("Insta360", ignoreCase = true) ||
-                        name.startsWith("X3", ignoreCase = true) ||
-                        name.startsWith("X4", ignoreCase = true) ||
-                        name.startsWith("ONE RS", ignoreCase = true) ||
-                        (targetSerialSuffix != null && name.contains(targetSerialSuffix, ignoreCase = true)) ||
-                        result.scanRecord?.serviceUuids?.any { it.uuid == SERVICE_BE80 || it.uuid == SERVICE_CE80 } == true
-
-                if (isInsta360) {
-                    Log.i(TAG, "Found target camera: $name (${device.address})")
+                if (match.isMatch) {
+                    Log.i(TAG, "Found target camera (${match.reason}): $name (${device.address})")
                     stopScan()
 
-                    connectGatt(device, name)
+                    connectGatt(device, name, discoveredModel = match.model ?: preferredModel)
                 }
             }
 
@@ -595,8 +646,27 @@ class GpsRemoteBleManager(private val context: Context) {
                 if (_state.value.isCameraAwake && SystemClock.elapsedRealtime() - lastHeardAtMs > CAMERA_SILENT_MS) {
                     Log.w(TAG, "Camera has stopped answering")
                     clockJob?.cancel()
-                    _state.update {
-                        it.copy(isCameraAwake = false, batteryPercent = null, isCharging = false, cameraClockOffsetMs = null)
+                    captureChangeTimeoutJob?.cancel()
+                    markRecordingStop()
+                    forgetPhotoInProgress()
+                    statusRequested = false
+                    answeringSinceMs = null
+                    synchronized(subModeLock) {
+                        forgetPendingReplies()
+                        _state.update {
+                            it.copy(
+                                isCameraAwake = false,
+                                isRecording = false,
+                                isCaptureStarting = false,
+                                isCaptureStopping = false,
+                                isTakingPhoto = false,
+                                batteryPercent = null,
+                                isCharging = false,
+                                cameraClockOffsetMs = null,
+                                isCameraWifiReady = false,
+                                details = CameraDetails()
+                            )
+                        }
                     }
                 }
             }
@@ -614,7 +684,12 @@ class GpsRemoteBleManager(private val context: Context) {
     }
 
     @SuppressLint("MissingPermission")
-    private fun connectGatt(device: BluetoothDevice, discoveredName: String, isReconnect: Boolean = false) {
+    private fun connectGatt(
+        device: BluetoothDevice,
+        discoveredName: String,
+        isReconnect: Boolean = false,
+        discoveredModel: Insta360CameraModel? = null
+    ) {
         answeringSinceMs = null
         linkIsReconnect = isReconnect
         val safeName = discoveredName.ifEmpty { device.name ?: "Insta360 Camera" }
@@ -629,16 +704,15 @@ class GpsRemoteBleManager(private val context: Context) {
                 connectionStatus = BleConnectionStatus.CONNECTING,
                 isLinkIdle = false,
                 deviceName = safeName,
-                deviceAddress = device.address
+                deviceAddress = device.address,
+                cameraModel = discoveredModel ?: it.cameraModel ?: Insta360CameraModel.resolveByIdentity(deviceName = safeName)
             )
         }
 
-        activeGatt?.close()
-        activeGatt = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
-            device.connectGatt(context, false, gattCallback, BluetoothDevice.TRANSPORT_LE)
-        } else {
-            device.connectGatt(context, false, gattCallback)
-        }
+        val oldGatt = activeGatt
+        activeGatt = null
+        oldGatt?.close()
+        activeGatt = device.connectGatt(context, false, gattCallback, BluetoothDevice.TRANSPORT_LE)
     }
 
     /**
@@ -678,9 +752,13 @@ class GpsRemoteBleManager(private val context: Context) {
         idleLinkJob?.cancel()
         idleLinkJob = scope.launch {
             delay(SILENT_LINK_MS)
-            if (answeringSinceMs != null || wakeInProgress || wakeOnNextConnect || holdLinkWhileOff ||
-                activeGatt !== gatt
-            ) return@launch
+            if (answeringSinceMs != null || wakeInProgress || wakeOnNextConnect || activeGatt !== gatt) {
+                return@launch
+            }
+            if (holdLinkWhileOff) {
+                _state.update { it.copy(isLinkIdle = true) }
+                return@launch
+            }
             Log.i(TAG, "The camera is not answering: it is off, letting go of the link")
             disconnect()
         }
@@ -697,50 +775,74 @@ class GpsRemoteBleManager(private val context: Context) {
         }
     }
 
+    private fun drainWriteQueue() {
+        while (writeChannel.tryReceive().isSuccess) {
+            // Discard packets queued for a link that has ended
+        }
+    }
+
     private val gattCallback = object : BluetoothGattCallback() {
         @SuppressLint("MissingPermission")
         override fun onConnectionStateChange(gatt: BluetoothGatt, status: Int, newState: Int) {
             Log.i(TAG, "onConnectionStateChange: status=$status, newState=$newState")
+            if (gatt !== activeGatt) {
+                if (newState == BluetoothProfile.STATE_DISCONNECTED) gatt.close()
+                return
+            }
             if (newState == BluetoothProfile.STATE_CONNECTED && status == BluetoothGatt.GATT_SUCCESS) {
                 _state.update { it.copy(connectionStatus = BleConnectionStatus.CONNECTING) }
                 // Request MTU to support full GPS and protobuf packets
                 gatt.requestMtu(247)
-            } else if (newState == BluetoothProfile.STATE_DISCONNECTED) {
-                Log.w(TAG, "GATT disconnected, status=$status")
+            } else {
+                Log.w(TAG, "GATT disconnected or failed, status=$status, newState=$newState")
+                activeGatt = null
+                gatt.close()
                 writeCharacteristic = null
+                attMtu = 23
                 idleLinkJob?.cancel()
                 stopKeepAlive()
+                captureChangeTimeoutJob?.cancel()
+                gpsFlushRetry?.cancel()
+                pendingWriteAck?.complete(false)
+                drainWriteQueue()
                 markRecordingStop()
                 forgetPhotoInProgress()
                 registrationJob?.cancel()
                 clockJob?.cancel()
-                forgetPendingReplies()
                 val reconnect = shouldReconnect()
                 if (reconnect) reconnect(gatt.device)
-                _state.update {
-                    it.copy(
-                        // A reconnection is about to be tried; Disconnected would only flash up
-                        connectionStatus = if (reconnect) BleConnectionStatus.CONNECTING else BleConnectionStatus.DISCONNECTED,
-                        isReconnecting = reconnect,
-                        isWaking = false,
-                        isLinkIdle = false,
-                        isCameraAwake = false,
-                        isRecording = false,
-                        isCaptureStarting = false,
-                        isCaptureStopping = false,
-                        isTakingPhoto = false,
-                        batteryPercent = null,
-                        isCharging = false,
-                        cameraClockOffsetMs = null,
-                        details = CameraDetails(),
-                        wakeUpRegistration = it.wakeUpRegistration.afterLinkDown()
-                    )
+                synchronized(subModeLock) {
+                    forgetPendingReplies()
+                    _state.update {
+                        it.copy(
+                            // A reconnection is about to be tried; Disconnected would only flash up
+                            connectionStatus = if (reconnect) BleConnectionStatus.CONNECTING else BleConnectionStatus.DISCONNECTED,
+                            isReconnecting = reconnect,
+                            isWaking = false,
+                            isLinkIdle = false,
+                            isCameraAwake = false,
+                            isRecording = false,
+                            isCaptureStarting = false,
+                            isCaptureStopping = false,
+                            isTakingPhoto = false,
+                            batteryPercent = null,
+                            isCharging = false,
+                            cameraClockOffsetMs = null,
+                            cameraModel = null,
+                            reportedDeviceType = null,
+                            reportedSerialNumber = null,
+                            isCameraWifiReady = false,
+                            details = CameraDetails(),
+                            wakeUpRegistration = it.wakeUpRegistration.afterLinkDown()
+                        )
+                    }
                 }
             }
         }
 
         @SuppressLint("MissingPermission")
         override fun onMtuChanged(gatt: BluetoothGatt, mtu: Int, status: Int) {
+            if (gatt !== activeGatt) return
             Log.i(TAG, "MTU changed to $mtu, status: $status. Discovering services...")
             if (status == BluetoothGatt.GATT_SUCCESS) attMtu = mtu
             gatt.discoverServices()
@@ -748,9 +850,11 @@ class GpsRemoteBleManager(private val context: Context) {
 
         @SuppressLint("MissingPermission")
         override fun onServicesDiscovered(gatt: BluetoothGatt, status: Int) {
+            if (gatt !== activeGatt) return
             if (status != BluetoothGatt.GATT_SUCCESS) {
                 Log.e(TAG, "Service discovery failed: $status")
                 _state.update { it.copy(lastError = "Could not finish connecting to the camera (error $status)") }
+                disconnect()
                 return
             }
 
@@ -764,14 +868,24 @@ class GpsRemoteBleManager(private val context: Context) {
             }
             val be80 = gatt.getService(SERVICE_BE80)
             val ce80 = gatt.getService(SERVICE_CE80)
+            val ae00 = gatt.getService(BleScanMatcher.SERVICE_AE00)
 
-            // Primary: BE81 (Direct command write)
+            // Primary: BE81, fallback CE81 (legacy/remote), fallback AE01 (older accessory/camera service)
             writeCharacteristic = be80?.getCharacteristic(WRITE_BE81)
                 ?: ce80?.getCharacteristic(WRITE_CE81)
+                ?: ae00?.getCharacteristic(BleScanMatcher.WRITE_AE01)
 
-            // Notifications: subscribe to BE82 or CE82
+            // Notifications: subscribe to BE82, CE82, or AE02
             val notifyChar = be80?.getCharacteristic(NOTIFY_BE82)
                 ?: ce80?.getCharacteristic(NOTIFY_CE82)
+                ?: ae00?.getCharacteristic(BleScanMatcher.NOTIFY_AE02)
+
+            if (writeCharacteristic == null && notifyChar == null) {
+                Log.w(TAG, "Camera control service not found")
+                _state.update { it.copy(lastError = "Camera control service not found") }
+                disconnect()
+                return
+            }
 
             if (notifyChar != null) {
                 gatt.setCharacteristicNotification(notifyChar, true)
@@ -800,25 +914,35 @@ class GpsRemoteBleManager(private val context: Context) {
             characteristic: BluetoothGattCharacteristic,
             status: Int
         ) {
+            if (gatt !== activeGatt) return
             pendingWriteAck?.complete(status == BluetoothGatt.GATT_SUCCESS)
         }
 
         override fun onDescriptorWrite(gatt: BluetoothGatt, descriptor: BluetoothGattDescriptor, status: Int) {
+            if (gatt !== activeGatt) return
             val channel = descriptor.characteristic?.uuid
             Log.i(TAG, "Subscription to $channel finished, status=$status")
-            if (status == BluetoothGatt.GATT_SUCCESS && (channel == NOTIFY_BE82 || channel == NOTIFY_CE82)) {
-                // Subscription complete: channel is open for writes. Nothing is asked until the
-                // camera answers (see requestStatusOnce), which one that is on does at once.
-                if (wakeOnNextConnect) {
+            if (channel == NOTIFY_BE82 || channel == NOTIFY_CE82 || channel == BleScanMatcher.NOTIFY_AE02) {
+                if (status == BluetoothGatt.GATT_SUCCESS) {
+                    // Subscription complete: channel is open for writes. Nothing is asked until the
+                    // camera answers (see requestStatusOnce), which one that is on does at once.
+                    if (wakeOnNextConnect) {
+                        wakeOnNextConnect = false
+                        wakeCamera()
+                    }
+                } else {
                     wakeOnNextConnect = false
-                    wakeCamera()
+                    _state.update { it.copy(isWaking = false) }
                 }
             }
         }
 
         @Deprecated("Deprecated in Java")
         override fun onCharacteristicChanged(gatt: BluetoothGatt, characteristic: BluetoothGattCharacteristic) {
-            characteristic.value?.let { onNotification(characteristic, it) }
+            if (gatt !== activeGatt) return
+            if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU) {
+                characteristic.value?.let { onNotification(characteristic, it) }
+            }
         }
 
         override fun onCharacteristicChanged(
@@ -826,12 +950,16 @@ class GpsRemoteBleManager(private val context: Context) {
             characteristic: BluetoothGattCharacteristic,
             value: ByteArray
         ) {
+            if (gatt !== activeGatt) return
             onNotification(characteristic, value)
         }
     }
 
     private fun onNotification(characteristic: BluetoothGattCharacteristic, value: ByteArray) {
-        if (characteristic.uuid == NOTIFY_BE82 || characteristic.uuid == NOTIFY_CE82) {
+        if (characteristic.uuid == NOTIFY_BE82 ||
+            characteristic.uuid == NOTIFY_CE82 ||
+            characteristic.uuid == BleScanMatcher.NOTIFY_AE02
+        ) {
             handleIncomingNotification(value)
         } else {
             // Nothing else is subscribed to; logged in case the camera sends on another channel
@@ -859,8 +987,25 @@ class GpsRemoteBleManager(private val context: Context) {
                     Log.i(TAG, "Wake: the camera is already on")
                     return@launch
                 }
+                val wakeStrategy = _state.value.resolvedModel?.wakeStrategy ?: BleWakeStrategy.BLE_AUTH_ID
+                if (wakeStrategy == BleWakeStrategy.GO2_FIXED_PACKET) {
+                    Log.i(TAG, "Wake: sending GO 2 fixed BLE wake packet")
+                    queuePacket(Go2BleProtocol.buildGo2WakePacket())
+                    if (answersWithin(WAKE_SWITCH_ON_MS)) {
+                        Log.i(TAG, "Wake: GO 2 switched on")
+                    } else {
+                        Log.w(TAG, "Wake: GO 2 did not switch on after fixed wake packet")
+                    }
+                    return@launch
+                }
+
                 val id = getWakeAuthorizationId()
                 if (id == null) {
+                    if (wakeStrategy == BleWakeStrategy.IBEACON_ORBIT) {
+                        Log.i(TAG, "Wake: falling back to iBeacon/ORBIT wake broadcast")
+                        startWakeUpBroadcast(null)
+                        return@launch
+                    }
                     Log.w(TAG, "Wake: no authorization id has been set")
                     _state.update { it.copy(lastError = "Wake Up has not been set up for this camera") }
                     return@launch
@@ -872,6 +1017,11 @@ class GpsRemoteBleManager(private val context: Context) {
                 queuePacket(Go2BleProtocol.buildWakeAuthorizationPacket(id))
                 when (withTimeoutOrNull(WAKE_REPLY_MS) { reply.await() }) {
                     null -> {
+                        if (wakeStrategy == BleWakeStrategy.IBEACON_ORBIT) {
+                            Log.i(TAG, "Wake: auth timed out on iBeacon model, starting iBeacon/ORBIT broadcast")
+                            startWakeUpBroadcast(null)
+                            return@launch
+                        }
                         Log.w(TAG, "Wake: the camera did not answer the authorization")
                         return@launch
                     }
@@ -952,7 +1102,7 @@ class GpsRemoteBleManager(private val context: Context) {
 
     fun markWakeUpSetupOffered() {
         context.getSharedPreferences("open360_ble_prefs", Context.MODE_PRIVATE)
-            .edit().putBoolean(PREF_WAKE_SETUP_OFFERED, true).apply()
+            .edit { putBoolean(PREF_WAKE_SETUP_OFFERED, true) }
     }
 
     /** Whether the card that leads to the set-up for Wake Up has been dismissed. */
@@ -962,7 +1112,7 @@ class GpsRemoteBleManager(private val context: Context) {
 
     fun setWakeUpSetupCardDismissed(dismissed: Boolean) {
         context.getSharedPreferences("open360_ble_prefs", Context.MODE_PRIVATE)
-            .edit().putBoolean(PREF_WAKE_SETUP_CARD_DISMISSED, dismissed).apply()
+            .edit { putBoolean(PREF_WAKE_SETUP_CARD_DISMISSED, dismissed) }
     }
 
     /**
@@ -970,9 +1120,22 @@ class GpsRemoteBleManager(private val context: Context) {
      * commands from a debug build. The camera's answer shows in the log under its sequence number.
      */
     fun sendCommandForTesting(commandCode: Int, payloadHex: String) {
-        val payload = payloadHex.chunked(2).map { it.toInt(16).toByte() }.toByteArray()
+        val clean = payloadHex.filterNot { it.isWhitespace() }
+        if (clean.length % 2 != 0) {
+            Log.w(TAG, "Invalid test payload hex (odd length): $payloadHex")
+            return
+        }
+        val payload = ByteArray(clean.length / 2)
+        for (i in payload.indices) {
+            val byte = clean.substring(i * 2, i * 2 + 2).toIntOrNull(16)
+            if (byte == null) {
+                Log.w(TAG, "Invalid test payload hex: $payloadHex")
+                return
+            }
+            payload[i] = byte.toByte()
+        }
         val seq = nextSeq()
-        Log.i(TAG, "Test command 0x${Integer.toHexString(commandCode)}, seq=$seq, payload=$payloadHex")
+        Log.i(TAG, "Test command 0x${Integer.toHexString(commandCode)}, seq=$seq, payload=$clean")
         queuePacket(Go2BleProtocol.encodeMessagePacket(Go2BleProtocol.encodeInnerMessage(commandCode, seq, payload)))
     }
 
@@ -1037,10 +1200,11 @@ class GpsRemoteBleManager(private val context: Context) {
             return null
         }
         Log.i(TAG, "Camera Wi-Fi network: ${info.ssid}")
-        context.getSharedPreferences("open360_ble_prefs", Context.MODE_PRIVATE).edit()
-            .putString(PREF_CAMERA_WIFI_SSID, info.ssid)
-            .putString(PREF_CAMERA_WIFI_PASSWORD, info.password)
-            .apply()
+        _state.update { it.copy(isCameraWifiReady = true) }
+        context.getSharedPreferences("open360_ble_prefs", Context.MODE_PRIVATE).edit {
+            putString(PREF_CAMERA_WIFI_SSID, info.ssid)
+            putString(PREF_CAMERA_WIFI_PASSWORD, info.password)
+        }
         return info
     }
 
@@ -1075,7 +1239,16 @@ class GpsRemoteBleManager(private val context: Context) {
      */
     fun setHoldLinkWhileOff(hold: Boolean) {
         holdLinkWhileOff = hold
-        if (!hold) activeGatt?.let { letGoIfSilent(it) }
+        val gatt = activeGatt ?: return
+        if (hold) {
+            if (answeringSinceMs == null && !_state.value.isLinkIdle) letGoIfSilent(gatt)
+        } else {
+            if (_state.value.isLinkIdle && answeringSinceMs == null && !wakeInProgress) {
+                disconnect()
+            } else {
+                letGoIfSilent(gatt)
+            }
+        }
     }
 
     /**
@@ -1088,6 +1261,7 @@ class GpsRemoteBleManager(private val context: Context) {
         statusRequested = true
         queryCaptureStatus()
         queryStatusOptions()
+        queryDeviceIdentity()
     }
 
     /** Gives the GPS time of a moment on the elapsedRealtime clock, null before any fix. */
@@ -1112,12 +1286,19 @@ class GpsRemoteBleManager(private val context: Context) {
                 }
                 delay(2000)
             }
-            var offset = readClock() ?: return@launch
-            if (abs(offset.ms) > CLOCK_SET_THRESHOLD_MS && !isCapturing() && setClock(offset)) {
-                delay(CLOCK_SET_SETTLE_MS)
-                offset = readClock() ?: return@launch
+            var offset = readClock()
+            if (offset == null && cameraIsOn() && !isCapturing()) {
+                delay(5000L)
+                if (cameraIsOn() && !isCapturing()) offset = readClock()
             }
-            _state.update { it.copy(cameraClockOffsetMs = offset.ms) }
+            val measured = offset ?: return@launch
+            if (abs(measured.ms) > CLOCK_SET_THRESHOLD_MS && !isCapturing() && setClock(measured)) {
+                delay(CLOCK_SET_SETTLE_MS)
+                val updated = readClock() ?: return@launch
+                _state.update { it.copy(cameraClockOffsetMs = updated.ms) }
+            } else {
+                _state.update { it.copy(cameraClockOffsetMs = measured.ms) }
+            }
         }
     }
 
@@ -1183,7 +1364,14 @@ class GpsRemoteBleManager(private val context: Context) {
     private suspend fun answersWithin(timeoutMs: Long): Boolean =
         withTimeoutOrNull(timeoutMs) { state.first { it.isCameraAwake } } != null
 
-    private fun handleIncomingNotification(raw: ByteArray) {
+    @androidx.annotation.VisibleForTesting
+    fun setConnectionStatusForTesting(status: BleConnectionStatus, isCameraAwake: Boolean = true) {
+        synchronized(subModeLock) {
+            _state.update { it.copy(connectionStatus = status, isCameraAwake = isCameraAwake) }
+        }
+    }
+
+    internal fun handleIncomingNotification(raw: ByteArray) {
         Log.v(TAG, "RX ${raw.toHex()}")
 
         // The camera's Bluetooth chip answers the wake-up authorization while the camera is off
@@ -1259,6 +1447,11 @@ class GpsRemoteBleManager(private val context: Context) {
                     val high = Go2BleProtocol.parseTemperatureIsHigh(inner.payload)
                     if (high) Log.w(TAG, "Camera reports it is hot")
                     updateDetails { it.copy(temperatureHigh = high) }
+                }
+
+                Go2BleProtocol.NOTIF_CAM_WIFI_START -> {
+                    Log.i(TAG, "Camera Wi-Fi AP started (0x2017)")
+                    _state.update { it.copy(isCameraWifiReady = true) }
                 }
 
                 Go2BleProtocol.NOTIF_SHUTDOWN -> {
@@ -1355,10 +1548,30 @@ class GpsRemoteBleManager(private val context: Context) {
                         wifiInfoQuerySeq = -1
                         wifiInfoReply?.complete(Go2BleProtocol.parseWifiInfoReply(inner.payload))
                     }
+                    if (inner.sequence == deviceIdentityQuerySeq) {
+                        deviceIdentityQuerySeq = -1
+                        Go2BleProtocol.parseDeviceIdentityReply(inner.payload)?.let { identity ->
+                            _state.update { cur ->
+                                val model = Insta360CameraModel.resolveByIdentity(
+                                    deviceType = identity.cameraType,
+                                    deviceName = cur.deviceName,
+                                    serialNumber = identity.serialNumber
+                                ) ?: cur.cameraModel
+                                cur.copy(
+                                    reportedDeviceType = identity.cameraType ?: cur.reportedDeviceType,
+                                    reportedSerialNumber = identity.serialNumber ?: cur.reportedSerialNumber,
+                                    cameraModel = model
+                                )
+                            }
+                        }
+                    }
                     clockQueries.remove(inner.sequence)?.let { sentAt ->
                         Go2BleProtocol.parseClockReply(inner.payload)?.let { seconds ->
                             clockAnswers.add(ClockAnswer(sentAt, SystemClock.elapsedRealtime(), seconds))
                         }
+                    }
+                    if (inner.sequence == startCaptureSeq) {
+                        startCaptureSeq = -1
                     }
                     if (inner.sequence == takePictureSeq) {
                         takePictureSeq = -1
@@ -1375,10 +1588,41 @@ class GpsRemoteBleManager(private val context: Context) {
                             _state.update { it.copy(lastVideoFile = name, lastVideoSeconds = seconds) }
                         }
                     }
+                    val confirmedSubModes = synchronized(subModeLock) {
+                        val pending = pendingSubModeWrites.remove(inner.sequence)
+                        if (pending != null && pending.generation > lastAppliedSubModeGeneration) {
+                            pendingSubModeWrites.entries.removeAll { it.value.generation <= pending.generation }
+                            val hasNewerPending = pendingSubModeWrites.values.any { it.generation > pending.generation }
+                            if (!hasNewerPending) {
+                                lastAppliedSubModeGeneration = pending.generation
+                                deferredConfirmedSubMode = null
+                                applySubModesLocked(pending.subModes)
+                                pending.subModes
+                            } else {
+                                if (deferredConfirmedSubMode == null || pending.generation > deferredConfirmedSubMode!!.generation) {
+                                    deferredConfirmedSubMode = pending
+                                }
+                                null
+                            }
+                        } else {
+                            null
+                        }
+                    }
+                    if (confirmedSubModes != null) {
+                        Log.i(
+                            TAG,
+                            "Camera confirmed sub-mode switch seq=${inner.sequence}: photo=${confirmedSubModes.photo}, video=${confirmedSubModes.video}"
+                        )
+                    }
                 }
 
                 in 100..599 -> {
                     Log.w(TAG, "Camera returned status ${inner.commandCode} for seq ${inner.sequence}: $hexPayload")
+                    synchronized(subModeLock) {
+                        if (pendingSubModeWrites.remove(inner.sequence) != null) {
+                            promoteDeferredSubModeIfReadyLocked()
+                        }
+                    }
                     if (inner.sequence == authorizationCheckSeq) {
                         authorizationCheckSeq = -1
                         authorizationCheckReply?.complete(null)
@@ -1392,6 +1636,23 @@ class GpsRemoteBleManager(private val context: Context) {
                         photoTimeoutJob?.cancel()
                         _state.update { it.copy(photosFailed = it.photosFailed + 1, isTakingPhoto = false) }
                     }
+                    if (inner.sequence == startCaptureSeq) {
+                        startCaptureSeq = -1
+                        captureChangeTimeoutJob?.cancel()
+                        markRecordingStop()
+                        _state.update {
+                            it.copy(
+                                isCaptureStarting = false,
+                                lastError = "Camera refused to start recording (status ${inner.commandCode})"
+                            )
+                        }
+                    }
+                    if (inner.sequence == stopCaptureSeq) {
+                        stopCaptureSeq = -1
+                        captureChangeTimeoutJob?.cancel()
+                        _state.update { it.copy(isCaptureStopping = false) }
+                        queryCaptureStatus()
+                    }
                 }
             }
         }
@@ -1403,9 +1664,84 @@ class GpsRemoteBleManager(private val context: Context) {
 
     /** Keeps the camera's reported mode, and the sub-mode of that mode for switching back to it. */
     private fun onSubModes(subModes: Go2BleProtocol.SubModes) {
-        if (subModes.photo != Go2BleProtocol.SUB_MODE_NONE) lastPhotoSubMode = subModes.photo
-        if (subModes.video != Go2BleProtocol.SUB_MODE_NONE) lastVideoSubMode = subModes.video
+        synchronized(subModeLock) {
+            onSubModesLocked(subModes)
+        }
+    }
+
+    private fun onSubModesLocked(subModes: Go2BleProtocol.SubModes) {
+        val maxPendingGen = pendingSubModeWrites.values.maxOfOrNull { it.generation }
+        val matchingOlder = if (maxPendingGen != null) {
+            pendingSubModeWrites.values
+                .filter { it.subModes == subModes && it.generation < maxPendingGen }
+                .maxByOrNull { it.generation }
+        } else {
+            null
+        }
+        if (matchingOlder != null) {
+            pendingSubModeWrites.entries.removeAll { it.value.generation <= matchingOlder.generation }
+            if (deferredConfirmedSubMode == null || matchingOlder.generation > deferredConfirmedSubMode!!.generation) {
+                deferredConfirmedSubMode = matchingOlder
+            }
+        } else {
+            val gen = ++subModeGeneration
+            lastAppliedSubModeGeneration = gen
+            deferredConfirmedSubMode = null
+            pendingSubModeWrites.clear()
+            applySubModesLocked(subModes)
+        }
+    }
+
+    private fun promoteDeferredSubModeIfReadyLocked() {
+        if (pendingSubModeWrites.isNotEmpty()) return
+        val deferred = deferredConfirmedSubMode ?: return
+        if (deferred.generation > lastAppliedSubModeGeneration) {
+            lastAppliedSubModeGeneration = deferred.generation
+            deferredConfirmedSubMode = null
+            applySubModesLocked(deferred.subModes)
+        } else {
+            deferredConfirmedSubMode = null
+        }
+    }
+
+    private fun applySubModesLocked(subModes: Go2BleProtocol.SubModes) {
+        if (subModes.photo in 0 until Go2BleProtocol.SUB_MODE_NONE) lastPhotoSubMode = subModes.photo
+        if (subModes.video in 0 until Go2BleProtocol.SUB_MODE_NONE) lastVideoSubMode = subModes.video
         updateDetails { it.copy(subModes = subModes) }
+    }
+
+    /**
+     * Updates the camera's active sub-modes when reported by an auxiliary transport (e.g., TCP port
+     * 6666 during Live View while BLE `0x2053` notifications are suppressed) and invalidates older
+     * in-flight BLE sub-mode write expectations.
+     */
+    fun updateSubModesFromExternalTransport(subModes: Go2BleProtocol.SubModes) {
+        synchronized(subModeLock) {
+            if (_state.value.connectionStatus != BleConnectionStatus.CONNECTED) return
+            Log.i(TAG, "External transport camera mode: photo sub-mode ${subModes.photo}, video sub-mode ${subModes.video}")
+            onSubModesLocked(subModes)
+        }
+    }
+
+    /**
+     * Updates remaining recording time or photo count when reported by an auxiliary transport with
+     * the same semantics as BLE `NOTIF_CAPTURE_TIME_LEFT`.
+     */
+    fun updateCaptureSecondsLeftFromExternalTransport(secondsLeft: Int) {
+        if (secondsLeft < 0) return
+        synchronized(subModeLock) {
+            if (_state.value.connectionStatus != BleConnectionStatus.CONNECTED) return
+            updateDetails { it.copy(captureSecondsLeft = secondsLeft) }
+        }
+    }
+
+    /**
+     * Returns the latest in-flight requested sub-modes if a mode switch is pending, or the last
+     * confirmed `details.subModes` otherwise.
+     */
+    fun effectiveSubModes(): Go2BleProtocol.SubModes? = synchronized(subModeLock) {
+        pendingSubModeWrites.values.maxByOrNull { it.generation }?.subModes
+            ?: _state.value.details.subModes
     }
 
     /**
@@ -1423,6 +1759,8 @@ class GpsRemoteBleManager(private val context: Context) {
                 details = state.details.copy(
                     captureSecondsLeft = reply.captureSecondsLeft ?: state.details.captureSecondsLeft,
                     cardState = reply.cardState ?: state.details.cardState,
+                    freeSpaceBytes = reply.freeSpaceBytes ?: state.details.freeSpaceBytes,
+                    totalSpaceBytes = reply.totalSpaceBytes ?: state.details.totalSpaceBytes,
                     pod = reply.pod ?: state.details.pod
                 )
             )
@@ -1505,13 +1843,21 @@ class GpsRemoteBleManager(private val context: Context) {
     }
 
     private fun queuePacket(packet: ByteArray) {
+        onPacketQueuedForTesting?.let { hook ->
+            hook(packet)
+            if (activeGatt == null || writeCharacteristic == null) return
+        }
         writeChannel.trySend(packet)
     }
 
     @SuppressLint("MissingPermission")
     private suspend fun performGattWrite(packet: ByteArray) {
-        val gatt = activeGatt ?: return
-        val char = writeCharacteristic ?: return
+        val gatt = activeGatt
+        val char = writeCharacteristic
+        if (gatt == null || char == null) {
+            clearPendingSubModeWriteForPacket(packet)
+            return
+        }
         Log.v(TAG, "TX ${packet.toHex()}")
 
         var retries = 3
@@ -1540,29 +1886,64 @@ class GpsRemoteBleManager(private val context: Context) {
                     kotlinx.coroutines.delay(100)
                 } else {
                     Log.w(TAG, "Failed to initiate GATT write on ${char.uuid} after retries")
+                    clearPendingSubModeWriteForPacket(packet)
                 }
+            }
+        }
+    }
+
+    private fun clearPendingSubModeWriteForPacket(packet: ByteArray) {
+        synchronized(subModeLock) {
+            if (pendingSubModeWrites.isEmpty()) return
+        }
+        val inner = Go2BleProtocol.decodePacket(packet)
+            ?.takeIf { it.isMessage }
+            ?.let { Go2BleProtocol.decodeInnerMessage(it.innerData) }
+            ?: return
+        synchronized(subModeLock) {
+            if (pendingSubModeWrites.remove(inner.sequence) != null) {
+                promoteDeferredSubModeIfReadyLocked()
             }
         }
     }
 
     /**
      * Switches the camera to Photo ([photo] true) or Video, in the sub-mode it was last seen in
-     * for that mode. The camera confirms with the sub-mode notification about 0.9 s later.
+     * for that mode. The camera confirms with `CMD_SET_OPTIONS` (0xC8) and/or a sub-mode notification.
      */
     fun setCameraMode(photo: Boolean) {
-        sendSubMode(photo, if (photo) lastPhotoSubMode else lastVideoSubMode)
+        val subMode = synchronized(subModeLock) {
+            if (photo) lastPhotoSubMode else lastVideoSubMode
+        }
+        sendSubMode(photo, subMode)
     }
 
-    /** Switches the camera to [mode]. The camera confirms with the sub-mode notification. */
+    /** Switches the camera to [mode]. The camera confirms with `CMD_SET_OPTIONS` (0xC8) and/or a sub-mode notification. */
     fun setCameraMode(mode: CameraMode) {
         sendSubMode(mode.isPhoto, mode.subMode)
     }
 
     private fun sendSubMode(photo: Boolean, subMode: Int) {
-        val seq = nextSeq()
-        Log.i(TAG, "Switching the camera to ${if (photo) "Photo" else "Video"}, sub-mode $subMode, seq=$seq")
+        if (onPacketQueuedForTesting == null && (activeGatt == null || writeCharacteristic == null)) {
+            return
+        }
+        val targetSubModes = if (photo) {
+            Go2BleProtocol.SubModes(photo = subMode, video = Go2BleProtocol.SUB_MODE_NONE)
+        } else {
+            Go2BleProtocol.SubModes(photo = Go2BleProtocol.SUB_MODE_NONE, video = subMode)
+        }
         val payload = Go2BleProtocol.buildSetSubModePayload(photo, subMode)
-        queuePacket(Go2BleProtocol.encodeMessagePacket(Go2BleProtocol.encodeInnerMessage(Go2BleProtocol.CMD_SET_OPTIONS, seq, payload)))
+        synchronized(subModeLock) {
+            val seq = nextSeq()
+            val gen = ++subModeGeneration
+            pendingSubModeWrites[seq] = PendingSubModeWrite(targetSubModes, gen)
+            Log.i(TAG, "Switching the camera to ${if (photo) "Photo" else "Video"}, sub-mode $subMode, seq=$seq")
+            queuePacket(
+                Go2BleProtocol.encodeMessagePacket(
+                    Go2BleProtocol.encodeInnerMessage(Go2BleProtocol.CMD_SET_OPTIONS, seq, payload)
+                )
+            )
+        }
     }
 
     /**
@@ -1605,13 +1986,21 @@ class GpsRemoteBleManager(private val context: Context) {
      * none will come on it. Left set, one could take the reply to a later request that reuses
      * the number once the count wraps.
      */
-    private fun forgetPendingReplies() {
+    internal fun forgetPendingReplies() {
         captureStatusQuerySeq = -1
         statusOptionsQuerySeq = -1
         authorizationCheckSeq = -1
         wifiInfoQuerySeq = -1
+        deviceIdentityQuerySeq = -1
+        startCaptureSeq = -1
         stopCaptureSeq = -1
         clockQueries.clear()
+        synchronized(subModeLock) {
+            pendingSubModeWrites.clear()
+            deferredConfirmedSubMode = null
+            subModeGeneration++
+            lastAppliedSubModeGeneration = subModeGeneration
+        }
     }
 
     /**
@@ -1620,7 +2009,9 @@ class GpsRemoteBleManager(private val context: Context) {
      */
     fun startRecording(mode: CameraMode? = null) {
         val command = mode?.startCommand ?: Go2BleProtocol.CMD_START_CAPTURE
-        val inner = Go2BleProtocol.encodeInnerMessage(command, nextSeq(), mode?.startPayload() ?: ByteArray(0))
+        val seq = nextSeq()
+        startCaptureSeq = seq
+        val inner = Go2BleProtocol.encodeInnerMessage(command, seq, mode?.startPayload() ?: ByteArray(0))
         val packet = Go2BleProtocol.encodeMessagePacket(inner)
         queuePacket(packet)
 
@@ -1637,6 +2028,8 @@ class GpsRemoteBleManager(private val context: Context) {
         captureChangeTimeoutJob?.cancel()
         captureChangeTimeoutJob = scope.launch {
             delay(CAPTURE_CHANGE_TIMEOUT_MS)
+            if (startCaptureSeq == seq) startCaptureSeq = -1
+            if (!_state.value.isRecording) markRecordingStop()
             _state.update { it.copy(isCaptureStarting = false) }
         }
     }
@@ -1646,7 +2039,8 @@ class GpsRemoteBleManager(private val context: Context) {
      * started with the camera's own button stops too.
      */
     fun stopRecording() {
-        val mode = _state.value.details.subModes?.let { CameraMode.of(it) }?.takeIf { it.isContinuous }
+        val mode = _state.value.details.recordingState?.let { CameraMode.ofCaptureState(it) }
+            ?: _state.value.details.subModes?.let { CameraMode.of(it) }?.takeIf { it.isContinuous }
         // The camera's reply to this command carries the name of the video file
         val seq = nextSeq()
         stopCaptureSeq = seq
@@ -1693,6 +2087,17 @@ class GpsRemoteBleManager(private val context: Context) {
             Go2BleProtocol.CMD_GET_OPTIONS,
             seq,
             Go2BleProtocol.buildStatusOptionsRequest()
+        )
+        queuePacket(Go2BleProtocol.encodeMessagePacket(inner))
+    }
+
+    private fun queryDeviceIdentity() {
+        val seq = nextSeq()
+        deviceIdentityQuerySeq = seq
+        val inner = Go2BleProtocol.encodeInnerMessage(
+            Go2BleProtocol.CMD_GET_OPTIONS,
+            seq,
+            Go2BleProtocol.buildDeviceIdentityRequest()
         )
         queuePacket(Go2BleProtocol.encodeMessagePacket(inner))
     }
@@ -1771,6 +2176,8 @@ class GpsRemoteBleManager(private val context: Context) {
         reconnectJob?.cancel()
         idleLinkJob?.cancel()
         clockJob?.cancel()
+        captureChangeTimeoutJob?.cancel()
+        gpsFlushRetry?.cancel()
         wakeJob?.cancel()
         wakeJob = null
         wakeOnNextConnect = false
@@ -1778,31 +2185,41 @@ class GpsRemoteBleManager(private val context: Context) {
         linkIsReconnect = false
         stopScan()
         stopKeepAlive()
+        pendingWriteAck?.complete(false)
+        drainWriteQueue()
         markRecordingStop()
         forgetPhotoInProgress()
-        activeGatt?.disconnect()
-        activeGatt?.close()
+        val oldGatt = activeGatt
         activeGatt = null
+        oldGatt?.disconnect()
+        oldGatt?.close()
         writeCharacteristic = null
+        attMtu = 23
         registrationJob?.cancel()
-        forgetPendingReplies()
-        _state.update {
-            it.copy(
-                connectionStatus = BleConnectionStatus.DISCONNECTED,
-                isReconnecting = false,
-                isWaking = false,
-                isLinkIdle = false,
-                isCameraAwake = false,
-                isRecording = false,
-                isCaptureStarting = false,
-                isCaptureStopping = false,
-                isTakingPhoto = false,
-                batteryPercent = null,
-                isCharging = false,
-                cameraClockOffsetMs = null,
-                details = CameraDetails(),
-                wakeUpRegistration = it.wakeUpRegistration.afterLinkDown()
-            )
+        synchronized(subModeLock) {
+            forgetPendingReplies()
+            _state.update {
+                it.copy(
+                    connectionStatus = BleConnectionStatus.DISCONNECTED,
+                    isReconnecting = false,
+                    isWaking = false,
+                    isLinkIdle = false,
+                    isCameraAwake = false,
+                    isRecording = false,
+                    isCaptureStarting = false,
+                    isCaptureStopping = false,
+                    isTakingPhoto = false,
+                    batteryPercent = null,
+                    isCharging = false,
+                    cameraClockOffsetMs = null,
+                    cameraModel = null,
+                    reportedDeviceType = null,
+                    reportedSerialNumber = null,
+                    isCameraWifiReady = false,
+                    details = CameraDetails(),
+                    wakeUpRegistration = it.wakeUpRegistration.afterLinkDown()
+                )
+            }
         }
     }
 

@@ -1,5 +1,7 @@
 package com.open360.core.ble
 
+import com.open360.core.model.CaptureMode
+
 /**
  * The GO 3S's capture modes, named as its Action Pod shows them and in the order the Insta360
  * app lists them. Each is selected by a photo or video sub-mode (SET_OPTIONS option 40 or 41)
@@ -73,6 +75,13 @@ enum class CameraMode(
         /** The modes of Photo ([photo] true) or Video, in the order they are offered. */
         fun group(photo: Boolean): List<CameraMode> = entries.filter { it.isPhoto == photo }
 
+        /** The modes for [captureMode], in the order they are offered. */
+        fun modesFor(captureMode: CaptureMode): List<CameraMode> = group(captureMode == CaptureMode.PHOTO)
+
+        /** Default single-shot or normal video mode for [captureMode]. */
+        fun fromCaptureMode(captureMode: CaptureMode): CameraMode =
+            if (captureMode == CaptureMode.PHOTO) PHOTO else VIDEO
+
         /** The mode the camera reports itself in, or null for a sub-mode not listed here. */
         fun of(subModes: Go2BleProtocol.SubModes): CameraMode? =
             if (subModes.isPhoto) entries.firstOrNull { it.isPhoto && it.subMode == subModes.photo }
@@ -84,5 +93,20 @@ enum class CameraMode(
          */
         fun inGroup(subModes: Go2BleProtocol.SubModes?, photo: Boolean): CameraMode? =
             subModes?.let { of(it) }?.takeIf { it.isPhoto == photo }
+
+        /**
+         * The mode for a reported CameraCaptureState, or null when the state is idle or unknown.
+         */
+        fun ofCaptureState(captureState: Int): CameraMode? = when (captureState) {
+            1 -> VIDEO
+            2 -> TIMELAPSE
+            3 -> INTERVAL_PHOTO
+            7 -> SLOW_MOTION
+            13 -> TIMESHIFT
+            17 -> FREEFRAME_PRO
+            18 -> LOOP_RECORDING
+            19 -> STARLAPSE
+            else -> null
+        }
     }
 }

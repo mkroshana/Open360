@@ -5,6 +5,9 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Bolt
@@ -23,16 +26,22 @@ import androidx.compose.material3.SegmentedListItem
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.open360.core.sensors.SensorDevice
 import com.open360.core.sensors.SensorKind
 import com.open360.core.sensors.SensorStatus
 import com.open360.core.sensors.SportsSensorsState
 import com.open360.ui.theme.BlurBehindDialog
+import com.open360.ui.theme.TabularFigures
 
 /**
  * The saved sports sensors, each with what it is sending now, and the way to add one. Their
@@ -45,35 +54,46 @@ fun SportsSensorsSection(
     onReconnectSensor: (String) -> Unit,
     onRemoveSensor: (String) -> Unit
 ) {
+    var pendingRemove by remember { mutableStateOf<SensorStatus?>(null) }
+
     // The saved sensors and Add Sensor, as one segmented list
     val count = sensors.saved.size + 1
     sensors.saved.forEachIndexed { index, status ->
         SegmentedListItem(
             shapes = ListItemDefaults.segmentedShapes(index = index, count = count),
+            colors = settingsSegmentColors(),
             leadingContent = { Icon(iconFor(status.device.kinds), contentDescription = null) },
             supportingContent = {
                 Text(
                     text = sensorStatusText(status),
+                    style = MaterialTheme.typography.bodyMedium.merge(TabularFigures),
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
             },
             trailingContent = {
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     if (!status.connected && !status.reconnecting) {
-                        TextButton(onClick = { onReconnectSensor(status.device.address) }) { Text("Reconnect") }
+                        TextButton(onClick = { onReconnectSensor(status.device.address) }) {
+                            Text(text = "Reconnect", maxLines = 1, softWrap = false)
+                        }
                     }
-                    IconButton(onClick = { onRemoveSensor(status.device.address) }) {
+                    IconButton(onClick = { pendingRemove = status }) {
                         Icon(Icons.Default.Delete, contentDescription = "Remove ${status.device.name}")
                     }
                 }
             }
         ) {
-            Text(status.device.name)
+            Text(
+                text = status.device.name,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis
+            )
         }
     }
     SegmentedListItem(
         onClick = onAddSensor,
         shapes = ListItemDefaults.segmentedShapes(index = count - 1, count = count),
+        colors = settingsSegmentColors(),
         leadingContent = { Icon(Icons.Default.Add, contentDescription = null) },
         supportingContent = {
             Text(
@@ -82,7 +102,33 @@ fun SportsSensorsSection(
             )
         }
     ) {
-        Text("Add Sensor")
+        Text("Add Sensor", maxLines = 1, overflow = TextOverflow.Ellipsis)
+    }
+
+    pendingRemove?.let { target ->
+        AlertDialog(
+            onDismissRequest = { pendingRemove = null },
+            title = { Text("Remove Sensor?") },
+            text = {
+                BlurBehindDialog()
+                Text("Stop saving telemetry from ${target.device.name}?")
+            },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        onRemoveSensor(target.device.address)
+                        pendingRemove = null
+                    }
+                ) {
+                    Text("Remove", color = MaterialTheme.colorScheme.error)
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { pendingRemove = null }) {
+                    Text("Cancel")
+                }
+            }
+        )
     }
 }
 
@@ -119,15 +165,33 @@ fun AddSensorDialog(
                         text = if (sensors.scanning) "Looking for sensors" else "No sensors found",
                         style = MaterialTheme.typography.bodyMedium
                     )
-                }
-                for (device in found) {
-                    ListItem(
-                        onClick = { onPick(device) },
-                        leadingContent = { Icon(iconFor(device.kinds), contentDescription = null) },
-                        supportingContent = { Text(kindsText(device.kinds)) },
-                        colors = ListItemDefaults.colors(containerColor = Color.Transparent)
+                } else {
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .heightIn(max = 240.dp)
+                            .verticalScroll(rememberScrollState())
                     ) {
-                        Text(device.name)
+                        for (device in found) {
+                            ListItem(
+                                onClick = { onPick(device) },
+                                leadingContent = { Icon(iconFor(device.kinds), contentDescription = null) },
+                                supportingContent = {
+                                    Text(
+                                        text = kindsText(device.kinds),
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis
+                                    )
+                                },
+                                colors = ListItemDefaults.colors(containerColor = Color.Transparent)
+                            ) {
+                                Text(
+                                    text = device.name,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis
+                                )
+                            }
+                        }
                     }
                 }
             }

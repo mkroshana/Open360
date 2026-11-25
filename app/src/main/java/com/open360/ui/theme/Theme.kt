@@ -19,33 +19,59 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.TextStyle
 
 private val DarkColorScheme = darkColorScheme(
-    primary = Color(0xFFD0BCFF),
-    onPrimary = Color(0xFF381E72),
-    primaryContainer = Color(0xFF4F378B),
-    onPrimaryContainer = Color(0xFFEADDFF),
-    secondary = Color(0xFFCCC2DC),
-    onSecondary = Color(0xFF332D41),
-    surface = Color(0xFF141218),
-    onSurface = Color(0xFFE6E0E9),
-    surfaceVariant = Color(0xFF2B2930),
-    onSurfaceVariant = Color(0xFFCAC4D0),
-    error = Color(0xFFF2B8B5),
-    onError = Color(0xFF601410)
+    primary = Color(0xFFF0EBE1),
+    onPrimary = Color(0xFF151412),
+    primaryContainer = Color(0xFF33312C),
+    onPrimaryContainer = Color(0xFFF5F1E9),
+    secondary = Color(0xFFC8C2B7),
+    onSecondary = Color(0xFF1C1B19),
+    secondaryContainer = Color(0xFF2D2C28),
+    onSecondaryContainer = Color(0xFFF3EFE8),
+    background = Color(0xFF0E0E0D),
+    onBackground = Color(0xFFF3EFE8),
+    surface = Color(0xFF0E0E0D),
+    onSurface = Color(0xFFF3EFE8),
+    surfaceVariant = Color(0xFF262522),
+    onSurfaceVariant = Color(0xFFA39E94),
+    surfaceContainerLowest = Color(0xFF090908),
+    surfaceContainerLow = Color(0xFF151513),
+    surfaceContainer = Color(0xFF191917),
+    surfaceContainerHigh = Color(0xFF22211F),
+    surfaceContainerHighest = Color(0xFF2A2926),
+    outline = Color(0xFF5E5A53),
+    outlineVariant = Color(0xFF34322E),
+    error = Color(0xFFFFB4AB),
+    onError = Color(0xFF690005),
+    errorContainer = Color(0xFF5C1510),
+    onErrorContainer = Color(0xFFFFDAD6)
 )
 
 private val LightColorScheme = lightColorScheme(
-    primary = Color(0xFF6750A4),
+    primary = Color(0xFF1C1B19),
     onPrimary = Color(0xFFFFFFFF),
-    primaryContainer = Color(0xFFEADDFF),
-    onPrimaryContainer = Color(0xFF21005D),
-    secondary = Color(0xFF625B71),
+    primaryContainer = Color(0xFFE6DFD1),
+    onPrimaryContainer = Color(0xFF1C1B19),
+    secondary = Color(0xFF5A554C),
     onSecondary = Color(0xFFFFFFFF),
-    surface = Color(0xFFFEF7FF),
-    onSurface = Color(0xFF1D1B20),
-    surfaceVariant = Color(0xFFE7E0EC),
-    onSurfaceVariant = Color(0xFF49454F),
+    secondaryContainer = Color(0xFFEBE5D8),
+    onSecondaryContainer = Color(0xFF1C1B19),
+    background = Color(0xFFF6F3EC),
+    onBackground = Color(0xFF1C1B19),
+    surface = Color(0xFFF6F3EC),
+    onSurface = Color(0xFF1C1B19),
+    surfaceVariant = Color(0xFFECE7DC),
+    onSurfaceVariant = Color(0xFF635E55),
+    surfaceContainerLowest = Color(0xFFFFFFFF),
+    surfaceContainerLow = Color(0xFFFAF8F3),
+    surfaceContainer = Color(0xFFFFFFFF),
+    surfaceContainerHigh = Color(0xFFEFEAE0),
+    surfaceContainerHighest = Color(0xFFEAE4D7),
+    outline = Color(0xFF9C9588),
+    outlineVariant = Color(0xFFDDD6C8),
     error = Color(0xFFB3261E),
-    onError = Color(0xFFFFFFFF)
+    onError = Color(0xFFFFFFFF),
+    errorContainer = Color(0xFFF9DEDC),
+    onErrorContainer = Color(0xFF410E0B)
 )
 
 /**
@@ -68,9 +94,9 @@ private val DarkStatusColors = StatusColors(
 )
 
 private val LightStatusColors = StatusColors(
-    recording = Color(0xFFBA1A1A),
-    ready = Color(0xFF1D6D35),
-    waiting = Color(0xFF855300)
+    recording = Color(0xFFC62828),
+    ready = Color(0xFF1B7A3E),
+    waiting = Color(0xFFB45309)
 )
 
 private val LocalStatusColors = staticCompositionLocalOf { DarkStatusColors }
@@ -84,13 +110,13 @@ val MaterialTheme.statusColors: StatusColors
 val TabularFigures = TextStyle(fontFeatureSettings = "tnum")
 
 /**
- * Material 3 Expressive, with the wallpaper's colours from Android 12 on: its springier motion,
- * and the components' Expressive shapes and press feedback.
+ * Material 3 Expressive with Open360's curated editorial dark / warm light schemes by default, or
+ * Android 12+ dynamic wallpaper colours when [dynamicColor] is enabled.
  */
 @Composable
 fun Open360Theme(
     darkTheme: Boolean = isSystemInDarkTheme(),
-    dynamicColor: Boolean = true,
+    dynamicColor: Boolean = false,
     content: @Composable () -> Unit
 ) {
     val colorScheme = when {

@@ -175,4 +175,16 @@ class FitWriterTest {
         assertEquals(-33.8688, record.getValue(0) * 180.0 / 2147483648.0, 1e-7)
         assertEquals(-151.2093, record.getValue(1) * 180.0 / 2147483648.0, 1e-7)
     }
+
+    @Test
+    fun testNonFiniteCoordinatesDoNotCrash() {
+        val fixes = listOf(
+            GpsFix(0L, startMs, Double.NaN, 79.9, Double.POSITIVE_INFINITY, Double.NaN, 0.0),
+            fix(1.0, 6.6657512, 79.9369134, 10.0, 5.0)
+        )
+        val fit = FitWriter.activity(fixes, utcOffsetMs = 0)
+        val messages = decode(fit)
+        val records = messages.filter { it.global == 20 }
+        assertTrue(records.isNotEmpty())
+    }
 }
