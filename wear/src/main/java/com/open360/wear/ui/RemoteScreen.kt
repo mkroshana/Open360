@@ -2,11 +2,19 @@ package com.open360.wear.ui
 
 import android.os.SystemClock
 import androidx.annotation.DrawableRes
+import androidx.compose.animation.core.Animatable
+import androidx.compose.animation.core.LinearEasing
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.snap
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
@@ -28,7 +36,10 @@ import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Favorite
 import androidx.compose.material.icons.filled.LocationOff
 import androidx.compose.material.icons.filled.LocationOn
+import androidx.compose.material.icons.filled.Lock
+import androidx.compose.material.icons.filled.LockOpen
 import androidx.compose.material.icons.filled.Movie
+import androidx.compose.material.icons.filled.PedalBike
 import androidx.compose.material.icons.filled.PowerSettingsNew
 import androidx.compose.material.icons.filled.Schedule
 import androidx.compose.material.icons.filled.Settings
@@ -39,18 +50,31 @@ import androidx.compose.material.icons.filled.Watch
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.rememberUpdatedState
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.StrokeCap
+import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.vector.ImageVector
-import androidx.compose.ui.hapticfeedback.HapticFeedbackType
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalConfiguration
-import androidx.compose.ui.platform.LocalHapticFeedback
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.role
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
@@ -95,16 +119,21 @@ import com.open360.ui.camera.CameraViewModel
 import com.open360.wear.SpeedUnit
 import com.open360.wear.WatchHeartRate
 import com.open360.wear.ui.theme.WearCameraModelAvatar
+import com.open360.wear.ui.theme.WearEaseOutCubic
 import com.open360.wear.ui.theme.WearMetricPill
 import com.open360.wear.ui.theme.WearStatusDot
 import com.open360.wear.ui.theme.WearSurfaceCard
 import com.open360.wear.ui.theme.WearTabularFigures
 import com.open360.wear.ui.theme.WearTactileShutterButton
 import com.open360.wear.ui.theme.rememberWearPressScale
+import com.open360.wear.ui.theme.rememberWearRecordingPulseAlpha
+import com.open360.wear.ui.theme.rememberWearReducedMotion
 import com.open360.wear.ui.theme.wearEditorialOutlinedButtonColors
 import com.open360.wear.ui.theme.wearEditorialTonalButtonColors
 import com.open360.wear.ui.theme.wearMiddleEllipsize
 import com.open360.wear.ui.theme.wearStatusColors
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.launch
 
 /** What the remote is for at the moment, which decides what it puts first. */
 private enum class RemoteMode {
@@ -218,7 +247,12 @@ fun RemoteScreen(
     speedUnit: SpeedUnit,
     onOpenModes: () -> Unit,
     onOpenSettings: () -> Unit,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    missingBlePermissions: Boolean = false,
+    missingLocationPermission: Boolean = false,
+    onRequestPermissions: () -> Unit = {},
+    isScreenLocked: Boolean = false,
+    onScreenLockedChange: (Boolean) -> Unit = {}
 ) {
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
     val heart by heartRate.state.collectAsStateWithLifecycle()
@@ -228,9 +262,11 @@ fun RemoteScreen(
     val gps = uiState.gpsState
     // Read again with each GPS update, which comes at least once a second while tracking
     val gpsReady = RemoteText.gpsReady(gps.hasFix, SystemClock.elapsedRealtime() - gps.fixElapsedRealtimeMs)
-    val haptic = LocalHapticFeedback.current
+    val context = LocalContext.current
     val liveHeartRateBpm = heart.bpm
         ?: sensors.saved.firstOrNull { it.connected && it.heartRateBpm != null }?.heartRateBpm
+    val livePowerWatts = sensors.saved.firstOrNull { it.connected && it.powerWatts != null }?.powerWatts
+    val liveCadenceRpm = sensors.saved.firstOrNull { it.connected && it.cadenceRpm != null }?.cadenceRpm
 
     val cameraOn = ble.connectionStatus == BleConnectionStatus.CONNECTED && ble.isCameraAwake
     val mode = when {
@@ -238,6 +274,15 @@ fun RemoteScreen(
         cameraOn -> RemoteMode.READY
         else -> RemoteMode.OFFLINE
     }
+    val activeWarning = cameraWarnings(ble.details).firstOrNull()
+    var previousWarning by remember { mutableStateOf(activeWarning) }
+    LaunchedEffect(activeWarning, mode) {
+        if (mode == RemoteMode.RECORDING && activeWarning != null && activeWarning != previousWarning) {
+            WearHaptics.trigger(context, WearHapticPattern.FAILURE)
+        }
+        previousWarning = activeWarning
+    }
+
     val button = CameraButton.of(ble, uiState.isConnected)
     val cameraMode = ble.details.subModes?.let { CameraMode.of(it) }
     val shownMode = RemoteText.shownMode(uiState.currentMode, cameraMode)
@@ -260,12 +305,12 @@ fun RemoteScreen(
     }
 
     val onShutter = {
-        haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+        WearHaptics.trigger(context, WearHapticPattern.SHUTTER_TAP)
         viewModel.onShutterClicked()
     }
     val onLinkButton = {
         if (button == CameraButton.CONNECT || button == CameraButton.WAKE_UP) {
-            haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+            WearHaptics.trigger(context, WearHapticPattern.LINK_ACTION)
         }
         viewModel.onCameraButton(button)
     }
@@ -274,16 +319,23 @@ fun RemoteScreen(
         OfflineRemote(
             ble = ble,
             cameraName = cameraName,
-            hint = RemoteText.hint(
-                ble,
-                hasWakeUpId = uiState.wakeUpId != null,
-                isLookingForCamera = button == CameraButton.STOP,
-                throughPhone = uiState.linkedThroughPeer
-            ),
+            hint = if (missingBlePermissions) {
+                "Allow Bluetooth & Location to connect"
+            } else {
+                RemoteText.hint(
+                    ble,
+                    hasWakeUpId = uiState.wakeUpId != null,
+                    isLookingForCamera = button == CameraButton.STOP,
+                    throughPhone = uiState.linkedThroughPeer
+                )
+            },
             gpsReady = gpsReady,
             error = ble.lastError ?: uiState.trackState.lastError,
             button = button,
             isMovingLink = uiState.linkMove != null,
+            missingBlePermissions = missingBlePermissions,
+            missingLocationPermission = missingLocationPermission,
+            onRequestPermissions = onRequestPermissions,
             onLinkButton = onLinkButton,
             onOpenSettings = onOpenSettings,
             modifier = modifier
@@ -291,88 +343,172 @@ fun RemoteScreen(
         return
     }
 
-    val metrics = WearControlsMetrics.forScreenWidthDp(LocalConfiguration.current.screenWidthDp)
+    val screenWidthDp = LocalConfiguration.current.screenWidthDp
+    val metrics = WearControlsMetrics.forScreenWidthDp(screenWidthDp)
+    val maxTelemetryItems = if (screenWidthDp < 227) 2 else 3
+    val lowBatteryPercent = ble.batteryPercent?.takeIf {
+        it <= CameraStatusText.LOW_BATTERY_PERCENT && !ble.isCharging
+    }
+    val reducedMotion = rememberWearReducedMotion()
+    val bezelPulse = rememberWearRecordingPulseAlpha(active = mode == RemoteMode.RECORDING)
+    val switchRecedeSpec = if (reducedMotion) {
+        snap<Float>()
+    } else {
+        tween<Float>(durationMillis = 180, easing = WearEaseOutCubic)
+    }
+    val switchAlpha by animateFloatAsState(
+        targetValue = if (mode == RemoteMode.RECORDING) 0.28f else 1f,
+        animationSpec = switchRecedeSpec,
+        label = "wearSwitchRecedeAlpha"
+    )
+    val switchScale by animateFloatAsState(
+        targetValue = if (mode == RemoteMode.RECORDING) 0.90f else 1f,
+        animationSpec = switchRecedeSpec,
+        label = "wearSwitchRecedeScale"
+    )
     val pagerState = rememberPagerState(pageCount = { 2 })
     // Back on the controls whenever a recording starts or stops
     LaunchedEffect(mode) { pagerState.animateScrollToPage(0) }
     HorizontalPagerScaffold(pagerState = pagerState, modifier = modifier) {
-        HorizontalPager(state = pagerState) { page ->
+        HorizontalPager(state = pagerState, userScrollEnabled = !isScreenLocked) { page ->
             AnimatedPage(pageIndex = page, pagerState = pagerState) {
                 if (page == 0) {
                     ScreenScaffold {
-                        Column(
-                            modifier = Modifier.fillMaxSize(),
-                            verticalArrangement = Arrangement.spacedBy(metrics.verticalGap, Alignment.CenterVertically),
-                            horizontalAlignment = Alignment.CenterHorizontally
-                        ) {
+                        Box(modifier = Modifier.fillMaxSize()) {
                             Column(
-                                modifier = Modifier
-                                    .height(metrics.aboveHeight)
-                                    .padding(horizontal = metrics.aboveHorizontalPadding),
-                                verticalArrangement = Arrangement.Bottom,
+                                modifier = Modifier.fillMaxSize(),
+                                verticalArrangement = Arrangement.spacedBy(metrics.verticalGap, Alignment.CenterVertically),
                                 horizontalAlignment = Alignment.CenterHorizontally
                             ) {
-                                if (mode == RemoteMode.RECORDING) {
-                                    RecordingTimer(RemoteText.elapsed(uiState.recordingDurationSeconds))
-                                } else {
-                                    ReadyHeader(ble = ble, throughPhone = uiState.linkedThroughPeer)
-                                }
-                                Text(
-                                    text = (if (mode == RemoteMode.RECORDING) {
-                                        CameraStatusText.recordingMode(ble.details.recordingState)
+                                Column(
+                                    modifier = Modifier
+                                        .height(metrics.aboveHeight)
+                                        .padding(horizontal = metrics.aboveHorizontalPadding),
+                                    verticalArrangement = Arrangement.Bottom,
+                                    horizontalAlignment = Alignment.CenterHorizontally
+                                ) {
+                                    if (mode == RemoteMode.RECORDING) {
+                                        RecordingTimer(
+                                            elapsed = RemoteText.elapsed(uiState.recordingDurationSeconds),
+                                            lowBatteryPercent = lowBatteryPercent
+                                        )
                                     } else {
-                                        null
-                                    }) ?: shownMode?.label ?: uiState.currentMode.displayName,
-                                    style = MaterialTheme.typography.bodySmall,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                    maxLines = 1,
-                                    overflow = TextOverflow.Ellipsis
+                                        ReadyHeader(ble = ble, throughPhone = uiState.linkedThroughPeer)
+                                    }
+                                    Text(
+                                        text = (if (mode == RemoteMode.RECORDING) {
+                                            CameraStatusText.recordingMode(ble.details.recordingState)
+                                        } else {
+                                            null
+                                        }) ?: shownMode?.label ?: uiState.currentMode.displayName,
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis
+                                    )
+                                }
+                                Row(
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(metrics.rowGap)
+                                ) {
+                                    if (mode == RemoteMode.RECORDING) {
+                                        LockScreenButton(
+                                            buttonSize = metrics.sideButtonSize,
+                                            onClick = {
+                                                WearHaptics.trigger(context, WearHapticPattern.LINK_ACTION)
+                                                onScreenLockedChange(true)
+                                            }
+                                        )
+                                    } else {
+                                        ModeButton(
+                                            drawableRes = shownMode?.let { Insta360Icons.modeDrawableRes(it) }
+                                                ?: Insta360Icons.captureModeDrawableRes(uiState.currentMode),
+                                            modeName = shownMode?.label ?: uiState.currentMode.displayName,
+                                            enabled = !busy,
+                                            buttonSize = metrics.sideButtonSize,
+                                            onClick = onOpenModes
+                                        )
+                                    }
+                                    WearTactileShutterButton(
+                                        currentMode = uiState.currentMode,
+                                        isRecording = mode == RemoteMode.RECORDING,
+                                        isBusy = busy,
+                                        enabled = true,
+                                        contentDescription = shutterLabel,
+                                        onClick = onShutter,
+                                        size = metrics.shutterSize
+                                    )
+                                    PhotoVideoSwitch(
+                                        current = uiState.currentMode,
+                                        enabled = !busy && mode != RemoteMode.RECORDING,
+                                        buttonSize = metrics.sideButtonSize,
+                                        onSwitch = { viewModel.setMode(it) },
+                                        modifier = Modifier.graphicsLayer {
+                                            alpha = switchAlpha
+                                            scaleX = switchScale
+                                            scaleY = switchScale
+                                        }
+                                    )
+                                }
+                                Column(
+                                    modifier = Modifier
+                                        .height(metrics.belowHeight)
+                                        .padding(horizontal = metrics.belowHorizontalPadding),
+                                    verticalArrangement = Arrangement.Top,
+                                    horizontalAlignment = Alignment.CenterHorizontally
+                                ) {
+                                    ShutterLabel(shutterLabel)
+                                    Spacer(Modifier.height(2.dp))
+                                    UnderShutterLine(
+                                        warning = activeWarning,
+                                        gpsReady = gpsReady,
+                                        isRecording = mode == RemoteMode.RECORDING,
+                                        left = captureLeft(ble.details),
+                                        speed = if (gpsReady) RemoteText.speed(gps.speedKmh, gps.speedMph, inMph) else null,
+                                        heartRateBpm = liveHeartRateBpm,
+                                        powerWatts = livePowerWatts,
+                                        cadenceRpm = liveCadenceRpm,
+                                        maxTelemetryItems = maxTelemetryItems
+                                    )
+                                }
+                            }
+                            if (mode == RemoteMode.RECORDING) {
+                                val recordingRingColor = MaterialTheme.wearStatusColors.recording
+                                Box(
+                                    modifier = Modifier
+                                        .fillMaxSize()
+                                        .graphicsLayer { alpha = bezelPulse.value * 0.45f }
+                                        .drawBehind {
+                                            val strokeWidthPx = 2.dp.toPx()
+                                            val inset = 2.dp.toPx() + strokeWidthPx / 2f
+                                            val radius = size.minDimension / 2f - inset
+                                            if (radius > 0f) {
+                                                drawCircle(
+                                                    color = recordingRingColor,
+                                                    radius = radius,
+                                                    center = center,
+                                                    style = Stroke(width = strokeWidthPx)
+                                                )
+                                            }
+                                        }
                                 )
                             }
-                            Row(
-                                verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.spacedBy(metrics.rowGap)
-                            ) {
-                                ModeButton(
-                                    drawableRes = shownMode?.let { Insta360Icons.modeDrawableRes(it) }
-                                        ?: Insta360Icons.captureModeDrawableRes(uiState.currentMode),
-                                    modeName = shownMode?.label ?: uiState.currentMode.displayName,
-                                    enabled = !busy && mode != RemoteMode.RECORDING,
-                                    buttonSize = metrics.sideButtonSize,
-                                    onClick = onOpenModes
-                                )
-                                WearTactileShutterButton(
-                                    currentMode = uiState.currentMode,
-                                    isRecording = mode == RemoteMode.RECORDING,
-                                    isBusy = busy,
-                                    enabled = true,
-                                    contentDescription = shutterLabel,
-                                    onClick = onShutter,
-                                    size = metrics.shutterSize
-                                )
-                                PhotoVideoSwitch(
-                                    current = uiState.currentMode,
-                                    enabled = !busy && mode != RemoteMode.RECORDING,
-                                    buttonSize = metrics.sideButtonSize,
-                                    onSwitch = { viewModel.setMode(it) }
-                                )
-                            }
-                            Column(
-                                modifier = Modifier
-                                    .height(metrics.belowHeight)
-                                    .padding(horizontal = metrics.belowHorizontalPadding),
-                                verticalArrangement = Arrangement.Top,
-                                horizontalAlignment = Alignment.CenterHorizontally
-                            ) {
-                                ShutterLabel(shutterLabel)
-                                Spacer(Modifier.height(2.dp))
-                                UnderShutterLine(
-                                    warning = cameraWarnings(ble.details).firstOrNull(),
+                            if (isScreenLocked && mode == RemoteMode.RECORDING) {
+                                TouchLockOverlay(
+                                    elapsed = RemoteText.elapsed(uiState.recordingDurationSeconds),
+                                    lowBatteryPercent = lowBatteryPercent,
+                                    warning = activeWarning,
                                     gpsReady = gpsReady,
-                                    isRecording = mode == RemoteMode.RECORDING,
-                                    left = captureLeft(ble.details),
                                     speed = if (gpsReady) RemoteText.speed(gps.speedKmh, gps.speedMph, inMph) else null,
-                                    heartRateBpm = liveHeartRateBpm
+                                    heartRateBpm = liveHeartRateBpm,
+                                    powerWatts = livePowerWatts,
+                                    cadenceRpm = liveCadenceRpm,
+                                    maxTelemetryItems = maxTelemetryItems,
+                                    reducedMotion = reducedMotion,
+                                    onUnlock = {
+                                        WearHaptics.trigger(context, WearHapticPattern.UNLOCK)
+                                        onScreenLockedChange(false)
+                                    }
                                 )
                             }
                         }
@@ -407,6 +543,9 @@ private fun OfflineRemote(
     error: String?,
     button: CameraButton,
     isMovingLink: Boolean,
+    missingBlePermissions: Boolean,
+    missingLocationPermission: Boolean,
+    onRequestPermissions: () -> Unit,
     onLinkButton: () -> Unit,
     onOpenSettings: () -> Unit,
     modifier: Modifier = Modifier
@@ -430,19 +569,36 @@ private fun OfflineRemote(
         contentPadding = scaffoldPadding,
         edgeButtonSpacing = offlineMetrics.edgeButtonSpacing,
         edgeButton = {
-            EdgeButton(
-                onClick = onLinkButton,
-                buttonSize = offlineMetrics.edgeButtonSize,
-                enabled = !isMovingLink,
-                colors = if (button == CameraButton.STOP) {
-                    wearEditorialTonalButtonColors()
-                } else {
-                    ButtonDefaults.buttonColors()
+            if (missingBlePermissions) {
+                EdgeButton(
+                    onClick = onRequestPermissions,
+                    buttonSize = offlineMetrics.edgeButtonSize,
+                    enabled = true,
+                    colors = ButtonDefaults.buttonColors()
+                ) {
+                    Icon(
+                        imageVector = Icons.Filled.LockOpen,
+                        contentDescription = null,
+                        modifier = Modifier.size(18.dp)
+                    )
+                    Spacer(Modifier.width(6.dp))
+                    Text("Allow Access")
                 }
-            ) {
-                LinkActionIcon(button = button, modifier = Modifier.size(18.dp))
-                Spacer(Modifier.width(6.dp))
-                Text(if (isMovingLink) "Moving..." else button.label)
+            } else {
+                EdgeButton(
+                    onClick = onLinkButton,
+                    buttonSize = offlineMetrics.edgeButtonSize,
+                    enabled = !isMovingLink,
+                    colors = if (button == CameraButton.STOP) {
+                        wearEditorialTonalButtonColors()
+                    } else {
+                        ButtonDefaults.buttonColors()
+                    }
+                ) {
+                    LinkActionIcon(button = button, modifier = Modifier.size(18.dp))
+                    Spacer(Modifier.width(6.dp))
+                    Text(if (isMovingLink) "Moving..." else button.label)
+                }
             }
         }
     ) { contentPadding ->
@@ -473,11 +629,19 @@ private fun OfflineRemote(
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.Center
                 ) {
+                    val gpsRecoverable = !missingBlePermissions && missingLocationPermission
                     WearMetricPill(
-                        text = RemoteText.gpsStatus(gpsReady),
+                        text = if (gpsRecoverable) "Allow GPS" else RemoteText.gpsStatus(gpsReady),
                         icon = if (gpsReady) Icons.Filled.LocationOn else Icons.Filled.LocationOff,
                         iconTint = if (gpsReady) MaterialTheme.wearStatusColors.ready else MaterialTheme.wearStatusColors.waiting,
-                        contentPadding = PaddingValues(horizontal = 9.dp, vertical = 3.dp)
+                        contentPadding = PaddingValues(horizontal = 9.dp, vertical = 3.dp),
+                        modifier = if (gpsRecoverable) {
+                            Modifier
+                                .clip(CircleShape)
+                                .clickable(role = Role.Button, onClick = onRequestPermissions)
+                        } else {
+                            Modifier
+                        }
                     )
                     Spacer(Modifier.width(10.dp))
                     FilledTonalIconButton(
@@ -688,6 +852,184 @@ private fun CameraPage(
     }
 }
 
+/** Beside the shutter while recording: locks screen touches until held to unlock. */
+@Composable
+private fun LockScreenButton(
+    buttonSize: Dp,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    val interactionSource = remember { MutableInteractionSource() }
+    val pressScale by rememberWearPressScale(interactionSource, targetScale = 0.94f)
+
+    FilledTonalIconButton(
+        onClick = onClick,
+        interactionSource = interactionSource,
+        colors = IconButtonDefaults.filledTonalIconButtonColors(
+            containerColor = MaterialTheme.colorScheme.surfaceContainerHigh,
+            contentColor = MaterialTheme.colorScheme.onSurface
+        ),
+        border = BorderStroke(width = 1.dp, color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.55f)),
+        modifier = modifier
+            .touchTargetAwareSize(buttonSize)
+            .graphicsLayer {
+                scaleX = pressScale
+                scaleY = pressScale
+            }
+    ) {
+        Icon(
+            imageVector = Icons.Filled.LockOpen,
+            contentDescription = "Lock screen",
+            modifier = Modifier.size(20.dp)
+        )
+    }
+}
+
+/**
+ * Full-screen touch/water lock overlay while recording: absorbs stray taps and swipes and
+ * requires holding the centered lock ring for 1.1 s to unlock.
+ */
+@Composable
+private fun TouchLockOverlay(
+    elapsed: String,
+    lowBatteryPercent: Int?,
+    warning: String?,
+    gpsReady: Boolean,
+    speed: String?,
+    heartRateBpm: Int?,
+    powerWatts: Int?,
+    cadenceRpm: Int?,
+    maxTelemetryItems: Int,
+    reducedMotion: Boolean,
+    onUnlock: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    val scope = rememberCoroutineScope()
+    val unlockProgress = remember { Animatable(0f) }
+    val currentOnUnlock by rememberUpdatedState(onUnlock)
+    var resetJob by remember { mutableStateOf<Job?>(null) }
+    val trackColor = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f)
+    val progressColor = MaterialTheme.colorScheme.primary
+
+    Box(
+        modifier = modifier
+            .fillMaxSize()
+            .background(Color.Black.copy(alpha = 0.88f))
+            .pointerInput(Unit) { detectTapGestures { } },
+        contentAlignment = Alignment.Center
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(horizontal = 20.dp, vertical = 12.dp),
+            verticalArrangement = Arrangement.spacedBy(6.dp, Alignment.CenterVertically),
+            horizontalAlignment = Alignment.CenterHorizontally
+        ) {
+            RecordingTimer(elapsed = elapsed, lowBatteryPercent = lowBatteryPercent)
+            Box(
+                modifier = Modifier
+                    .size(76.dp)
+                    .clip(CircleShape)
+                    .background(MaterialTheme.colorScheme.surfaceContainerHigh)
+                    .drawBehind {
+                        val strokeWidthPx = 3.dp.toPx()
+                        val inset = strokeWidthPx / 2f + 1.dp.toPx()
+                        val arcDiameter = size.minDimension - inset * 2f
+                        if (arcDiameter > 0f) {
+                            val topLeft = Offset(inset, inset)
+                            val arcSize = Size(arcDiameter, arcDiameter)
+                            drawArc(
+                                color = trackColor,
+                                startAngle = 0f,
+                                sweepAngle = 360f,
+                                useCenter = false,
+                                topLeft = topLeft,
+                                size = arcSize,
+                                style = Stroke(width = strokeWidthPx)
+                            )
+                            val sweep = unlockProgress.value.coerceIn(0f, 1f) * 360f
+                            if (sweep > 0f) {
+                                drawArc(
+                                    color = progressColor,
+                                    startAngle = -90f,
+                                    sweepAngle = sweep,
+                                    useCenter = false,
+                                    topLeft = topLeft,
+                                    size = arcSize,
+                                    style = Stroke(width = strokeWidthPx, cap = StrokeCap.Round)
+                                )
+                            }
+                        }
+                    }
+                    .semantics {
+                        contentDescription = "Hold to unlock"
+                        role = Role.Button
+                    }
+                    .pointerInput(Unit) {
+                        detectTapGestures(
+                            onPress = {
+                                resetJob?.cancel()
+                                val holdJob = scope.launch {
+                                    unlockProgress.snapTo(0f)
+                                    unlockProgress.animateTo(
+                                        targetValue = 1f,
+                                        animationSpec = tween(durationMillis = 1100, easing = LinearEasing)
+                                    )
+                                    if (unlockProgress.value >= 0.99f) {
+                                        currentOnUnlock()
+                                    }
+                                }
+                                try {
+                                    tryAwaitRelease()
+                                } finally {
+                                    holdJob.cancel()
+                                    if (unlockProgress.value < 0.99f) {
+                                        resetJob = scope.launch {
+                                            unlockProgress.animateTo(
+                                                targetValue = 0f,
+                                                animationSpec = if (reducedMotion) {
+                                                    snap()
+                                                } else {
+                                                    tween(durationMillis = 160, easing = WearEaseOutCubic)
+                                                }
+                                            )
+                                        }
+                                    }
+                                }
+                            }
+                        )
+                    },
+                contentAlignment = Alignment.Center
+            ) {
+                Icon(
+                    imageVector = Icons.Filled.Lock,
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.onSurface,
+                    modifier = Modifier.size(26.dp)
+                )
+            }
+            Text(
+                text = "Hold to unlock",
+                style = MaterialTheme.typography.labelMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                textAlign = TextAlign.Center,
+                maxLines = 1
+            )
+            UnderShutterLine(
+                warning = warning,
+                gpsReady = gpsReady,
+                isRecording = true,
+                left = null,
+                speed = speed,
+                heartRateBpm = heartRateBpm,
+                powerWatts = powerWatts,
+                cadenceRpm = cadenceRpm,
+                maxTelemetryItems = maxTelemetryItems
+            )
+        }
+    }
+}
+
 /** Beside the shutter: the camera's mode glyph inside a hairline capsule, opening the mode list. */
 @Composable
 private fun ModeButton(
@@ -786,7 +1128,10 @@ private fun UnderShutterLine(
     isRecording: Boolean,
     left: String?,
     speed: String?,
-    heartRateBpm: Int?
+    heartRateBpm: Int?,
+    powerWatts: Int? = null,
+    cadenceRpm: Int? = null,
+    maxTelemetryItems: Int = 3
 ) {
     val compactPadding = PaddingValues(horizontal = 8.dp, vertical = 3.dp)
     val pillTextStyle = MaterialTheme.typography.bodySmall
@@ -806,7 +1151,13 @@ private fun UnderShutterLine(
             contentPadding = compactPadding,
             textStyle = pillTextStyle
         )
-        isRecording -> LiveReadingsPill(speed = speed, heartRateBpm = heartRateBpm)
+        isRecording -> LiveReadingsPill(
+            speed = speed,
+            heartRateBpm = heartRateBpm,
+            powerWatts = powerWatts,
+            cadenceRpm = cadenceRpm,
+            maxItems = maxTelemetryItems
+        )
         left != null -> WearMetricPill(
             text = left,
             icon = Icons.Filled.LocationOn,
@@ -824,13 +1175,41 @@ private fun UnderShutterLine(
     }
 }
 
+private data class LiveTelemetryItem(
+    val icon: ImageVector,
+    val contentDescription: String,
+    val iconTint: Color,
+    val text: String
+)
+
 @Composable
 private fun LiveReadingsPill(
     speed: String?,
     heartRateBpm: Int?,
+    powerWatts: Int? = null,
+    cadenceRpm: Int? = null,
+    maxItems: Int = 3,
     modifier: Modifier = Modifier
 ) {
-    if (speed == null && heartRateBpm == null) {
+    val onSurfaceVariant = MaterialTheme.colorScheme.onSurfaceVariant
+    val recordingTint = MaterialTheme.wearStatusColors.recording
+    val primaryTint = MaterialTheme.colorScheme.primary
+    val items = buildList {
+        if (speed != null) {
+            add(LiveTelemetryItem(Icons.Filled.Speed, "Speed", onSurfaceVariant, speed))
+        }
+        if (heartRateBpm != null) {
+            add(LiveTelemetryItem(Icons.Filled.Favorite, "Heart rate", recordingTint, "$heartRateBpm bpm"))
+        }
+        if (powerWatts != null) {
+            add(LiveTelemetryItem(Icons.Filled.Bolt, "Power", primaryTint, RemoteText.power(powerWatts)))
+        }
+        if (cadenceRpm != null) {
+            add(LiveTelemetryItem(Icons.Filled.PedalBike, "Cadence", onSurfaceVariant, RemoteText.cadence(cadenceRpm)))
+        }
+    }.take(maxItems.coerceAtLeast(0))
+
+    if (items.isEmpty()) {
         WearMetricPill(
             text = RemoteText.gpsStatus(true),
             icon = Icons.Filled.LocationOn,
@@ -854,34 +1233,18 @@ private fun LiveReadingsPill(
             )
             .padding(horizontal = 8.dp, vertical = 3.dp)
     ) {
-        if (speed != null) {
+        items.forEachIndexed { index, item ->
+            if (index > 0) {
+                Spacer(Modifier.width(2.dp))
+            }
             Icon(
-                imageVector = Icons.Filled.Speed,
-                contentDescription = "Speed",
-                tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                imageVector = item.icon,
+                contentDescription = item.contentDescription,
+                tint = item.iconTint,
                 modifier = Modifier.size(12.dp)
             )
             Text(
-                text = speed,
-                style = MaterialTheme.typography.bodySmall.merge(WearTabularFigures),
-                fontWeight = FontWeight.SemiBold,
-                color = MaterialTheme.colorScheme.onSurface,
-                maxLines = 1,
-                softWrap = false
-            )
-        }
-        if (speed != null && heartRateBpm != null) {
-            Spacer(Modifier.width(2.dp))
-        }
-        if (heartRateBpm != null) {
-            Icon(
-                imageVector = Icons.Filled.Favorite,
-                contentDescription = "Heart rate",
-                tint = MaterialTheme.wearStatusColors.recording,
-                modifier = Modifier.size(12.dp)
-            )
-            Text(
-                text = "$heartRateBpm bpm",
+                text = item.text,
                 style = MaterialTheme.typography.bodySmall.merge(WearTabularFigures),
                 fontWeight = FontWeight.SemiBold,
                 color = MaterialTheme.colorScheme.onSurface,
@@ -1029,7 +1392,10 @@ private fun ReadyHeader(ble: BleCameraState, throughPhone: Boolean) {
 
 /** Pulsing recording dot and bold tabular running timer above the shutter while recording. */
 @Composable
-private fun RecordingTimer(elapsed: String) {
+private fun RecordingTimer(
+    elapsed: String,
+    lowBatteryPercent: Int? = null
+) {
     Row(
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.Center
@@ -1047,6 +1413,23 @@ private fun RecordingTimer(elapsed: String) {
             maxLines = 1,
             softWrap = false
         )
+        if (lowBatteryPercent != null) {
+            Spacer(Modifier.width(6.dp))
+            Icon(
+                painter = painterResource(Insta360Icons.icBattery),
+                contentDescription = "Low camera battery",
+                tint = MaterialTheme.wearStatusColors.recording,
+                modifier = Modifier.size(12.dp)
+            )
+            Spacer(Modifier.width(2.dp))
+            Text(
+                text = "${lowBatteryPercent}%",
+                style = MaterialTheme.typography.labelSmall.merge(WearTabularFigures),
+                color = MaterialTheme.wearStatusColors.recording,
+                maxLines = 1,
+                softWrap = false
+            )
+        }
     }
 }
 

@@ -276,17 +276,20 @@ class MainActivity : ComponentActivity() {
     }
 
     /**
-     * Hands the wake-up ID and the camera's serial suffix to the watch app whenever either may
-     * have changed: the ID when it is set or replaced, the serial when a camera is linked to.
+     * Hands the wake-up ID, the camera's serial suffix, and the speed unit to the watch app
+     * whenever any may have changed: the ID when it is set or replaced, the serial when a camera
+     * is linked to, and the speed unit when toggled.
      */
     private fun shareConnectionSettingsWithWatch() {
         val publisher = WatchSettingsPublisher(this)
         val ble = cameraViewModel.bleManager
         lifecycleScope.launch {
             cameraViewModel.uiState
-                .map { it.wakeUpId to it.bleState.deviceName }
+                .map { Triple(it.wakeUpId, it.bleState.deviceName, it.isSpeedMph) }
                 .distinctUntilChanged()
-                .collect { (wakeUpId, _) -> publisher.publish(wakeUpId, ble.getSavedSerialSuffix()) }
+                .collect { (wakeUpId, _, speedInMph) ->
+                    publisher.publish(wakeUpId, ble.getSavedSerialSuffix(), speedInMph)
+                }
         }
     }
 

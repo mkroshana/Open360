@@ -20,6 +20,9 @@ import androidx.compose.material.icons.filled.MonitorHeart
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.graphicsLayer
@@ -52,6 +55,7 @@ import com.open360.core.ui.Insta360Icons
 import com.open360.ui.camera.CameraViewModel
 import com.open360.wear.SpeedUnit
 import com.open360.wear.WatchHeartRate
+import com.open360.wear.WearControlPreferences
 import com.open360.wear.WearThemePreferences
 import com.open360.wear.ui.theme.Open360WearTheme
 import com.open360.wear.ui.theme.WearEaseOutCubic
@@ -77,15 +81,24 @@ fun WearApp(
     heartRate: WatchHeartRate,
     speedUnit: SpeedUnit,
     themePreferences: WearThemePreferences,
+    controlPreferences: WearControlPreferences,
     isAmbient: Boolean,
     burnInProtection: Boolean = false,
     revealed: Boolean = true,
     showPermissionDisclosure: Boolean = false,
+    missingBlePermissions: Boolean = false,
+    missingLocationPermission: Boolean = false,
+    onRequestPermissions: () -> Unit = {},
     onAcceptPermissionDisclosure: () -> Unit = {},
     onSkipPermissionDisclosure: () -> Unit = {}
 ) {
+    val uiState by viewModel.uiState.collectAsStateWithLifecycle()
     val dynamicColor by themePreferences.dynamicColor.collectAsStateWithLifecycle()
     val reducedMotion = rememberWearReducedMotion()
+    var isScreenLocked by rememberSaveable { mutableStateOf(false) }
+    LaunchedEffect(uiState.isRecording) {
+        if (!uiState.isRecording) isScreenLocked = false
+    }
     val revealAlpha = animateFloatAsState(
         targetValue = if (revealed) 1f else 0f,
         animationSpec = tween(
@@ -124,14 +137,23 @@ fun WearApp(
                         )
                         return@AppScaffold
                     }
-                    SwipeDismissableNavHost(navController = nav, startDestination = Routes.REMOTE) {
+                    SwipeDismissableNavHost(
+                        navController = nav,
+                        startDestination = Routes.REMOTE,
+                        userSwipeEnabled = !isScreenLocked
+                    ) {
                         composable(Routes.REMOTE) {
                             RemoteScreen(
                                 viewModel = viewModel,
                                 heartRate = heartRate,
                                 speedUnit = speedUnit,
                                 onOpenModes = { nav.navigate(Routes.MODES) },
-                                onOpenSettings = { nav.navigate(Routes.SETTINGS) }
+                                onOpenSettings = { nav.navigate(Routes.SETTINGS) },
+                                missingBlePermissions = missingBlePermissions,
+                                missingLocationPermission = missingLocationPermission,
+                                onRequestPermissions = onRequestPermissions,
+                                isScreenLocked = isScreenLocked,
+                                onScreenLockedChange = { isScreenLocked = it }
                             )
                         }
                         composable(Routes.MODES) {
@@ -143,8 +165,11 @@ fun WearApp(
                                 heartRate = heartRate,
                                 speedUnit = speedUnit,
                                 themePreferences = themePreferences,
+                                controlPreferences = controlPreferences,
                                 onAddSensor = { nav.navigate(Routes.ADD_SENSOR) },
-                                onOpenSensor = { address -> nav.navigate("${Routes.SENSOR}/${Uri.encode(address)}") }
+                                onOpenSensor = { address -> nav.navigate("${Routes.SENSOR}/${Uri.encode(address)}") },
+                                missingCorePermissions = missingBlePermissions || missingLocationPermission,
+                                onRequestPermissions = onRequestPermissions
                             )
                         }
                         composable(Routes.ADD_SENSOR) {

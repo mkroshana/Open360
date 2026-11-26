@@ -87,6 +87,10 @@ android {
         compose = true
         buildConfig = true
     }
+
+    testOptions {
+        unitTests.isReturnDefaultValues = true
+    }
 }
 
 dependencies {
@@ -102,6 +106,11 @@ dependencies {
     // The camera link shown on the watch face, and the remote kept on screen when it dims
     implementation(libs.wear.ongoing)
     implementation(libs.androidx.wear)
+    implementation(libs.wear.tiles)
+    implementation(libs.wear.protolayout)
+    implementation(libs.wear.protolayout.material)
+    implementation(libs.wear.watchface.complications)
+    implementation(libs.androidx.concurrent.futures)
     implementation(platform(libs.androidx.compose.bom))
     implementation(libs.androidx.compose.material.icons.extended)
 

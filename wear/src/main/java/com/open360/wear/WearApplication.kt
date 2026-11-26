@@ -4,7 +4,6 @@ import android.app.Application
 import android.content.pm.ServiceInfo
 import android.os.Build
 import androidx.wear.ongoing.OngoingActivity
-import androidx.wear.ongoing.Status
 import com.open360.core.gps.GpsTrackerService
 
 class WearApplication : Application() {
@@ -17,7 +16,7 @@ class WearApplication : Application() {
             OngoingActivity.Builder(context, notificationId, builder)
                 .setStaticIcon(com.open360.core.R.drawable.ic_open360_mark)
                 .setTouchIntent(openApp)
-                .setStatus(Status.Builder().addTemplate("Camera Connected").build())
+                .setStatus(WearOngoingStatus.currentStatus())
                 .build()
                 .apply(context)
         }

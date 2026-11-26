@@ -93,4 +93,12 @@ class RemoteTextTest {
         assertEquals("Clip Saved", RemoteText.saved(null, named = true))
         assertEquals("Recording Stopped", RemoteText.saved(null, named = false))
     }
+
+    @Test
+    fun powerAndCadenceFormatCompactTelemetryValues() {
+        assertEquals("0W", RemoteText.power(0))
+        assertEquals("245W", RemoteText.power(245))
+        assertEquals("0 rpm", RemoteText.cadence(0))
+        assertEquals("92 rpm", RemoteText.cadence(92))
+    }
 }

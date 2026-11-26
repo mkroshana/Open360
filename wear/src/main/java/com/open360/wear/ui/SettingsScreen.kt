@@ -14,6 +14,7 @@ import androidx.compose.material.icons.filled.MonitorHeart
 import androidx.compose.material.icons.filled.PedalBike
 import androidx.compose.material.icons.filled.PowerSettingsNew
 import androidx.compose.material.icons.filled.Refresh
+import androidx.compose.material.icons.filled.Warning
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.getValue
@@ -55,6 +56,7 @@ import com.open360.wear.BuildConfig
 import com.open360.wear.SpeedUnit
 import com.open360.wear.WatchHeartRate
 import com.open360.wear.WatchHeartRateState
+import com.open360.wear.WearControlPreferences
 import com.open360.wear.WearThemePreferences
 import com.open360.wear.ui.theme.WearMetricPill
 import com.open360.wear.ui.theme.WearPillSegmentOption
@@ -76,15 +78,19 @@ fun SettingsScreen(
     heartRate: WatchHeartRate,
     speedUnit: SpeedUnit,
     themePreferences: WearThemePreferences,
+    controlPreferences: WearControlPreferences,
     onAddSensor: () -> Unit,
     onOpenSensor: (String) -> Unit,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    missingCorePermissions: Boolean = false,
+    onRequestPermissions: () -> Unit = {}
 ) {
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
     val sensors by viewModel.sportsSensors.state.collectAsStateWithLifecycle()
     val watchHeartRate by heartRate.state.collectAsStateWithLifecycle()
     val inMph by speedUnit.inMph.collectAsStateWithLifecycle()
     val dynamicColor by themePreferences.dynamicColor.collectAsStateWithLifecycle()
+    val hardwareButtonShutter by controlPreferences.hardwareButtonShutter.collectAsStateWithLifecycle()
     val context = LocalContext.current
     val supportsWatchFaceColors = remember(context) { isWearDynamicColorSupported(context) }
     val askForBodySensors = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) {
@@ -107,6 +113,19 @@ fun SettingsScreen(
                     modifier = Modifier.transformedHeight(this, transformationSpec),
                     transformation = SurfaceTransformation(transformationSpec)
                 ) { Text("Settings") }
+            }
+            if (missingCorePermissions) {
+                item {
+                    FilledTonalButton(
+                        onClick = onRequestPermissions,
+                        colors = tonalColors,
+                        modifier = Modifier.fillMaxWidth().transformedHeight(this, transformationSpec),
+                        transformation = SurfaceTransformation(transformationSpec),
+                        icon = { Icon(Icons.Filled.Warning, contentDescription = null) },
+                        secondaryLabel = { Text("Grant Bluetooth & GPS") },
+                        label = { Text("Permissions") }
+                    )
+                }
             }
             item {
                 val hasId = uiState.wakeUpId != null
@@ -138,6 +157,17 @@ fun SettingsScreen(
                     transformation = SurfaceTransformation(transformationSpec),
                     secondaryLabel = { Text("With the screen off") },
                     label = { Text("Background GPS") }
+                )
+            }
+            item {
+                SwitchButton(
+                    checked = hardwareButtonShutter,
+                    onCheckedChange = { controlPreferences.setHardwareButtonShutter(it) },
+                    colors = switchColors,
+                    modifier = Modifier.fillMaxWidth().transformedHeight(this, transformationSpec),
+                    transformation = SurfaceTransformation(transformationSpec),
+                    secondaryLabel = { Text("Capture with watch button") },
+                    label = { Text("Side Button Shutter") }
                 )
             }
             item {

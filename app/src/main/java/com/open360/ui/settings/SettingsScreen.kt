@@ -10,10 +10,17 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.CheckCircle
+import androidx.compose.material.icons.filled.Download
+import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.Icon
 import androidx.compose.material3.ListItemColors
 import androidx.compose.material3.ListItemDefaults
 import androidx.compose.material3.ListItemShapes
@@ -41,6 +48,8 @@ import com.open360.core.ble.WakeUpRegistration
 import com.open360.core.connection.ConnectionSettings
 import com.open360.core.model.Insta360CameraModel
 import com.open360.core.sensors.SportsSensorsState
+import com.open360.core.watch.WatchCompanionState
+import com.open360.core.watch.WatchInstallLaunchState
 import com.open360.ui.camera.CameraStatusText
 import com.open360.ui.theme.AppThemeMode
 import com.open360.ui.theme.BlurBehindDialog
@@ -77,7 +86,10 @@ fun SettingsScreen(
     serverState: InstaGpsRemoteServerState = InstaGpsRemoteServerState(),
     resolvedModel: Insta360CameraModel? = null,
     onOpenConnectionMethods: (Int) -> Unit = {},
-    onToggleGpsRemoteServer: (Boolean) -> Unit = {}
+    onToggleGpsRemoteServer: (Boolean) -> Unit = {},
+    watchCompanionState: WatchCompanionState = WatchCompanionState(isSupported = false),
+    onOpenWatchPlayStore: () -> Unit = {},
+    onRefreshWatchStatus: () -> Unit = {}
 ) {
     var serialDialogOpen by remember { mutableStateOf(false) }
     var aboutDialogOpen by remember { mutableStateOf(false) }
@@ -123,6 +135,71 @@ fun SettingsScreen(
                     shapes = ListItemDefaults.segmentedShapes(index = 2, count = 3),
                     onClick = { onOpenConnectionMethods(1) }
                 )
+            }
+
+            if (watchCompanionState.isSupported) {
+                SettingsSection("Wear OS Watch") {
+                    SegmentedListItem(
+                        enabled = watchCompanionState.launchState !is WatchInstallLaunchState.Launching,
+                        onClick = {
+                            if (watchCompanionState.hasConnectedWatch) {
+                                onOpenWatchPlayStore()
+                            } else {
+                                onRefreshWatchStatus()
+                            }
+                        },
+                        shapes = ListItemDefaults.segmentedShapes(index = 0, count = 1),
+                        colors = settingsSegmentColors(),
+                        supportingContent = {
+                            Text(
+                                text = watchCompanionState.rowDetail(),
+                                color = if (watchCompanionState.isProblemDetail()) {
+                                    MaterialTheme.colorScheme.error
+                                } else {
+                                    MaterialTheme.colorScheme.onSurfaceVariant
+                                }
+                            )
+                        },
+                        trailingContent = {
+                            when {
+                                watchCompanionState.launchState is WatchInstallLaunchState.Launching ||
+                                    (watchCompanionState.isChecking && !watchCompanionState.hasConnectedWatch) -> {
+                                    CircularProgressIndicator(
+                                        modifier = Modifier.size(20.dp),
+                                        strokeWidth = 2.dp
+                                    )
+                                }
+                                !watchCompanionState.hasConnectedWatch -> {
+                                    Icon(
+                                        imageVector = Icons.Default.Refresh,
+                                        contentDescription = "Check for watches",
+                                        tint = MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
+                                }
+                                watchCompanionState.allConnectedInstalled -> {
+                                    Icon(
+                                        imageVector = Icons.Default.CheckCircle,
+                                        contentDescription = "Installed on watch",
+                                        tint = MaterialTheme.colorScheme.primary
+                                    )
+                                }
+                                else -> {
+                                    Icon(
+                                        imageVector = Icons.Default.Download,
+                                        contentDescription = "Install on watch",
+                                        tint = MaterialTheme.colorScheme.primary
+                                    )
+                                }
+                            }
+                        }
+                    ) {
+                        Text(
+                            text = watchCompanionState.rowTitle(),
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                    }
+                }
             }
 
             SettingsSection("Wake Up") {

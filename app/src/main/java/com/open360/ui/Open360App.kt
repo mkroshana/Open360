@@ -18,6 +18,7 @@ import androidx.compose.material3.ShortNavigationBarItem
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -31,6 +32,9 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
+import androidx.lifecycle.compose.LocalLifecycleOwner
 import com.open360.core.ble.BleConnectionStatus
 import com.open360.core.ble.CameraMode
 import com.open360.core.ble.ClassicSppCameraClient
@@ -40,6 +44,7 @@ import com.open360.core.connection.DirectCameraControlBridge
 import com.open360.core.model.CameraTransportMode
 import com.open360.core.model.CaptureMode
 import com.open360.core.usb.CameraUsbClient
+import com.open360.core.watch.WatchCompanionInstaller
 import com.open360.ui.camera.CameraButton
 import com.open360.ui.camera.CameraScreen
 import com.open360.ui.camera.CameraStatusText
@@ -118,6 +123,29 @@ fun Open360App(
     LaunchedEffect(currentTab) {
         if (currentTab != MainNavTab.LIVE_VIEW) {
             liveViewViewModel.stopLiveView()
+        }
+    }
+
+    val watchInstaller = remember(context.applicationContext) {
+        WatchCompanionInstaller(context.applicationContext)
+    }
+    val watchCompanionState by watchInstaller.state.collectAsState()
+    val lifecycleOwner = LocalLifecycleOwner.current
+    DisposableEffect(watchInstaller, lifecycleOwner, currentTab) {
+        if (currentTab == MainNavTab.SETTINGS) {
+            watchInstaller.startListening()
+            val observer = LifecycleEventObserver { _, event ->
+                if (event == Lifecycle.Event.ON_RESUME) {
+                    watchInstaller.refresh()
+                }
+            }
+            lifecycleOwner.lifecycle.addObserver(observer)
+            onDispose {
+                lifecycleOwner.lifecycle.removeObserver(observer)
+                watchInstaller.stopListening()
+            }
+        } else {
+            onDispose {}
         }
     }
 
@@ -512,7 +540,10 @@ fun Open360App(
                                 cameraViewModel.sportsSensors.startScan()
                             },
                             onReconnectSensor = { cameraViewModel.sportsSensors.reconnect(it) },
-                            onRemoveSensor = { cameraViewModel.sportsSensors.remove(it) }
+                            onRemoveSensor = { cameraViewModel.sportsSensors.remove(it) },
+                            watchCompanionState = watchCompanionState,
+                            onOpenWatchPlayStore = { watchInstaller.openPlayStoreOnWatches() },
+                            onRefreshWatchStatus = { watchInstaller.refresh() }
                         )
                     }
                 }

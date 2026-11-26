@@ -19,10 +19,13 @@ class WatchSettingsPublisher(context: Context) {
 
     private val dataClient = Wearable.getDataClient(context)
 
-    fun publish(wakeUpId: String?, serialSuffix: String) {
+    fun publish(wakeUpId: String?, serialSuffix: String, speedInMph: Boolean? = null) {
         val request = PutDataMapRequest.create(SharedConnectionSettings.PATH).apply {
             dataMap.putString(SharedConnectionSettings.KEY_WAKE_UP_ID, wakeUpId.orEmpty())
             dataMap.putString(SharedConnectionSettings.KEY_SERIAL_SUFFIX, serialSuffix)
+            if (speedInMph != null) {
+                dataMap.putBoolean(SharedConnectionSettings.KEY_SPEED_IN_MPH, speedInMph)
+            }
         }.asPutDataRequest().setUrgent()
         dataClient.putDataItem(request)
             .addOnSuccessListener { Log.i(TAG, "Connection settings handed to the watch (wake-up ID ${if (wakeUpId != null) "set" else "none"}, camera $serialSuffix)") }

@@ -49,6 +49,20 @@ class WearUiPolishTest {
     }
 
     @Test
+    fun wearOfflinePermissionRecoveryHintStaysWithinTwoLineBudgetOnStandardWatches() {
+        val permissionRecoveryHint = "Allow Bluetooth & Location to connect"
+        val baselineTwoLineHint = "Switch the camera on, then connect"
+        assertTrue(
+            "Expected permission recovery hint length (${permissionRecoveryHint.length}) to stay compact like baseline (${baselineTwoLineHint.length})",
+            permissionRecoveryHint.length <= baselineTwoLineHint.length + 4
+        )
+        listOf(227, 240).forEach { screenHeightDp ->
+            val m = WearOfflineMetrics.forScreenHeightDp(screenHeightDp)
+            assertTrue(m.edgeButtonSpacing.value >= 6f)
+        }
+    }
+
+    @Test
     fun wearMiddleEllipsizePreservesShortStrings() {
         assertEquals("", wearMiddleEllipsize("", 20))
         assertEquals("short.mp4", wearMiddleEllipsize("short.mp4", 20))

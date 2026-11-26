@@ -124,4 +124,10 @@ object RemoteText {
     /** A speed in the unit chosen, such as "32 km/h". */
     fun speed(kmh: Float, mph: Float, inMph: Boolean): String =
         if (inMph) String.format(Locale.US, "%.0f mph", mph) else String.format(Locale.US, "%.0f km/h", kmh)
+
+    /** A cycling power readout, such as "240W". */
+    fun power(watts: Int): String = "${watts}W"
+
+    /** A cycling cadence readout, such as "88 rpm". */
+    fun cadence(rpm: Int): String = "${rpm} rpm"
 }

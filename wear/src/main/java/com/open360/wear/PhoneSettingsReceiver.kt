@@ -13,12 +13,12 @@ import com.open360.core.ble.SharedConnectionSettings
 
 /**
  * Reads the connection settings the phone app hands over (SharedConnectionSettings): the wake-up
- * ID and the camera's serial suffix, null where the phone has none. The Data Layer keeps the
- * latest copy on the watch, so they are there with the phone out of reach once they have arrived.
+ * ID, the camera's serial suffix, and the speed unit, null where the phone has none. The Data Layer
+ * keeps the latest copy on the watch, so they are there with the phone out of reach once they have arrived.
  */
 class PhoneSettingsReceiver(
     context: Context,
-    private val onSettings: (wakeUpId: String?, serialSuffix: String?) -> Unit
+    private val onSettings: (wakeUpId: String?, serialSuffix: String?, speedInMph: Boolean?) -> Unit
 ) : DataClient.OnDataChangedListener {
 
     private companion object {
@@ -53,7 +53,12 @@ class PhoneSettingsReceiver(
         val map = DataMapItem.fromDataItem(item).dataMap
         val wakeUpId = map.getString(SharedConnectionSettings.KEY_WAKE_UP_ID)?.takeIf { it.isNotEmpty() }
         val serialSuffix = map.getString(SharedConnectionSettings.KEY_SERIAL_SUFFIX)?.takeIf { it.isNotEmpty() }
+        val speedInMph = if (map.containsKey(SharedConnectionSettings.KEY_SPEED_IN_MPH)) {
+            map.getBoolean(SharedConnectionSettings.KEY_SPEED_IN_MPH)
+        } else {
+            null
+        }
         Log.i(TAG, "Connection settings from the phone: wake-up ID ${if (wakeUpId != null) "set" else "none"}, camera $serialSuffix")
-        onSettings(wakeUpId, serialSuffix)
+        onSettings(wakeUpId, serialSuffix, speedInMph)
     }
 }

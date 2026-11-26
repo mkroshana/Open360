@@ -130,6 +130,7 @@ dependencies {
     implementation(libs.androidx.exifinterface)
     // Hands the connection settings to the watch app
     "playImplementation"(libs.play.services.wearable)
+    "playImplementation"(libs.wear.remote.interactions)
     // Replaces Fragment 1.2.4 brought in by play-services-wearable, fixing InvalidFragmentVersionForActivityResult lint check
     "playImplementation"(libs.androidx.fragment)
 

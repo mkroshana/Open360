@@ -29,6 +29,10 @@ import com.open360.core.ui.Insta360Icons
 import com.open360.ui.camera.CameraViewModel
 import com.open360.wear.ui.theme.wearEditorialRadioColors
 
+/** Orders the Photo and Video mode groups so the active group appears first. */
+internal fun orderedModeGroups(activeIsPhoto: Boolean): List<Boolean> =
+    if (activeIsPhoto) listOf(true, false) else listOf(false, true)
+
 /**
  * The camera's modes. Once a camera that is on has reported its mode, all ten are offered and
  * choosing one switches the camera; before that only Video or Photo, which a camera that is
@@ -93,7 +97,7 @@ fun ModesScreen(
                             label = {
                                 Text(
                                     text = choice.displayName,
-                                    maxLines = 1,
+                                    maxLines = 2,
                                     overflow = TextOverflow.Ellipsis
                                 )
                             }
@@ -101,7 +105,7 @@ fun ModesScreen(
                     }
                 }
             } else {
-                listOf(false, true).forEach { photo ->
+                orderedModeGroups(cameraMode.isPhoto).forEach { photo ->
                     item {
                         ListHeader(
                             modifier = Modifier.transformedHeight(this, transformationSpec),
@@ -130,7 +134,7 @@ fun ModesScreen(
                                 label = {
                                     Text(
                                         text = mode.label,
-                                        maxLines = 1,
+                                        maxLines = 2,
                                         overflow = TextOverflow.Ellipsis
                                     )
                                 }

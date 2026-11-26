@@ -7,6 +7,7 @@ import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.platform.LocalContext
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.wear.compose.material3.ConfirmationDialogDefaults
 import androidx.wear.compose.material3.FailureConfirmationDialog
@@ -37,6 +38,7 @@ private const val WAIT_FOR_SAVED_CLIP_MS = 2500L
  */
 @Composable
 fun CameraConfirmations(viewModel: CameraViewModel) {
+    val context = LocalContext.current
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
     val ble = uiState.bleState
     var shown by remember { mutableStateOf<Confirmation?>(null) }
@@ -59,21 +61,28 @@ fun CameraConfirmations(viewModel: CameraViewModel) {
         if (recording == wasRecording) return@LaunchedEffect
         wasRecording = recording
         if (recording) {
+            WearHaptics.trigger(context, WearHapticPattern.RECORDING_STARTED)
             show(Confirmation("Recording", success = true))
             return@LaunchedEffect
         }
         if (viewModel.uiState.value.bleState.connectionStatus != BleConnectionStatus.CONNECTED) {
+            WearHaptics.trigger(context, WearHapticPattern.FAILURE)
             show(Confirmation("Camera Link Lost", success = false, isConnectionFailure = true))
             return@LaunchedEffect
         }
         val saved = withTimeoutOrNull(WAIT_FOR_SAVED_CLIP_MS) {
             viewModel.uiState.first { it.bleState.lastVideoFile != null }
         }
+        WearHaptics.trigger(context, WearHapticPattern.CLIP_SAVED)
         show(Confirmation(RemoteText.saved(saved?.bleState?.lastVideoSeconds, named = saved != null), success = true))
     }
     LaunchedEffect(ble.photosTaken, ble.photosFailed) {
-        if (ble.photosTaken > photosTaken) show(Confirmation("Photo Taken", success = true))
+        if (ble.photosTaken > photosTaken) {
+            WearHaptics.trigger(context, WearHapticPattern.PHOTO_TAKEN)
+            show(Confirmation("Photo Taken", success = true))
+        }
         if (ble.photosFailed > photosFailed) {
+            WearHaptics.trigger(context, WearHapticPattern.FAILURE)
             show(Confirmation("Photo Not Taken", success = false, isConnectionFailure = false))
         }
         photosTaken = ble.photosTaken

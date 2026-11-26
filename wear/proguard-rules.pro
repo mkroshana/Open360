@@ -15,6 +15,10 @@
 # Foreground GPS service referenced from manifest and intents
 -keep class com.open360.core.gps.GpsTrackerService { *; }
 
+# Wear Tile and Complication services instantiated by Wear OS system services
+-keep class com.open360.wear.tile.** { *; }
+-keep class com.open360.wear.complication.** { *; }
+
 # Models and enums
 -keep class com.open360.core.model.** { *; }
 -keepclassmembers enum * {

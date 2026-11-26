@@ -8,5 +8,5 @@ import android.content.Context
  */
 @Suppress("UNUSED_PARAMETER")
 class WatchSettingsPublisher(context: Context) {
-    fun publish(wakeUpId: String?, serialSuffix: String) = Unit
+    fun publish(wakeUpId: String?, serialSuffix: String, speedInMph: Boolean? = null) = Unit
 }
