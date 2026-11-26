@@ -1,4 +1,4 @@
-Initial v1.0.0 release of Open360:
+Open360 v0.2.0-beta.1 (Public Beta):
 - BLE remote, wake-up, mode control & status (verified on Insta360 GO 3S)
 - Real-time 10 Hz GPS injection synced to the camera clock
 - Local GPX & FIT export with external BLE HR/cadence/power sensors

@@ -132,7 +132,7 @@ If publishing under a **personal Google Play Developer account** created after N
 
 ## 3. GitHub Releases Setup
 
-Release builds are automated in [`.github/workflows/release.yml`](../.github/workflows/release.yml) on tags matching `v*` (e.g., `v1.0.0`) or manual `workflow_dispatch`.
+Release builds are automated in [`.github/workflows/release.yml`](../.github/workflows/release.yml) on tags matching `v*` (e.g., `v0.2.0-beta.1`) or manual `workflow_dispatch`. Tags containing `-` (such as `-beta.1` or `-rc.1`) are automatically marked as GitHub Pre-releases.
 
 ### Required Repository Secrets
 
@@ -148,8 +148,8 @@ Add these secrets under **GitHub Repository → Settings → Secrets and variabl
 ### Triggering a Release
 
 ```bash
-git tag v1.0.0
-git push origin v1.0.0
+git tag v0.2.0-beta.1
+git push origin v0.2.0-beta.1
 ```
 
 The workflow builds:
@@ -213,9 +213,9 @@ RepoType: git
 Repo: https://github.com/mkroshana/Open360.git
 
 Builds:
-  - versionName: 1.0.0
+  - versionName: 0.2.0-beta.1
     versionCode: 10001
-    commit: v1.0.0
+    commit: v0.2.0-beta.1
     subdir: app
     gradle:
       - foss
@@ -223,8 +223,8 @@ Builds:
 
 AutoUpdateMode: Version
 UpdateCheckMode: Tags
-CurrentVersion: 1.0.0
+CurrentVersion: 0.2.0-beta.1
 CurrentVersionCode: 10001
 ```
 
-Submit this recipe via merge request to `fdroid/fdroiddata` after tagging `v1.0.0` and verifying locally with `fdroid build -v -l com.mkroshana.open360:10001`.
+Submit this recipe via merge request to `fdroid/fdroiddata` after tagging (note: F-Droid main-repo reviewers generally prefer a non-prerelease tag such as `v0.2.0` or `v1.0.0` for initial inclusion) and verifying locally with `fdroid build -v -l com.mkroshana.open360:10001`.

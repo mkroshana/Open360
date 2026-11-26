@@ -18,7 +18,7 @@ android {
         minSdk = 30
         targetSdk = 35
         versionCode = 20001
-        versionName = "1.0.0"
+        versionName = "0.2.0-beta.1"
         missingDimensionStrategy("distribution", "play")
     }
 
