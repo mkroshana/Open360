@@ -1,6 +1,7 @@
 package com.open360.wear.ui
 
 import android.net.Uri
+import androidx.annotation.DrawableRes
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.snap
 import androidx.compose.animation.core.tween
@@ -14,7 +15,6 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Bluetooth
 import androidx.compose.material.icons.filled.LocationOn
 import androidx.compose.material.icons.filled.MonitorHeart
 import androidx.compose.runtime.Composable
@@ -24,6 +24,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
@@ -47,6 +48,7 @@ import androidx.wear.compose.material3.lazy.transformedHeight
 import androidx.wear.compose.navigation.SwipeDismissableNavHost
 import androidx.wear.compose.navigation.composable
 import androidx.wear.compose.navigation.rememberSwipeDismissableNavController
+import com.open360.core.ui.Insta360Icons
 import com.open360.ui.camera.CameraViewModel
 import com.open360.wear.SpeedUnit
 import com.open360.wear.WatchHeartRate
@@ -76,6 +78,7 @@ fun WearApp(
     speedUnit: SpeedUnit,
     themePreferences: WearThemePreferences,
     isAmbient: Boolean,
+    burnInProtection: Boolean = false,
     revealed: Boolean = true,
     showPermissionDisclosure: Boolean = false,
     onAcceptPermissionDisclosure: () -> Unit = {},
@@ -97,7 +100,7 @@ fun WearApp(
         label = "wearSplashRevealScale"
     )
 
-    Open360WearTheme(dynamicColor = dynamicColor) {
+    Open360WearTheme(dynamicColor = dynamicColor, isAmbient = isAmbient) {
         Box(
             modifier = Modifier
                 .fillMaxSize()
@@ -114,11 +117,6 @@ fun WearApp(
             ) {
                 AppScaffold {
                     val nav = rememberSwipeDismissableNavController()
-                    if (isAmbient) {
-                        // Back on the screen that was open once the watch wakes
-                        AmbientRemote(viewModel)
-                        return@AppScaffold
-                    }
                     if (showPermissionDisclosure) {
                         WearPermissionDisclosureScreen(
                             onContinue = onAcceptPermissionDisclosure,
@@ -162,6 +160,12 @@ fun WearApp(
                     }
                     WakeUpOnPhoneDialog(viewModel)
                     CameraConfirmations(viewModel)
+                }
+                if (isAmbient) {
+                    AmbientRemote(
+                        viewModel = viewModel,
+                        burnInProtection = burnInProtection
+                    )
                 }
             }
         }
@@ -231,7 +235,7 @@ private fun WearPermissionDisclosureScreen(
             }
             item {
                 DisclosureNoteCard(
-                    icon = Icons.Default.Bluetooth,
+                    iconRes = Insta360Icons.icBluetooth,
                     title = "Bluetooth & Notifications",
                     detail = "Connects to your Insta360 camera and sensors, and keeps the link active.",
                     modifier = Modifier.transformedHeight(this, transformationSpec),
@@ -280,10 +284,11 @@ private fun WearPermissionDisclosureScreen(
 
 @Composable
 private fun DisclosureNoteCard(
-    icon: ImageVector,
     title: String,
     detail: String,
     modifier: Modifier = Modifier,
+    icon: ImageVector? = null,
+    @DrawableRes iconRes: Int? = null,
     transformation: SurfaceTransformation? = null
 ) {
     WearSurfaceCard(
@@ -295,14 +300,25 @@ private fun DisclosureNoteCard(
             horizontalArrangement = Arrangement.spacedBy(8.dp),
             modifier = Modifier.fillMaxWidth()
         ) {
-            Icon(
-                imageVector = icon,
-                contentDescription = null,
-                tint = MaterialTheme.colorScheme.primary,
-                modifier = Modifier
-                    .padding(top = 2.dp)
-                    .size(16.dp)
-            )
+            if (iconRes != null) {
+                Icon(
+                    painter = painterResource(iconRes),
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.primary,
+                    modifier = Modifier
+                        .padding(top = 2.dp)
+                        .size(16.dp)
+                )
+            } else if (icon != null) {
+                Icon(
+                    imageVector = icon,
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.primary,
+                    modifier = Modifier
+                        .padding(top = 2.dp)
+                        .size(16.dp)
+                )
+            }
             Column(
                 modifier = Modifier.weight(1f),
                 verticalArrangement = Arrangement.spacedBy(2.dp)

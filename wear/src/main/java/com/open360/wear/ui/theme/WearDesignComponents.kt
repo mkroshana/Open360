@@ -137,6 +137,7 @@ fun WearStatusDot(
 fun WearMetricPill(
     text: String,
     modifier: Modifier = Modifier,
+    transformation: SurfaceTransformation? = null,
     icon: ImageVector? = null,
     @DrawableRes iconRes: Int? = null,
     iconTint: Color? = null,
@@ -168,15 +169,38 @@ fun WearMetricPill(
     } else {
         MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.45f)
     }
+    val border = BorderStroke(width = 1.dp, color = borderColor)
+
+    val containerModifier = if (transformation != null) {
+        val painter = remember(transformation, bgColor, border) {
+            transformation.createContainerPainter(
+                painter = ColorPainter(bgColor),
+                shape = CircleShape,
+                border = border
+            )
+        }
+        Modifier
+            .graphicsLayer { with(transformation) { applyContainerTransformation() } }
+            .then(modifier)
+            .drawBehind { with(painter) { draw(size) } }
+            .graphicsLayer {
+                this.shape = CircleShape
+                with(transformation) { applyContentTransformation() }
+                clip = true
+            }
+            .padding(contentPadding)
+    } else {
+        modifier
+            .clip(CircleShape)
+            .background(bgColor)
+            .border(border = border, shape = CircleShape)
+            .padding(contentPadding)
+    }
 
     Row(
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(5.dp, Alignment.CenterHorizontally),
-        modifier = modifier
-            .clip(CircleShape)
-            .background(bgColor)
-            .border(width = 1.dp, color = borderColor, shape = CircleShape)
-            .padding(contentPadding)
+        modifier = containerModifier
     ) {
         if (dotState != null) {
             WearStatusDot(dotState = dotState, size = 6.dp)
@@ -481,9 +505,10 @@ fun WearPillSegmentedControl(
     selectedIndex: Int,
     onSelect: (Int) -> Unit,
     modifier: Modifier = Modifier,
+    transformation: SurfaceTransformation? = null,
     enabled: Boolean = true,
     role: Role = Role.RadioButton,
-    minHeight: Dp = 36.dp,
+    minHeight: Dp = 42.dp,
     textStyle: TextStyle = MaterialTheme.typography.labelMedium
 ) {
     if (options.isEmpty()) return
@@ -497,17 +522,41 @@ fun WearPillSegmentedControl(
         label = "wearPillIndicatorIndex"
     )
 
-    BoxWithConstraints(
-        modifier = modifier
-            .clip(CircleShape)
-            .background(MaterialTheme.colorScheme.surfaceContainerHigh)
-            .border(
-                width = 1.dp,
-                color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.45f),
-                shape = CircleShape
+    val containerBg = MaterialTheme.colorScheme.surfaceContainerHigh
+    val containerBorder = BorderStroke(
+        width = 1.dp,
+        color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.45f)
+    )
+    val outerModifier = if (transformation != null) {
+        val painter = remember(transformation, containerBg, containerBorder) {
+            transformation.createContainerPainter(
+                painter = ColorPainter(containerBg),
+                shape = CircleShape,
+                border = containerBorder
             )
+        }
+        Modifier
+            .graphicsLayer { with(transformation) { applyContainerTransformation() } }
+            .then(modifier)
+            .drawBehind { with(painter) { draw(size) } }
+            .graphicsLayer {
+                this.shape = CircleShape
+                with(transformation) { applyContentTransformation() }
+                clip = true
+            }
             .padding(3.dp)
             .selectableGroup()
+    } else {
+        modifier
+            .clip(CircleShape)
+            .background(containerBg)
+            .border(border = containerBorder, shape = CircleShape)
+            .padding(3.dp)
+            .selectableGroup()
+    }
+
+    BoxWithConstraints(
+        modifier = outerModifier
     ) {
         val segmentWidth = maxWidth / options.size
         val segmentWidthPx = with(LocalDensity.current) { segmentWidth.toPx() }
@@ -548,6 +597,7 @@ fun WearPillSegmentedControl(
                         label = "wearPillContentColor"
                     )
                     val interactionSource = remember { MutableInteractionSource() }
+                    val pressScale by rememberWearPressScale(interactionSource, targetScale = 0.96f)
 
                     Box(
                         modifier = Modifier
@@ -571,6 +621,10 @@ fun WearPillSegmentedControl(
                         contentAlignment = Alignment.Center
                     ) {
                         Row(
+                            modifier = Modifier.graphicsLayer {
+                                scaleX = pressScale
+                                scaleY = pressScale
+                            },
                             verticalAlignment = Alignment.CenterVertically,
                             horizontalArrangement = Arrangement.Center
                         ) {

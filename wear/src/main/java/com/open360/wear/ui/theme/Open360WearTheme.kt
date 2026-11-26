@@ -1,9 +1,12 @@
 package com.open360.wear.ui.theme
 
+import android.content.Context
+import android.os.Build
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.Immutable
 import androidx.compose.runtime.ReadOnlyComposable
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
@@ -67,6 +70,8 @@ private val DarkWearStatusColors = WearStatusColors(
 
 private val LocalWearStatusColors = staticCompositionLocalOf { DarkWearStatusColors }
 
+val LocalWearAmbientMode = staticCompositionLocalOf { false }
+
 val MaterialTheme.wearStatusColors: WearStatusColors
     @Composable
     @ReadOnlyComposable
@@ -75,6 +80,10 @@ val MaterialTheme.wearStatusColors: WearStatusColors
 /** Fixed-width digits so timers, speeds, battery percentages, and BPM readings never jitter. */
 val WearTabularFigures = TextStyle(fontFeatureSettings = "tnum")
 
+fun isWearDynamicColorSupported(context: Context): Boolean =
+    Build.VERSION.SDK_INT >= Build.VERSION_CODES.VANILLA_ICE_CREAM &&
+        dynamicColorScheme(context) != null
+
 /**
  * Applies Open360's curated editorial dark theme by default, or watch-face dynamic colors when
  * [dynamicColor] is `true` and supported by the host watch OS.
@@ -82,16 +91,19 @@ val WearTabularFigures = TextStyle(fontFeatureSettings = "tnum")
 @Composable
 fun Open360WearTheme(
     dynamicColor: Boolean = false,
+    isAmbient: Boolean = false,
     content: @Composable () -> Unit
 ) {
     val context = LocalContext.current
-    val colorScheme = if (dynamicColor) {
-        dynamicColorScheme(context) ?: Open360WearColorScheme
-    } else {
-        Open360WearColorScheme
+    val dynamicScheme = remember(context, dynamicColor) {
+        if (dynamicColor) dynamicColorScheme(context) else null
     }
+    val colorScheme = dynamicScheme ?: Open360WearColorScheme
 
-    CompositionLocalProvider(LocalWearStatusColors provides DarkWearStatusColors) {
+    CompositionLocalProvider(
+        LocalWearStatusColors provides DarkWearStatusColors,
+        LocalWearAmbientMode provides isAmbient
+    ) {
         MaterialTheme(
             colorScheme = colorScheme,
             content = content

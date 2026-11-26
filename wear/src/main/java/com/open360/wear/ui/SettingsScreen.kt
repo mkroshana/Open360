@@ -22,6 +22,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -30,7 +31,6 @@ import androidx.wear.compose.foundation.lazy.TransformingLazyColumn
 import androidx.wear.compose.foundation.lazy.rememberTransformingLazyColumnState
 import androidx.wear.compose.material3.AlertDialog
 import androidx.wear.compose.material3.AlertDialogDefaults
-import androidx.wear.compose.material3.Button
 import androidx.wear.compose.material3.ButtonDefaults
 import androidx.wear.compose.material3.CircularProgressIndicator
 import androidx.wear.compose.material3.FilledTonalButton
@@ -56,12 +56,15 @@ import com.open360.wear.SpeedUnit
 import com.open360.wear.WatchHeartRate
 import com.open360.wear.WatchHeartRateState
 import com.open360.wear.WearThemePreferences
+import com.open360.wear.ui.theme.WearMetricPill
 import com.open360.wear.ui.theme.WearPillSegmentOption
 import com.open360.wear.ui.theme.WearPillSegmentedControl
 import com.open360.wear.ui.theme.WearTabularFigures
+import com.open360.wear.ui.theme.isWearDynamicColorSupported
 import com.open360.wear.ui.theme.wearEditorialOutlinedButtonColors
 import com.open360.wear.ui.theme.wearEditorialSwitchColors
 import com.open360.wear.ui.theme.wearEditorialTonalButtonColors
+import com.open360.wear.ui.theme.wearStatusColors
 
 /**
  * The watch's settings: where Wake Up stands with the ID from the phone, whether GPS keeps going
@@ -82,6 +85,8 @@ fun SettingsScreen(
     val watchHeartRate by heartRate.state.collectAsStateWithLifecycle()
     val inMph by speedUnit.inMph.collectAsStateWithLifecycle()
     val dynamicColor by themePreferences.dynamicColor.collectAsStateWithLifecycle()
+    val context = LocalContext.current
+    val supportsWatchFaceColors = remember(context) { isWearDynamicColorSupported(context) }
     val askForBodySensors = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) {
         heartRate.onPermissionChanged()
     }
@@ -149,10 +154,12 @@ fun SettingsScreen(
                     ),
                     selectedIndex = if (inMph) 1 else 0,
                     onSelect = { index -> speedUnit.set(index == 1) },
-                    minHeight = 36.dp,
+                    minHeight = 42.dp,
+                    transformation = SurfaceTransformation(transformationSpec),
                     modifier = Modifier
                         .fillMaxWidth()
                         .padding(horizontal = 4.dp)
+                        .transformedHeight(this, transformationSpec)
                 )
             }
             item {
@@ -161,7 +168,11 @@ fun SettingsScreen(
                     transformation = SurfaceTransformation(transformationSpec)
                 ) { Text("Sports Sensors") }
             }
-            item { Note("Saved in each recording's FIT file") }
+            item {
+                Note(
+                    text = "Saved in each recording's FIT file"
+                )
+            }
             if (watchHeartRate.available) {
                 item {
                     SwitchButton(
@@ -185,7 +196,7 @@ fun SettingsScreen(
                 }
             }
             sensors.saved.forEach { status ->
-                item {
+                item(key = "sensor_${status.device.address}") {
                     FilledTonalButton(
                         onClick = { onOpenSensor(status.device.address) },
                         colors = tonalColors,
@@ -224,22 +235,24 @@ fun SettingsScreen(
                     label = { Text("Add Sensor") }
                 )
             }
-            item {
-                ListHeader(
-                    modifier = Modifier.transformedHeight(this, transformationSpec),
-                    transformation = SurfaceTransformation(transformationSpec)
-                ) { Text("Appearance") }
-            }
-            item {
-                SwitchButton(
-                    checked = dynamicColor,
-                    onCheckedChange = { themePreferences.setDynamicColor(it) },
-                    colors = switchColors,
-                    modifier = Modifier.fillMaxWidth().transformedHeight(this, transformationSpec),
-                    transformation = SurfaceTransformation(transformationSpec),
-                    secondaryLabel = { Text("Tint from watch face") },
-                    label = { Text("Watch Face Colors") }
-                )
+            if (supportsWatchFaceColors) {
+                item {
+                    ListHeader(
+                        modifier = Modifier.transformedHeight(this, transformationSpec),
+                        transformation = SurfaceTransformation(transformationSpec)
+                    ) { Text("Appearance") }
+                }
+                item {
+                    SwitchButton(
+                        checked = dynamicColor,
+                        onCheckedChange = { themePreferences.setDynamicColor(it) },
+                        colors = switchColors,
+                        modifier = Modifier.fillMaxWidth().transformedHeight(this, transformationSpec),
+                        transformation = SurfaceTransformation(transformationSpec),
+                        secondaryLabel = { Text("Tint from watch face") },
+                        label = { Text("Watch Face Colors") }
+                    )
+                }
             }
             item {
                 ListHeader(
@@ -321,15 +334,12 @@ fun AddSensorScreen(
                 ) { Text("Add a Sensor") }
             }
             item {
-                Text(
-                    text = "Switch the sensor on and keep it nearby.",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    textAlign = TextAlign.Center
+                Note(
+                    text = "Switch the sensor on and keep it nearby."
                 )
             }
             found.forEach { device ->
-                item {
+                item(key = "found_${device.address}") {
                     FilledTonalButton(
                         onClick = {
                             sensors.add(device)
@@ -339,8 +349,20 @@ fun AddSensorScreen(
                         modifier = Modifier.fillMaxWidth().transformedHeight(this, transformationSpec),
                         transformation = SurfaceTransformation(transformationSpec),
                         icon = { Icon(iconFor(device.kinds), contentDescription = null) },
-                        secondaryLabel = { Text(kindsText(device.kinds)) },
-                        label = { Text(device.name) }
+                        secondaryLabel = {
+                            Text(
+                                text = kindsText(device.kinds),
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                        },
+                        label = {
+                            Text(
+                                text = device.name,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                        }
                     )
                 }
             }
@@ -349,11 +371,8 @@ fun AddSensorScreen(
             } else {
                 if (found.isEmpty()) {
                     item {
-                        Text(
-                            text = "No sensors found",
-                            style = MaterialTheme.typography.bodyMedium,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            textAlign = TextAlign.Center
+                        Note(
+                            text = "No sensors found"
                         )
                     }
                 }
@@ -388,6 +407,7 @@ fun SensorScreen(
     val listState = rememberTransformingLazyColumnState()
     val transformationSpec = rememberTransformationSpec()
     val status = state.saved.firstOrNull { it.device.address == address }
+    val tonalColors = wearEditorialTonalButtonColors()
     val outlinedColors = wearEditorialOutlinedButtonColors()
 
     ScreenScaffold(scrollState = listState, modifier = modifier) { contentPadding ->
@@ -408,17 +428,24 @@ fun SensorScreen(
                 ) { Text(status.device.name) }
             }
             item {
-                Text(
+                val dotColor = when {
+                    status.connected -> MaterialTheme.wearStatusColors.ready
+                    status.reconnecting -> MaterialTheme.colorScheme.primary
+                    else -> MaterialTheme.colorScheme.onSurfaceVariant
+                }
+                WearMetricPill(
                     text = sensorStatus(status),
-                    style = MaterialTheme.typography.bodySmall.merge(WearTabularFigures),
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    textAlign = TextAlign.Center
+                    dotColor = dotColor,
+                    textStyle = MaterialTheme.typography.bodySmall,
+                    transformation = SurfaceTransformation(transformationSpec),
+                    modifier = Modifier.transformedHeight(this, transformationSpec)
                 )
             }
             if (!status.connected && !status.reconnecting) {
                 item {
-                    Button(
+                    FilledTonalButton(
                         onClick = { sensors.reconnect(address) },
+                        colors = tonalColors,
                         modifier = Modifier.fillMaxWidth().transformedHeight(this, transformationSpec),
                         transformation = SurfaceTransformation(transformationSpec),
                         icon = { Icon(Icons.Filled.Refresh, contentDescription = null) },

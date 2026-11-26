@@ -11,6 +11,8 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.calculateEndPadding
+import androidx.compose.foundation.layout.calculateStartPadding
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -20,7 +22,6 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.BatteryChargingFull
-import androidx.compose.material.icons.filled.Bluetooth
 import androidx.compose.material.icons.filled.BluetoothDisabled
 import androidx.compose.material.icons.filled.Bolt
 import androidx.compose.material.icons.filled.Close
@@ -46,11 +47,14 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalHapticFeedback
+import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.wear.compose.foundation.lazy.TransformingLazyColumn
@@ -72,10 +76,12 @@ import androidx.wear.compose.material3.MaterialTheme
 import androidx.wear.compose.material3.OutlinedButton
 import androidx.wear.compose.material3.OutlinedIconButton
 import androidx.wear.compose.material3.ScreenScaffold
+import androidx.wear.compose.material3.ScreenScaffoldDefaults
 import androidx.wear.compose.material3.SurfaceTransformation
 import androidx.wear.compose.material3.Text
 import androidx.wear.compose.material3.lazy.rememberTransformationSpec
 import androidx.wear.compose.material3.lazy.transformedHeight
+import androidx.wear.compose.material3.touchTargetAwareSize
 import com.open360.core.ble.BleCameraState
 import com.open360.core.ble.BleConnectionStatus
 import com.open360.core.ble.CameraDetails
@@ -107,11 +113,97 @@ private enum class RemoteMode {
     RECORDING
 }
 
-// Above and below the shutter, each of a fixed height, so the shutter stays in the same place
-// whether the camera is ready, taking a photo or recording.
-private val ABOVE_SHUTTER = 44.dp
-private val BELOW_SHUTTER = 46.dp
-private val SIDE_BUTTON = 48.dp
+internal data class WearControlsMetrics(
+    val shutterSize: Dp,
+    val sideButtonSize: Dp,
+    val rowGap: Dp,
+    val aboveHeight: Dp,
+    val belowHeight: Dp,
+    val verticalGap: Dp,
+    val aboveHorizontalPadding: Dp,
+    val belowHorizontalPadding: Dp
+) {
+    companion object {
+        fun forScreenWidthDp(screenWidthDp: Int): WearControlsMetrics = when {
+            screenWidthDp < 210 -> WearControlsMetrics(
+                shutterSize = 72.dp,
+                sideButtonSize = 44.dp,
+                rowGap = 6.dp,
+                aboveHeight = 38.dp,
+                belowHeight = 40.dp,
+                verticalGap = 3.dp,
+                aboveHorizontalPadding = 32.dp,
+                belowHorizontalPadding = 28.dp
+            )
+            screenWidthDp < 227 -> WearControlsMetrics(
+                shutterSize = 78.dp,
+                sideButtonSize = 48.dp,
+                rowGap = 8.dp,
+                aboveHeight = 42.dp,
+                belowHeight = 44.dp,
+                verticalGap = 4.dp,
+                aboveHorizontalPadding = 30.dp,
+                belowHorizontalPadding = 26.dp
+            )
+            else -> WearControlsMetrics(
+                shutterSize = 84.dp,
+                sideButtonSize = 48.dp,
+                rowGap = 10.dp,
+                aboveHeight = 44.dp,
+                belowHeight = 46.dp,
+                verticalGap = 5.dp,
+                aboveHorizontalPadding = 28.dp,
+                belowHorizontalPadding = 24.dp
+            )
+        }
+    }
+}
+
+internal data class WearOfflineMetrics(
+    val topPadding: Dp,
+    val avatarSize: Dp,
+    val avatarToPillGap: Dp,
+    val pillToNameGap: Dp,
+    val itemSpacing: Dp,
+    val settingsButtonSize: Dp,
+    val edgeButtonSize: EdgeButtonSize,
+    val edgeButtonSpacing: Dp
+) {
+    companion object {
+        fun forScreenHeightDp(screenHeightDp: Int): WearOfflineMetrics = when {
+            screenHeightDp < 210 -> WearOfflineMetrics(
+                topPadding = 18.dp,
+                avatarSize = 34.dp,
+                avatarToPillGap = 2.dp,
+                pillToNameGap = 2.dp,
+                itemSpacing = 2.dp,
+                settingsButtonSize = IconButtonDefaults.ExtraSmallButtonSize,
+                edgeButtonSize = EdgeButtonSize.ExtraSmall,
+                edgeButtonSpacing = 6.dp
+            )
+            screenHeightDp < 235 -> WearOfflineMetrics(
+                topPadding = 20.dp,
+                avatarSize = 36.dp,
+                avatarToPillGap = 2.dp,
+                pillToNameGap = 2.dp,
+                itemSpacing = 2.dp,
+                settingsButtonSize = IconButtonDefaults.ExtraSmallButtonSize,
+                edgeButtonSize = EdgeButtonSize.ExtraSmall,
+                edgeButtonSpacing = 6.dp
+            )
+            else -> WearOfflineMetrics(
+                topPadding = 22.dp,
+                avatarSize = 40.dp,
+                avatarToPillGap = 2.dp,
+                pillToNameGap = 2.dp,
+                itemSpacing = 3.dp,
+                settingsButtonSize = IconButtonDefaults.ExtraSmallButtonSize,
+                edgeButtonSize = EdgeButtonSize.ExtraSmall,
+                edgeButtonSpacing = 8.dp
+            )
+        }
+    }
+}
 
 /**
  * The remote. While there is no camera to control it is a short list with the link button at the
@@ -199,6 +291,7 @@ fun RemoteScreen(
         return
     }
 
+    val metrics = WearControlsMetrics.forScreenWidthDp(LocalConfiguration.current.screenWidthDp)
     val pagerState = rememberPagerState(pageCount = { 2 })
     // Back on the controls whenever a recording starts or stops
     LaunchedEffect(mode) { pagerState.animateScrollToPage(0) }
@@ -209,13 +302,13 @@ fun RemoteScreen(
                     ScreenScaffold {
                         Column(
                             modifier = Modifier.fillMaxSize(),
-                            verticalArrangement = Arrangement.spacedBy(5.dp, Alignment.CenterVertically),
+                            verticalArrangement = Arrangement.spacedBy(metrics.verticalGap, Alignment.CenterVertically),
                             horizontalAlignment = Alignment.CenterHorizontally
                         ) {
                             Column(
                                 modifier = Modifier
-                                    .height(ABOVE_SHUTTER)
-                                    .padding(horizontal = 24.dp),
+                                    .height(metrics.aboveHeight)
+                                    .padding(horizontal = metrics.aboveHorizontalPadding),
                                 verticalArrangement = Arrangement.Bottom,
                                 horizontalAlignment = Alignment.CenterHorizontally
                             ) {
@@ -238,34 +331,36 @@ fun RemoteScreen(
                             }
                             Row(
                                 verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.spacedBy(10.dp)
+                                horizontalArrangement = Arrangement.spacedBy(metrics.rowGap)
                             ) {
                                 ModeButton(
                                     drawableRes = shownMode?.let { Insta360Icons.modeDrawableRes(it) }
                                         ?: Insta360Icons.captureModeDrawableRes(uiState.currentMode),
                                     modeName = shownMode?.label ?: uiState.currentMode.displayName,
                                     enabled = !busy && mode != RemoteMode.RECORDING,
+                                    buttonSize = metrics.sideButtonSize,
                                     onClick = onOpenModes
                                 )
                                 WearTactileShutterButton(
                                     currentMode = uiState.currentMode,
                                     isRecording = mode == RemoteMode.RECORDING,
                                     isBusy = busy,
-                                    enabled = !busy,
+                                    enabled = true,
                                     contentDescription = shutterLabel,
                                     onClick = onShutter,
-                                    size = 84.dp
+                                    size = metrics.shutterSize
                                 )
                                 PhotoVideoSwitch(
                                     current = uiState.currentMode,
                                     enabled = !busy && mode != RemoteMode.RECORDING,
+                                    buttonSize = metrics.sideButtonSize,
                                     onSwitch = { viewModel.setMode(it) }
                                 )
                             }
                             Column(
                                 modifier = Modifier
-                                    .height(BELOW_SHUTTER)
-                                    .padding(horizontal = 20.dp),
+                                    .height(metrics.belowHeight)
+                                    .padding(horizontal = metrics.belowHorizontalPadding),
                                 verticalArrangement = Arrangement.Top,
                                 horizontalAlignment = Alignment.CenterHorizontally
                             ) {
@@ -317,16 +412,27 @@ private fun OfflineRemote(
     modifier: Modifier = Modifier
 ) {
     val listState = rememberTransformingLazyColumnState()
+    val offlineMetrics = WearOfflineMetrics.forScreenHeightDp(LocalConfiguration.current.screenHeightDp)
+    val layoutDirection = LocalLayoutDirection.current
+    val defaultPadding = ScreenScaffoldDefaults.contentPadding
+    val scaffoldPadding = PaddingValues(
+        start = defaultPadding.calculateStartPadding(layoutDirection),
+        top = offlineMetrics.topPadding,
+        end = defaultPadding.calculateEndPadding(layoutDirection),
+        bottom = defaultPadding.calculateBottomPadding()
+    )
     val settingsInteraction = remember { MutableInteractionSource() }
     val settingsScale by rememberWearPressScale(settingsInteraction, targetScale = 0.94f)
 
     ScreenScaffold(
         scrollState = listState,
         modifier = modifier,
+        contentPadding = scaffoldPadding,
+        edgeButtonSpacing = offlineMetrics.edgeButtonSpacing,
         edgeButton = {
             EdgeButton(
                 onClick = onLinkButton,
-                buttonSize = EdgeButtonSize.Small,
+                buttonSize = offlineMetrics.edgeButtonSize,
                 enabled = !isMovingLink,
                 colors = if (button == CameraButton.STOP) {
                     wearEditorialTonalButtonColors()
@@ -334,7 +440,7 @@ private fun OfflineRemote(
                     ButtonDefaults.buttonColors()
                 }
             ) {
-                Icon(linkIcon(button), contentDescription = null, modifier = Modifier.size(18.dp))
+                LinkActionIcon(button = button, modifier = Modifier.size(18.dp))
                 Spacer(Modifier.width(6.dp))
                 Text(if (isMovingLink) "Moving..." else button.label)
             }
@@ -343,7 +449,7 @@ private fun OfflineRemote(
         TransformingLazyColumn(
             state = listState,
             contentPadding = contentPadding,
-            verticalArrangement = Arrangement.spacedBy(6.dp),
+            verticalArrangement = Arrangement.spacedBy(offlineMetrics.itemSpacing, Alignment.CenterVertically),
             horizontalAlignment = Alignment.CenterHorizontally
         ) {
             item {
@@ -351,10 +457,17 @@ private fun OfflineRemote(
                     ble = ble,
                     cameraName = cameraName,
                     status = if (isMovingLink) RemoteText.MOVING_LINK else RemoteText.status(ble, false, 0),
-                    isMovingLink = isMovingLink
+                    isMovingLink = isMovingLink,
+                    avatarSize = offlineMetrics.avatarSize,
+                    avatarToPillGap = offlineMetrics.avatarToPillGap,
+                    pillToNameGap = offlineMetrics.pillToNameGap
                 )
             }
-            hint?.let { item { Note(it) } }
+            hint?.let {
+                item {
+                    Note(text = it)
+                }
+            }
             item {
                 Row(
                     verticalAlignment = Alignment.CenterVertically,
@@ -363,7 +476,8 @@ private fun OfflineRemote(
                     WearMetricPill(
                         text = RemoteText.gpsStatus(gpsReady),
                         icon = if (gpsReady) Icons.Filled.LocationOn else Icons.Filled.LocationOff,
-                        iconTint = if (gpsReady) MaterialTheme.wearStatusColors.ready else MaterialTheme.wearStatusColors.waiting
+                        iconTint = if (gpsReady) MaterialTheme.wearStatusColors.ready else MaterialTheme.wearStatusColors.waiting,
+                        contentPadding = PaddingValues(horizontal = 9.dp, vertical = 3.dp)
                     )
                     Spacer(Modifier.width(10.dp))
                     FilledTonalIconButton(
@@ -378,7 +492,7 @@ private fun OfflineRemote(
                             color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.55f)
                         ),
                         modifier = Modifier
-                            .size(IconButtonDefaults.ExtraSmallButtonSize)
+                            .size(offlineMetrics.settingsButtonSize)
                             .graphicsLayer {
                                 scaleX = settingsScale
                                 scaleY = settingsScale
@@ -472,7 +586,9 @@ private fun CameraPage(
                 item {
                     WearMetricPill(
                         text = "Through your phone",
-                        icon = Icons.Filled.Smartphone
+                        icon = Icons.Filled.Smartphone,
+                        transformation = SurfaceTransformation(transformationSpec),
+                        modifier = Modifier.transformedHeight(this, transformationSpec)
                     )
                 }
             }
@@ -483,7 +599,9 @@ private fun CameraPage(
                         icon = if (warning.startsWith("Storage")) null else Icons.Default.Warning,
                         iconRes = if (warning.startsWith("Storage")) Insta360Icons.icSdError else null,
                         isProblem = true,
-                        maxLines = 2
+                        maxLines = 2,
+                        transformation = SurfaceTransformation(transformationSpec),
+                        modifier = Modifier.transformedHeight(this, transformationSpec)
                     )
                 }
             }
@@ -512,7 +630,9 @@ private fun CameraPage(
                 WearMetricPill(
                     text = RemoteText.gpsStatus(gpsReady),
                     icon = if (gpsReady) Icons.Filled.LocationOn else Icons.Filled.LocationOff,
-                    iconTint = if (gpsReady) MaterialTheme.wearStatusColors.ready else MaterialTheme.wearStatusColors.waiting
+                    iconTint = if (gpsReady) MaterialTheme.wearStatusColors.ready else MaterialTheme.wearStatusColors.waiting,
+                    transformation = SurfaceTransformation(transformationSpec),
+                    modifier = Modifier.transformedHeight(this, transformationSpec)
                 )
             }
             error?.let {
@@ -521,7 +641,9 @@ private fun CameraPage(
                         text = it,
                         icon = Icons.Default.Warning,
                         isProblem = true,
-                        maxLines = 2
+                        maxLines = 2,
+                        transformation = SurfaceTransformation(transformationSpec),
+                        modifier = Modifier.transformedHeight(this, transformationSpec)
                     )
                 }
             }
@@ -548,7 +670,7 @@ private fun CameraPage(
                     ),
                     modifier = Modifier.fillMaxWidth().transformedHeight(this, transformationSpec),
                     transformation = SurfaceTransformation(transformationSpec),
-                    icon = { Icon(linkIcon(button), contentDescription = null) },
+                    icon = { LinkActionIcon(button = button, modifier = Modifier.size(18.dp)) },
                     label = { Text(button.label) }
                 )
             }
@@ -572,6 +694,7 @@ private fun ModeButton(
     @DrawableRes drawableRes: Int,
     modeName: String,
     enabled: Boolean,
+    buttonSize: Dp,
     onClick: () -> Unit,
     modifier: Modifier = Modifier
 ) {
@@ -593,7 +716,7 @@ private fun ModeButton(
         ),
         border = BorderStroke(width = 1.dp, color = borderColor),
         modifier = modifier
-            .size(SIDE_BUTTON)
+            .touchTargetAwareSize(buttonSize)
             .graphicsLayer {
                 scaleX = pressScale
                 scaleY = pressScale
@@ -602,7 +725,7 @@ private fun ModeButton(
         Icon(
             painter = painterResource(drawableRes),
             contentDescription = "Mode: $modeName",
-            modifier = Modifier.size(22.dp)
+            modifier = Modifier.size(20.dp)
         )
     }
 }
@@ -615,6 +738,7 @@ private fun ModeButton(
 private fun PhotoVideoSwitch(
     current: CaptureMode,
     enabled: Boolean,
+    buttonSize: Dp,
     onSwitch: (CaptureMode) -> Unit,
     modifier: Modifier = Modifier
 ) {
@@ -637,7 +761,7 @@ private fun PhotoVideoSwitch(
         ),
         border = BorderStroke(width = 1.dp, color = borderColor),
         modifier = modifier
-            .size(SIDE_BUTTON)
+            .touchTargetAwareSize(buttonSize)
             .graphicsLayer {
                 scaleX = pressScale
                 scaleY = pressScale
@@ -646,7 +770,7 @@ private fun PhotoVideoSwitch(
         Icon(
             painter = painterResource(Insta360Icons.captureModeDrawableRes(other)),
             contentDescription = "Switch to ${other.displayName}",
-            modifier = Modifier.size(22.dp)
+            modifier = Modifier.size(20.dp)
         )
     }
 }
@@ -777,7 +901,11 @@ private fun OfflineHeader(
     ble: BleCameraState,
     cameraName: String,
     status: String,
-    isMovingLink: Boolean = false
+    modifier: Modifier = Modifier,
+    isMovingLink: Boolean = false,
+    avatarSize: Dp = 40.dp,
+    avatarToPillGap: Dp = 2.dp,
+    pillToNameGap: Dp = 2.dp
 ) {
     val linked = ble.connectionStatus == BleConnectionStatus.CONNECTED
     val looking = isMovingLink || ble.isWaking || ble.isReconnecting ||
@@ -804,24 +932,25 @@ private fun OfflineHeader(
     }
 
     Column(
-        modifier = Modifier.padding(horizontal = 24.dp),
+        modifier = modifier.padding(horizontal = 24.dp),
         horizontalAlignment = Alignment.CenterHorizontally
     ) {
         WearCameraModelAvatar(
             model = displayModel,
-            size = 48.dp,
+            size = avatarSize,
             spinning = looking,
             reserveRingSpace = true,
             ringColor = ringColor
         )
-        Spacer(Modifier.height(6.dp))
+        Spacer(Modifier.height(avatarToPillGap))
         WearMetricPill(
             text = status,
             dotState = dotState,
             textColor = statusColor,
+            contentPadding = PaddingValues(horizontal = 9.dp, vertical = 3.dp),
             textStyle = MaterialTheme.typography.labelMedium
         )
-        Spacer(Modifier.height(4.dp))
+        Spacer(Modifier.height(pillToNameGap))
         Text(
             text = cameraName,
             style = MaterialTheme.typography.labelSmall,
@@ -933,11 +1062,30 @@ private fun ShutterLabel(label: String) {
     )
 }
 
-private fun linkIcon(button: CameraButton): ImageVector = when (button) {
-    CameraButton.CONNECT -> Icons.Filled.Bluetooth
-    CameraButton.STOP -> Icons.Filled.Close
-    CameraButton.WAKE_UP -> Icons.Filled.PowerSettingsNew
-    CameraButton.DISCONNECT -> Icons.Filled.BluetoothDisabled
+@Composable
+private fun LinkActionIcon(
+    button: CameraButton,
+    modifier: Modifier = Modifier
+) {
+    if (button == CameraButton.CONNECT) {
+        Icon(
+            painter = painterResource(Insta360Icons.icBluetooth),
+            contentDescription = null,
+            modifier = modifier
+        )
+    } else {
+        val icon = when (button) {
+            CameraButton.STOP -> Icons.Filled.Close
+            CameraButton.WAKE_UP -> Icons.Filled.PowerSettingsNew
+            CameraButton.DISCONNECT -> Icons.Filled.BluetoothDisabled
+            CameraButton.CONNECT -> Icons.Filled.PowerSettingsNew
+        }
+        Icon(
+            imageVector = icon,
+            contentDescription = null,
+            modifier = modifier
+        )
+    }
 }
 
 @Composable

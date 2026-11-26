@@ -46,7 +46,8 @@ fun ModesScreen(
     val transformationSpec = rememberTransformationSpec()
     val cameraOn = ble.connectionStatus == BleConnectionStatus.CONNECTED && ble.isCameraAwake
     val cameraMode = if (cameraOn) ble.details.subModes?.let { CameraMode.of(it) } else null
-    val locked = uiState.isRecording || ble.isCaptureStarting || ble.isCaptureStopping || ble.isTakingPhoto
+    val locked = uiState.isRecording || ble.isCaptureStarting || ble.isCaptureStopping ||
+        ble.isTakingPhoto || uiState.linkMove != null
     val radioColors = wearEditorialRadioColors()
 
     ScreenScaffold(scrollState = listState, modifier = modifier) { contentPadding ->
@@ -57,11 +58,21 @@ fun ModesScreen(
                     transformation = SurfaceTransformation(transformationSpec)
                 ) { Text("Mode") }
             }
-            if (locked) item { Note("Held while recording") }
+            if (locked) {
+                item {
+                    Note(
+                        text = if (uiState.linkMove != null) "Held while moving link" else "Held while recording"
+                    )
+                }
+            }
             if (cameraMode == null) {
-                item { Note("Switch the camera on to see all ten modes") }
+                item {
+                    Note(
+                        text = "Switch the camera on to see all ten modes"
+                    )
+                }
                 CaptureMode.entries.forEach { choice ->
-                    item {
+                    item(key = "capture_${choice.name}") {
                         RadioButton(
                             selected = uiState.currentMode == choice,
                             onSelect = {
@@ -98,7 +109,7 @@ fun ModesScreen(
                         ) { Text(if (photo) "Photo" else "Video") }
                     }
                     CameraMode.group(photo).forEach { mode ->
-                        item {
+                        item(key = "mode_${mode.name}") {
                             RadioButton(
                                 selected = mode == cameraMode,
                                 onSelect = {

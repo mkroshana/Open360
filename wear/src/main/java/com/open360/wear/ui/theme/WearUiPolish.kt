@@ -72,7 +72,8 @@ fun rememberWearPressScale(
 @Composable
 fun rememberWearRecordingPulseAlpha(active: Boolean): State<Float> {
     val reducedMotion = rememberWearReducedMotion()
-    if (!active || reducedMotion) {
+    val isAmbient = LocalWearAmbientMode.current
+    if (!active || reducedMotion || isAmbient) {
         return rememberUpdatedState(1f)
     }
     val transition = rememberInfiniteTransition(label = "wearRecordingPulse")

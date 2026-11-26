@@ -27,7 +27,9 @@ class WearDesignRulesCheckTest {
         .toList()
 
     private fun stripComments(source: String): String {
-        val noBlockComments = Regex("/\\*[\\s\\S]*?\\*/").replace(source, " ")
+        val noBlockComments = Regex("/\\*[\\s\\S]*?\\*/").replace(source) { match ->
+            match.value.replace(Regex("[^\\n]"), " ")
+        }
         return noBlockComments.lines().joinToString("\n") { line ->
             val trimmed = line.trimStart()
             if (trimmed.startsWith("//")) "" else line
@@ -94,6 +96,57 @@ class WearDesignRulesCheckTest {
 
         assertTrue(
             "Legacy status color violations:\n${violations.joinToString("\n")}",
+            violations.isEmpty()
+        )
+    }
+
+    private fun findEnclosingCallSpan(text: String, callStartIndex: Int): IntRange? {
+        var parenDepth = 0
+        var openParen = -1
+        for (i in callStartIndex - 1 downTo 0) {
+            when (text[i]) {
+                ')' -> parenDepth++
+                '(' -> if (parenDepth == 0) {
+                    openParen = i
+                    break
+                } else {
+                    parenDepth--
+                }
+            }
+        }
+        if (openParen < 0) return null
+        var forwardDepth = 1
+        for (i in openParen + 1 until text.length) {
+            when (text[i]) {
+                '(' -> forwardDepth++
+                ')' -> {
+                    forwardDepth--
+                    if (forwardDepth == 0) return openParen..i
+                }
+            }
+        }
+        return null
+    }
+
+    @Test
+    fun transformedHeightMustPairWithSurfaceTransformation() {
+        val transformedHeightCall = Regex("\\btransformedHeight\\s*\\(")
+        val violations = mutableListOf<String>()
+
+        for (file in wearUiKotlinFiles()) {
+            val sanitized = stripComments(file.readText())
+            for (match in transformedHeightCall.findAll(sanitized)) {
+                val lineNumber = sanitized.substring(0, match.range.first).count { it == '\n' } + 1
+                val callSpan = findEnclosingCallSpan(sanitized, match.range.first)
+                val enclosingArgs = callSpan?.let { sanitized.substring(it.first, it.last + 1) }.orEmpty()
+                if (!enclosingArgs.contains("SurfaceTransformation(")) {
+                    violations += "${file.name}:$lineNumber uses Modifier.transformedHeight(...) without SurfaceTransformation(...)"
+                }
+            }
+        }
+
+        assertTrue(
+            "Bare transformedHeight violations:\n${violations.joinToString("\n")}",
             violations.isEmpty()
         )
     }

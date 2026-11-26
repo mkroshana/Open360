@@ -48,15 +48,18 @@ class WearActivity : ComponentActivity() {
     // When the screen dims the remote stays up in the watch's low-power always-on mode, so a
     // glance shows whether the camera is recording
     private val isAmbient = mutableStateOf(false)
+    private val burnInProtection = mutableStateOf(false)
     private val ambientObserver = AmbientLifecycleObserver(
         this,
         object : AmbientLifecycleObserver.AmbientLifecycleCallback {
             override fun onEnterAmbient(ambientDetails: AmbientLifecycleObserver.AmbientDetails) {
                 isAmbient.value = true
+                burnInProtection.value = ambientDetails.burnInProtectionRequired
             }
 
             override fun onExitAmbient() {
                 isAmbient.value = false
+                burnInProtection.value = false
             }
         }
     )
@@ -140,6 +143,7 @@ class WearActivity : ComponentActivity() {
                 speedUnit = speedUnit,
                 themePreferences = themePreferences,
                 isAmbient = isAmbient.value,
+                burnInProtection = burnInProtection.value,
                 revealed = isSplashRevealed.value,
                 showPermissionDisclosure = showPermissionDisclosure.value,
                 onAcceptPermissionDisclosure = {

@@ -18,7 +18,11 @@ import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.withTimeoutOrNull
 
 /** Something the camera did, or failed to do, to confirm on the watch. */
-private data class Confirmation(val text: String, val success: Boolean)
+private data class Confirmation(
+    val text: String,
+    val success: Boolean,
+    val isConnectionFailure: Boolean = false
+)
 
 // Long enough to read while riding, short enough not to stand in front of the remote
 private const val CONFIRMATION_MS = 2500L
@@ -36,10 +40,12 @@ fun CameraConfirmations(viewModel: CameraViewModel) {
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
     val ble = uiState.bleState
     var shown by remember { mutableStateOf<Confirmation?>(null) }
-    // Kept after a dialog is dismissed, so its text stays while it animates away
+    // Kept after a dialog is dismissed, so text & icon stay steady while it animates away
     var text by remember { mutableStateOf("") }
+    var isConnectionFailure by remember { mutableStateOf(true) }
     fun show(confirmation: Confirmation) {
         text = confirmation.text
+        isConnectionFailure = confirmation.isConnectionFailure
         shown = confirmation
     }
 
@@ -57,7 +63,7 @@ fun CameraConfirmations(viewModel: CameraViewModel) {
             return@LaunchedEffect
         }
         if (viewModel.uiState.value.bleState.connectionStatus != BleConnectionStatus.CONNECTED) {
-            show(Confirmation("Camera Link Lost", success = false))
+            show(Confirmation("Camera Link Lost", success = false, isConnectionFailure = true))
             return@LaunchedEffect
         }
         val saved = withTimeoutOrNull(WAIT_FOR_SAVED_CLIP_MS) {
@@ -67,7 +73,9 @@ fun CameraConfirmations(viewModel: CameraViewModel) {
     }
     LaunchedEffect(ble.photosTaken, ble.photosFailed) {
         if (ble.photosTaken > photosTaken) show(Confirmation("Photo Taken", success = true))
-        if (ble.photosFailed > photosFailed) show(Confirmation("Photo Not Taken", success = false))
+        if (ble.photosFailed > photosFailed) {
+            show(Confirmation("Photo Not Taken", success = false, isConnectionFailure = false))
+        }
         photosTaken = ble.photosTaken
         photosFailed = ble.photosFailed
     }
@@ -84,5 +92,11 @@ fun CameraConfirmations(viewModel: CameraViewModel) {
         onDismissRequest = { shown = null },
         curvedText = { confirmationDialogCurvedText(text, style) },
         durationMillis = CONFIRMATION_MS
-    )
+    ) {
+        if (isConnectionFailure) {
+            ConfirmationDialogDefaults.ConnectionFailureIcon()
+        } else {
+            ConfirmationDialogDefaults.GenericFailureIcon()
+        }
+    }
 }
