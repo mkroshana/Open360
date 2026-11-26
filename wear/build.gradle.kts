@@ -17,8 +17,8 @@ android {
         applicationId = "com.mkroshana.open360"
         minSdk = 30
         targetSdk = 35
-        versionCode = 20002
-        versionName = "0.2.1-beta.1"
+        versionCode = 20003
+        versionName = "0.2.2-beta.1"
         missingDimensionStrategy("distribution", "play")
     }
 

@@ -14,8 +14,8 @@ android {
         applicationId = "com.mkroshana.open360"
         minSdk = 26
         targetSdk = 36
-        versionCode = 10002
-        versionName = "0.2.1-beta.1"
+        versionCode = 10003
+        versionName = "0.2.2-beta.1"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }

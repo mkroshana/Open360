@@ -1,0 +1,4 @@
+Open360 v0.2.2-beta.1 (Beta):
+- Guarded Wear OS ongoing activity status updates with explicit Android 13+ POST_NOTIFICATIONS permission handling
+- Includes 1-tap "Install on Watch", Wear OS Tile, watchface complication, haptics, and phone-to-watch speed unit sync
+- Includes Wear OS layout polish, ambient mode improvements, and verified green CI & lint checks
