@@ -1,8 +1,6 @@
 package com.open360.wear.ui
 
-import android.animation.ValueAnimator
 import android.net.Uri
-import androidx.compose.animation.core.CubicBezierEasing
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.snap
 import androidx.compose.animation.core.tween
@@ -10,18 +8,22 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Bluetooth
+import androidx.compose.material.icons.filled.LocationOn
+import androidx.compose.material.icons.filled.MonitorHeart
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
-import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
@@ -32,14 +34,14 @@ import androidx.wear.compose.material3.AlertDialog
 import androidx.wear.compose.material3.AlertDialogDefaults
 import androidx.wear.compose.material3.AppScaffold
 import androidx.wear.compose.material3.Button
-import androidx.wear.compose.material3.ColorScheme
+import androidx.wear.compose.material3.ButtonDefaults
+import androidx.wear.compose.material3.Icon
 import androidx.wear.compose.material3.ListHeader
 import androidx.wear.compose.material3.MaterialTheme
 import androidx.wear.compose.material3.OutlinedButton
 import androidx.wear.compose.material3.ScreenScaffold
 import androidx.wear.compose.material3.SurfaceTransformation
 import androidx.wear.compose.material3.Text
-import androidx.wear.compose.material3.dynamicColorScheme
 import androidx.wear.compose.material3.lazy.rememberTransformationSpec
 import androidx.wear.compose.material3.lazy.transformedHeight
 import androidx.wear.compose.navigation.SwipeDismissableNavHost
@@ -48,6 +50,12 @@ import androidx.wear.compose.navigation.rememberSwipeDismissableNavController
 import com.open360.ui.camera.CameraViewModel
 import com.open360.wear.SpeedUnit
 import com.open360.wear.WatchHeartRate
+import com.open360.wear.WearThemePreferences
+import com.open360.wear.ui.theme.Open360WearTheme
+import com.open360.wear.ui.theme.WearEaseOutCubic
+import com.open360.wear.ui.theme.WearSurfaceCard
+import com.open360.wear.ui.theme.rememberWearReducedMotion
+import com.open360.wear.ui.theme.wearEditorialOutlinedButtonColors
 
 private object Routes {
     const val REMOTE = "remote"
@@ -66,34 +74,34 @@ fun WearApp(
     viewModel: CameraViewModel,
     heartRate: WatchHeartRate,
     speedUnit: SpeedUnit,
+    themePreferences: WearThemePreferences,
     isAmbient: Boolean,
     revealed: Boolean = true,
     showPermissionDisclosure: Boolean = false,
     onAcceptPermissionDisclosure: () -> Unit = {},
     onSkipPermissionDisclosure: () -> Unit = {}
 ) {
-    val context = LocalContext.current
-    val animatorsEnabled = remember { ValueAnimator.areAnimatorsEnabled() }
-    val easeOutCubic = remember { CubicBezierEasing(0.23f, 1f, 0.32f, 1f) }
+    val dynamicColor by themePreferences.dynamicColor.collectAsStateWithLifecycle()
+    val reducedMotion = rememberWearReducedMotion()
     val revealAlpha = animateFloatAsState(
         targetValue = if (revealed) 1f else 0f,
         animationSpec = tween(
-            durationMillis = if (animatorsEnabled) 240 else 140,
-            easing = easeOutCubic
+            durationMillis = if (reducedMotion) 140 else 240,
+            easing = WearEaseOutCubic
         ),
         label = "wearSplashRevealAlpha"
     )
     val revealScale = animateFloatAsState(
-        targetValue = if (revealed || !animatorsEnabled) 1f else 0.96f,
-        animationSpec = if (!animatorsEnabled) snap() else tween(durationMillis = 240, easing = easeOutCubic),
+        targetValue = if (revealed || reducedMotion) 1f else 0.96f,
+        animationSpec = if (reducedMotion) snap() else tween(durationMillis = 240, easing = WearEaseOutCubic),
         label = "wearSplashRevealScale"
     )
-    // The colours the watch face has picked, where the watch offers them
-    MaterialTheme(colorScheme = dynamicColorScheme(context) ?: ColorScheme()) {
+
+    Open360WearTheme(dynamicColor = dynamicColor) {
         Box(
             modifier = Modifier
                 .fillMaxSize()
-                .background(Color.Black)
+                .background(MaterialTheme.colorScheme.background)
         ) {
             Box(
                 modifier = Modifier
@@ -136,6 +144,7 @@ fun WearApp(
                                 viewModel = viewModel,
                                 heartRate = heartRate,
                                 speedUnit = speedUnit,
+                                themePreferences = themePreferences,
                                 onAddSensor = { nav.navigate(Routes.ADD_SENSOR) },
                                 onOpenSensor = { address -> nav.navigate("${Routes.SENSOR}/${Uri.encode(address)}") }
                             )
@@ -183,12 +192,13 @@ private fun WakeUpOnPhoneDialog(viewModel: CameraViewModel) {
 @Composable
 private fun WearPermissionDisclosureScreen(
     onContinue: () -> Unit,
-    onSkip: () -> Unit
+    onSkip: () -> Unit,
+    modifier: Modifier = Modifier
 ) {
     val listState = rememberTransformingLazyColumnState()
     val transformationSpec = rememberTransformationSpec()
 
-    ScreenScaffold(scrollState = listState) { contentPadding ->
+    ScreenScaffold(scrollState = listState, modifier = modifier) { contentPadding ->
         TransformingLazyColumn(
             state = listState,
             contentPadding = contentPadding,
@@ -202,31 +212,46 @@ private fun WearPermissionDisclosureScreen(
                 ) { Text("Permissions") }
             }
             item {
-                DisclosureNote(
+                DisclosureNoteCard(
+                    icon = Icons.Default.LocationOn,
                     title = "Location & Background GPS",
-                    detail = "Logs GPS speed and routes for camera clips, including when connected with the screen off."
+                    detail = "Logs GPS speed and routes for camera clips, including when connected with the screen off.",
+                    modifier = Modifier.transformedHeight(this, transformationSpec),
+                    transformation = SurfaceTransformation(transformationSpec)
                 )
             }
             item {
-                DisclosureNote(
+                DisclosureNoteCard(
+                    icon = Icons.Default.MonitorHeart,
                     title = "Body Sensors",
-                    detail = "Reads watch heart rate during recordings for local FIT telemetry."
+                    detail = "Reads watch heart rate during recordings for local FIT telemetry.",
+                    modifier = Modifier.transformedHeight(this, transformationSpec),
+                    transformation = SurfaceTransformation(transformationSpec)
                 )
             }
             item {
-                DisclosureNote(
+                DisclosureNoteCard(
+                    icon = Icons.Default.Bluetooth,
                     title = "Bluetooth & Notifications",
-                    detail = "Connects to your Insta360 camera and sensors, and keeps the link active."
+                    detail = "Connects to your Insta360 camera and sensors, and keeps the link active.",
+                    modifier = Modifier.transformedHeight(this, transformationSpec),
+                    transformation = SurfaceTransformation(transformationSpec)
                 )
             }
             item {
-                Text(
-                    text = "All data stays on your watch, phone, and camera; nothing is uploaded.",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurface,
-                    textAlign = TextAlign.Center,
-                    modifier = Modifier.padding(horizontal = 20.dp, vertical = 4.dp)
-                )
+                WearSurfaceCard(
+                    modifier = Modifier.transformedHeight(this, transformationSpec),
+                    transformation = SurfaceTransformation(transformationSpec)
+                ) {
+                    Text(
+                        text = "All data stays on your watch, phone, and camera; nothing is uploaded.",
+                        style = MaterialTheme.typography.bodySmall,
+                        fontWeight = FontWeight.Medium,
+                        color = MaterialTheme.colorScheme.onSurface,
+                        textAlign = TextAlign.Center,
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                }
             }
             item {
                 Button(
@@ -239,6 +264,11 @@ private fun WearPermissionDisclosureScreen(
             item {
                 OutlinedButton(
                     onClick = onSkip,
+                    colors = wearEditorialOutlinedButtonColors(),
+                    border = ButtonDefaults.outlinedButtonBorder(
+                        enabled = true,
+                        borderColor = MaterialTheme.colorScheme.outline.copy(alpha = 0.65f)
+                    ),
                     modifier = Modifier.fillMaxWidth().transformedHeight(this, transformationSpec),
                     transformation = SurfaceTransformation(transformationSpec),
                     label = { Text("Skip") }
@@ -249,25 +279,46 @@ private fun WearPermissionDisclosureScreen(
 }
 
 @Composable
-private fun DisclosureNote(title: String, detail: String) {
-    Column(
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(horizontal = 18.dp, vertical = 2.dp),
-        horizontalAlignment = Alignment.CenterHorizontally
+private fun DisclosureNoteCard(
+    icon: ImageVector,
+    title: String,
+    detail: String,
+    modifier: Modifier = Modifier,
+    transformation: SurfaceTransformation? = null
+) {
+    WearSurfaceCard(
+        modifier = modifier,
+        transformation = transformation
     ) {
-        Text(
-            text = title,
-            style = MaterialTheme.typography.labelLarge,
-            fontWeight = FontWeight.SemiBold,
-            color = MaterialTheme.colorScheme.onSurface,
-            textAlign = TextAlign.Center
-        )
-        Text(
-            text = detail,
-            style = MaterialTheme.typography.bodySmall,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-            textAlign = TextAlign.Center
-        )
+        Row(
+            verticalAlignment = Alignment.Top,
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            modifier = Modifier.fillMaxWidth()
+        ) {
+            Icon(
+                imageVector = icon,
+                contentDescription = null,
+                tint = MaterialTheme.colorScheme.primary,
+                modifier = Modifier
+                    .padding(top = 2.dp)
+                    .size(16.dp)
+            )
+            Column(
+                modifier = Modifier.weight(1f),
+                verticalArrangement = Arrangement.spacedBy(2.dp)
+            ) {
+                Text(
+                    text = title,
+                    style = MaterialTheme.typography.labelMedium,
+                    fontWeight = FontWeight.SemiBold,
+                    color = MaterialTheme.colorScheme.onSurface
+                )
+                Text(
+                    text = detail,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+        }
     }
 }

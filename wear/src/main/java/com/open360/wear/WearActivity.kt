@@ -41,6 +41,7 @@ class WearActivity : ComponentActivity() {
     private lateinit var phoneSettings: PhoneSettingsReceiver
     private lateinit var heartRate: WatchHeartRate
     private lateinit var speedUnit: SpeedUnit
+    private lateinit var themePreferences: WearThemePreferences
     private val isSplashRevealed = mutableStateOf(false)
     private val showPermissionDisclosure = mutableStateOf(false)
 
@@ -93,6 +94,7 @@ class WearActivity : ComponentActivity() {
         phoneSettings = PhoneSettingsReceiver(this, ::applyPhoneSettings)
         heartRate = WatchHeartRate(applicationContext, cameraViewModel.sportsSensors)
         speedUnit = SpeedUnit(applicationContext)
+        themePreferences = WearThemePreferences(applicationContext)
         // The watch's heart rate is read while the camera is on over the watch's own link, for its
         // FIT file. Not while the camera is linked through the phone, whose FIT it would not reach.
         lifecycleScope.launch {
@@ -136,6 +138,7 @@ class WearActivity : ComponentActivity() {
                 viewModel = cameraViewModel,
                 heartRate = heartRate,
                 speedUnit = speedUnit,
+                themePreferences = themePreferences,
                 isAmbient = isAmbient.value,
                 revealed = isSplashRevealed.value,
                 showPermissionDisclosure = showPermissionDisclosure.value,

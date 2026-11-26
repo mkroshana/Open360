@@ -2,10 +2,13 @@ package com.open360.wear.ui
 
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.wear.compose.foundation.lazy.TransformingLazyColumn
@@ -22,25 +25,31 @@ import androidx.wear.compose.material3.lazy.transformedHeight
 import com.open360.core.ble.BleConnectionStatus
 import com.open360.core.ble.CameraMode
 import com.open360.core.model.CaptureMode
+import com.open360.core.ui.Insta360Icons
 import com.open360.ui.camera.CameraViewModel
+import com.open360.wear.ui.theme.wearEditorialRadioColors
 
 /**
  * The camera's modes. Once a camera that is on has reported its mode, all ten are offered and
  * choosing one switches the camera; before that only Video or Photo, which a camera that is
- * off is switched to when it next answers. Held while a recording runs, as on the phone.
+ * off is switched to when it next answers. Held while a recording or photo capture runs.
  */
 @Composable
-fun ModesScreen(viewModel: CameraViewModel, onDone: () -> Unit) {
+fun ModesScreen(
+    viewModel: CameraViewModel,
+    onDone: () -> Unit,
+    modifier: Modifier = Modifier
+) {
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
     val ble = uiState.bleState
     val listState = rememberTransformingLazyColumnState()
-    // Items narrow and shrink as they reach the round screen's top and bottom edges
     val transformationSpec = rememberTransformationSpec()
     val cameraOn = ble.connectionStatus == BleConnectionStatus.CONNECTED && ble.isCameraAwake
     val cameraMode = if (cameraOn) ble.details.subModes?.let { CameraMode.of(it) } else null
-    val locked = uiState.isRecording || ble.isCaptureStarting || ble.isCaptureStopping
+    val locked = uiState.isRecording || ble.isCaptureStarting || ble.isCaptureStopping || ble.isTakingPhoto
+    val radioColors = wearEditorialRadioColors()
 
-    ScreenScaffold(scrollState = listState) { contentPadding ->
+    ScreenScaffold(scrollState = listState, modifier = modifier) { contentPadding ->
         TransformingLazyColumn(state = listState, contentPadding = contentPadding) {
             item {
                 ListHeader(
@@ -60,10 +69,23 @@ fun ModesScreen(viewModel: CameraViewModel, onDone: () -> Unit) {
                                 onDone()
                             },
                             enabled = !locked,
+                            colors = radioColors,
                             modifier = Modifier.fillMaxWidth().transformedHeight(this, transformationSpec),
                             transformation = SurfaceTransformation(transformationSpec),
-                            icon = { Icon(modeIcon(choice), contentDescription = null) },
-                            label = { Text(choice.displayName) }
+                            icon = {
+                                Icon(
+                                    painter = painterResource(Insta360Icons.captureModeDrawableRes(choice)),
+                                    contentDescription = null,
+                                    modifier = Modifier.size(20.dp)
+                                )
+                            },
+                            label = {
+                                Text(
+                                    text = choice.displayName,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis
+                                )
+                            }
                         )
                     }
                 }
@@ -84,10 +106,23 @@ fun ModesScreen(viewModel: CameraViewModel, onDone: () -> Unit) {
                                     onDone()
                                 },
                                 enabled = !locked,
+                                colors = radioColors,
                                 modifier = Modifier.fillMaxWidth().transformedHeight(this, transformationSpec),
                                 transformation = SurfaceTransformation(transformationSpec),
-                                icon = { Icon(modeIcon(mode), contentDescription = null) },
-                                label = { Text(mode.label) }
+                                icon = {
+                                    Icon(
+                                        painter = painterResource(Insta360Icons.modeDrawableRes(mode)),
+                                        contentDescription = null,
+                                        modifier = Modifier.size(20.dp)
+                                    )
+                                },
+                                label = {
+                                    Text(
+                                        text = mode.label,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis
+                                    )
+                                }
                             )
                         }
                     }
@@ -98,12 +133,15 @@ fun ModesScreen(viewModel: CameraViewModel, onDone: () -> Unit) {
 }
 
 @Composable
-private fun Note(text: String) {
+private fun Note(
+    text: String,
+    modifier: Modifier = Modifier
+) {
     Text(
         text = text,
         style = MaterialTheme.typography.bodySmall,
         color = MaterialTheme.colorScheme.onSurfaceVariant,
         textAlign = TextAlign.Center,
-        modifier = Modifier.padding(horizontal = 24.dp, vertical = 4.dp)
+        modifier = modifier.padding(horizontal = 24.dp, vertical = 4.dp)
     )
 }

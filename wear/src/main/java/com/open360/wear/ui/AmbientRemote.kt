@@ -17,10 +17,14 @@ import androidx.wear.compose.material3.Text
 import com.open360.core.ble.BleConnectionStatus
 import com.open360.core.ble.CameraMode
 import com.open360.ui.camera.CameraViewModel
+import com.open360.wear.ui.theme.WearTabularFigures
+
+private val AmbientIvory = Color(0xFFF0EBE1)
+private val AmbientStone = Color(0xFFA39E94)
 
 /**
- * The remote while the watch's screen is dimmed: a few lines of grey and white text on black,
- * as always-on screens need, that change at most once a minute.
+ * The remote while the watch's screen is dimmed: pure black OLED burn-in-safe layout with
+ * tabular figures and warm editorial ivory / stone tones that update at most once a minute.
  */
 @Composable
 fun AmbientRemote(viewModel: CameraViewModel) {
@@ -30,26 +34,32 @@ fun AmbientRemote(viewModel: CameraViewModel) {
     val showMode = uiState.isRecording || (ble.connectionStatus == BleConnectionStatus.CONNECTED && ble.isCameraAwake)
 
     Column(
-        modifier = Modifier.fillMaxSize().background(Color.Black),
+        modifier = Modifier
+            .fillMaxSize()
+            .background(Color.Black),
         verticalArrangement = Arrangement.spacedBy(4.dp, Alignment.CenterVertically),
         horizontalAlignment = Alignment.CenterHorizontally
     ) {
         Text(
             text = if (uiState.linkMove != null) RemoteText.MOVING_LINK
-                   else RemoteText.ambientStatus(ble, uiState.isRecording, uiState.recordingDurationSeconds),
-            style = MaterialTheme.typography.titleMedium,
-            color = Color.White,
+            else RemoteText.ambientStatus(ble, uiState.isRecording, uiState.recordingDurationSeconds),
+            style = MaterialTheme.typography.titleMedium.merge(WearTabularFigures),
+            color = AmbientIvory,
             textAlign = TextAlign.Center
         )
         if (showMode) {
             Text(
                 text = RemoteText.shownMode(uiState.currentMode, cameraMode)?.label ?: uiState.currentMode.displayName,
                 style = MaterialTheme.typography.bodyMedium,
-                color = Color.LightGray
+                color = AmbientStone
             )
         }
         ble.batteryPercent?.let {
-            Text(text = "Camera $it%", style = MaterialTheme.typography.bodySmall, color = Color.LightGray)
+            Text(
+                text = "Camera $it%",
+                style = MaterialTheme.typography.bodySmall.merge(WearTabularFigures),
+                color = AmbientStone
+            )
         }
     }
 }

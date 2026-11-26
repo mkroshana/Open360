@@ -1,12 +1,14 @@
 package com.open360.wear.ui
 
 import android.os.SystemClock
+import androidx.annotation.DrawableRes
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
-import androidx.compose.foundation.clickable
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
@@ -16,30 +18,23 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.CircleShape
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Battery0Bar
-import androidx.compose.material.icons.filled.Battery1Bar
-import androidx.compose.material.icons.filled.Battery2Bar
-import androidx.compose.material.icons.filled.Battery3Bar
-import androidx.compose.material.icons.filled.Battery4Bar
-import androidx.compose.material.icons.filled.Battery5Bar
-import androidx.compose.material.icons.filled.Battery6Bar
 import androidx.compose.material.icons.filled.BatteryChargingFull
-import androidx.compose.material.icons.filled.BatteryFull
 import androidx.compose.material.icons.filled.Bluetooth
 import androidx.compose.material.icons.filled.BluetoothDisabled
+import androidx.compose.material.icons.filled.Bolt
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Favorite
 import androidx.compose.material.icons.filled.LocationOff
 import androidx.compose.material.icons.filled.LocationOn
+import androidx.compose.material.icons.filled.Movie
 import androidx.compose.material.icons.filled.PowerSettingsNew
+import androidx.compose.material.icons.filled.Schedule
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Smartphone
-import androidx.compose.material.icons.filled.Watch
 import androidx.compose.material.icons.filled.Speed
-import androidx.compose.material.icons.filled.Videocam
-import androidx.compose.material.icons.filled.VideocamOff
+import androidx.compose.material.icons.filled.Warning
+import androidx.compose.material.icons.filled.Watch
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -48,10 +43,12 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.platform.LocalHapticFeedback
-import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -62,7 +59,6 @@ import androidx.wear.compose.foundation.pager.HorizontalPager
 import androidx.wear.compose.foundation.pager.rememberPagerState
 import androidx.wear.compose.material3.AnimatedPage
 import androidx.wear.compose.material3.ButtonDefaults
-import androidx.wear.compose.material3.CircularProgressIndicator
 import androidx.wear.compose.material3.CompactButton
 import androidx.wear.compose.material3.EdgeButton
 import androidx.wear.compose.material3.EdgeButtonSize
@@ -75,7 +71,6 @@ import androidx.wear.compose.material3.ListHeader
 import androidx.wear.compose.material3.MaterialTheme
 import androidx.wear.compose.material3.OutlinedButton
 import androidx.wear.compose.material3.OutlinedIconButton
-import androidx.wear.compose.material3.ProgressIndicatorDefaults
 import androidx.wear.compose.material3.ScreenScaffold
 import androidx.wear.compose.material3.SurfaceTransformation
 import androidx.wear.compose.material3.Text
@@ -86,31 +81,36 @@ import com.open360.core.ble.BleConnectionStatus
 import com.open360.core.ble.CameraDetails
 import com.open360.core.ble.CameraMode
 import com.open360.core.model.CaptureMode
+import com.open360.core.model.Insta360CameraModel
+import com.open360.core.ui.Insta360Icons
 import com.open360.ui.camera.CameraButton
 import com.open360.ui.camera.CameraStatusText
 import com.open360.ui.camera.CameraViewModel
 import com.open360.wear.SpeedUnit
 import com.open360.wear.WatchHeartRate
-
-private val RecordingRed = Color(0xFFFF3B30)
-private val ReadyGreen = Color(0xFF34C759)
-private val StandbyOrange = Color(0xFFFF9500)
+import com.open360.wear.ui.theme.WearCameraModelAvatar
+import com.open360.wear.ui.theme.WearMetricPill
+import com.open360.wear.ui.theme.WearStatusDot
+import com.open360.wear.ui.theme.WearSurfaceCard
+import com.open360.wear.ui.theme.WearTabularFigures
+import com.open360.wear.ui.theme.WearTactileShutterButton
+import com.open360.wear.ui.theme.rememberWearPressScale
+import com.open360.wear.ui.theme.wearEditorialOutlinedButtonColors
+import com.open360.wear.ui.theme.wearEditorialTonalButtonColors
+import com.open360.wear.ui.theme.wearMiddleEllipsize
+import com.open360.wear.ui.theme.wearStatusColors
 
 /** What the remote is for at the moment, which decides what it puts first. */
 private enum class RemoteMode {
-    // No camera to control: the link button is the one thing to do
     OFFLINE,
-    // The camera is on: the shutter is the main control
     READY,
-    // A recording or a timelapse, interval or starlapse run: its time and the stop
     RECORDING
 }
 
 // Above and below the shutter, each of a fixed height, so the shutter stays in the same place
-// whether the camera is ready, taking a photo or recording
+// whether the camera is ready, taking a photo or recording.
 private val ABOVE_SHUTTER = 44.dp
-private val BELOW_SHUTTER = 44.dp
-// The buttons either side of the shutter
+private val BELOW_SHUTTER = 46.dp
 private val SIDE_BUTTON = 48.dp
 
 /**
@@ -125,7 +125,8 @@ fun RemoteScreen(
     heartRate: WatchHeartRate,
     speedUnit: SpeedUnit,
     onOpenModes: () -> Unit,
-    onOpenSettings: () -> Unit
+    onOpenSettings: () -> Unit,
+    modifier: Modifier = Modifier
 ) {
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
     val heart by heartRate.state.collectAsStateWithLifecycle()
@@ -149,12 +150,21 @@ fun RemoteScreen(
     val cameraMode = ble.details.subModes?.let { CameraMode.of(it) }
     val shownMode = RemoteText.shownMode(uiState.currentMode, cameraMode)
     // Waiting for the camera to confirm the last tap, a photo included: the shutter shows it and
-    // takes no other tap until then
+    // takes no other tap until then.
     val busy = ble.isCaptureStarting || ble.isCaptureStopping || ble.isTakingPhoto || uiState.linkMove != null
-    val shutterLabel = RemoteText.shutter(uiState.currentMode, cameraMode, uiState.isRecording, ble.isCaptureStarting, ble.isCaptureStopping, ble.isTakingPhoto)
-    // The camera last linked to, by the name it advertises, before this link names it
+    val shutterLabel = RemoteText.shutter(
+        uiState.currentMode,
+        cameraMode,
+        uiState.isRecording,
+        ble.isCaptureStarting,
+        ble.isCaptureStopping,
+        ble.isTakingPhoto
+    )
+    // The camera last linked to, by the name it advertises, before this link names it.
     val cameraName = remember(ble.deviceName) {
-        ble.deviceName ?: viewModel.bleManager.getSavedSerialSuffix().takeIf { it.isNotBlank() }?.let { "GO 3S $it" } ?: "Insta360 Camera"
+        ble.deviceName
+            ?: viewModel.bleManager.getSavedSerialSuffix().takeIf { it.isNotBlank() }?.let { "GO 3S $it" }
+            ?: "Insta360 Camera"
     }
 
     val onShutter = {
@@ -183,7 +193,8 @@ fun RemoteScreen(
             button = button,
             isMovingLink = uiState.linkMove != null,
             onLinkButton = onLinkButton,
-            onOpenSettings = onOpenSettings
+            onOpenSettings = onOpenSettings,
+            modifier = modifier
         )
         return
     }
@@ -191,28 +202,35 @@ fun RemoteScreen(
     val pagerState = rememberPagerState(pageCount = { 2 })
     // Back on the controls whenever a recording starts or stops
     LaunchedEffect(mode) { pagerState.animateScrollToPage(0) }
-    HorizontalPagerScaffold(pagerState = pagerState) {
+    HorizontalPagerScaffold(pagerState = pagerState, modifier = modifier) {
         HorizontalPager(state = pagerState) { page ->
             AnimatedPage(pageIndex = page, pagerState = pagerState) {
                 if (page == 0) {
                     ScreenScaffold {
                         Column(
                             modifier = Modifier.fillMaxSize(),
-                            verticalArrangement = Arrangement.spacedBy(6.dp, Alignment.CenterVertically),
+                            verticalArrangement = Arrangement.spacedBy(5.dp, Alignment.CenterVertically),
                             horizontalAlignment = Alignment.CenterHorizontally
                         ) {
                             Column(
-                                modifier = Modifier.height(ABOVE_SHUTTER).padding(horizontal = 36.dp),
+                                modifier = Modifier
+                                    .height(ABOVE_SHUTTER)
+                                    .padding(horizontal = 24.dp),
                                 verticalArrangement = Arrangement.Bottom,
                                 horizontalAlignment = Alignment.CenterHorizontally
                             ) {
-                                if (mode == RemoteMode.RECORDING) RecordingTimer(RemoteText.elapsed(uiState.recordingDurationSeconds))
-                                else ReadyHeader(ble, throughPhone = uiState.linkedThroughPeer)
+                                if (mode == RemoteMode.RECORDING) {
+                                    RecordingTimer(RemoteText.elapsed(uiState.recordingDurationSeconds))
+                                } else {
+                                    ReadyHeader(ble = ble, throughPhone = uiState.linkedThroughPeer)
+                                }
                                 Text(
-                                    text = (if (mode == RemoteMode.RECORDING) CameraStatusText.recordingMode(ble.details.recordingState) else null)
-                                        ?: shownMode?.label
-                                        ?: uiState.currentMode.displayName,
-                                    style = MaterialTheme.typography.labelSmall,
+                                    text = (if (mode == RemoteMode.RECORDING) {
+                                        CameraStatusText.recordingMode(ble.details.recordingState)
+                                    } else {
+                                        null
+                                    }) ?: shownMode?.label ?: uiState.currentMode.displayName,
+                                    style = MaterialTheme.typography.bodySmall,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                                     maxLines = 1,
                                     overflow = TextOverflow.Ellipsis
@@ -223,18 +241,20 @@ fun RemoteScreen(
                                 horizontalArrangement = Arrangement.spacedBy(10.dp)
                             ) {
                                 ModeButton(
-                                    icon = shownMode?.let { modeIcon(it) } ?: modeIcon(uiState.currentMode),
+                                    drawableRes = shownMode?.let { Insta360Icons.modeDrawableRes(it) }
+                                        ?: Insta360Icons.captureModeDrawableRes(uiState.currentMode),
                                     modeName = shownMode?.label ?: uiState.currentMode.displayName,
-                                    // Held while a recording runs, as the camera's mode is
                                     enabled = !busy && mode != RemoteMode.RECORDING,
                                     onClick = onOpenModes
                                 )
-                                Shutter(
-                                    isVideo = uiState.currentMode == CaptureMode.VIDEO,
+                                WearTactileShutterButton(
+                                    currentMode = uiState.currentMode,
                                     isRecording = mode == RemoteMode.RECORDING,
-                                    busy = busy,
-                                    label = shutterLabel,
-                                    onClick = onShutter
+                                    isBusy = busy,
+                                    enabled = !busy,
+                                    contentDescription = shutterLabel,
+                                    onClick = onShutter,
+                                    size = 84.dp
                                 )
                                 PhotoVideoSwitch(
                                     current = uiState.currentMode,
@@ -243,10 +263,14 @@ fun RemoteScreen(
                                 )
                             }
                             Column(
-                                modifier = Modifier.height(BELOW_SHUTTER).padding(horizontal = 28.dp),
+                                modifier = Modifier
+                                    .height(BELOW_SHUTTER)
+                                    .padding(horizontal = 20.dp),
+                                verticalArrangement = Arrangement.Top,
                                 horizontalAlignment = Alignment.CenterHorizontally
                             ) {
                                 ShutterLabel(shutterLabel)
+                                Spacer(Modifier.height(2.dp))
                                 UnderShutterLine(
                                     warning = cameraWarnings(ble.details).firstOrNull(),
                                     gpsReady = gpsReady,
@@ -262,6 +286,7 @@ fun RemoteScreen(
                     CameraPage(
                         ble = ble,
                         cameraName = cameraName,
+                        isRecording = mode == RemoteMode.RECORDING,
                         throughPhone = uiState.linkedThroughPeer,
                         gpsReady = gpsReady,
                         error = ble.lastError ?: uiState.trackState.lastError,
@@ -288,21 +313,28 @@ private fun OfflineRemote(
     button: CameraButton,
     isMovingLink: Boolean,
     onLinkButton: () -> Unit,
-    onOpenSettings: () -> Unit
+    onOpenSettings: () -> Unit,
+    modifier: Modifier = Modifier
 ) {
     val listState = rememberTransformingLazyColumnState()
-    // The one thing to do: the link button on the bottom edge, visible without scrolling
+    val settingsInteraction = remember { MutableInteractionSource() }
+    val settingsScale by rememberWearPressScale(settingsInteraction, targetScale = 0.94f)
+
     ScreenScaffold(
         scrollState = listState,
+        modifier = modifier,
         edgeButton = {
             EdgeButton(
                 onClick = onLinkButton,
                 buttonSize = EdgeButtonSize.Small,
-                // Neither device holds the link for a moment while it moves
                 enabled = !isMovingLink,
-                colors = if (button == CameraButton.STOP) ButtonDefaults.filledTonalButtonColors() else ButtonDefaults.buttonColors()
+                colors = if (button == CameraButton.STOP) {
+                    wearEditorialTonalButtonColors()
+                } else {
+                    ButtonDefaults.buttonColors()
+                }
             ) {
-                Icon(linkIcon(button), contentDescription = null, modifier = Modifier.size(20.dp))
+                Icon(linkIcon(button), contentDescription = null, modifier = Modifier.size(18.dp))
                 Spacer(Modifier.width(6.dp))
                 Text(if (isMovingLink) "Moving..." else button.label)
             }
@@ -323,39 +355,66 @@ private fun OfflineRemote(
                 )
             }
             hint?.let { item { Note(it) } }
-            // GPS and Settings share one row, so the screen fits above the edge button
             item {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    GpsStatusLine(gpsReady)
-                    Spacer(Modifier.width(12.dp))
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.Center
+                ) {
+                    WearMetricPill(
+                        text = RemoteText.gpsStatus(gpsReady),
+                        icon = if (gpsReady) Icons.Filled.LocationOn else Icons.Filled.LocationOff,
+                        iconTint = if (gpsReady) MaterialTheme.wearStatusColors.ready else MaterialTheme.wearStatusColors.waiting
+                    )
+                    Spacer(Modifier.width(10.dp))
                     FilledTonalIconButton(
                         onClick = onOpenSettings,
-                        modifier = Modifier.size(IconButtonDefaults.ExtraSmallButtonSize)
+                        interactionSource = settingsInteraction,
+                        colors = IconButtonDefaults.filledTonalIconButtonColors(
+                            containerColor = MaterialTheme.colorScheme.surfaceContainerHigh,
+                            contentColor = MaterialTheme.colorScheme.onSurfaceVariant
+                        ),
+                        border = BorderStroke(
+                            width = 1.dp,
+                            color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.55f)
+                        ),
+                        modifier = Modifier
+                            .size(IconButtonDefaults.ExtraSmallButtonSize)
+                            .graphicsLayer {
+                                scaleX = settingsScale
+                                scaleY = settingsScale
+                            }
                     ) {
-                        // Small and muted, so it does not compete with the edge button
                         Icon(
                             Icons.Filled.Settings,
                             contentDescription = "Settings",
-                            tint = MaterialTheme.colorScheme.onSurfaceVariant,
                             modifier = Modifier.size(18.dp)
                         )
                     }
                 }
             }
-            error?.let { item { Note(it, isProblem = true) } }
+            error?.let {
+                item {
+                    WearMetricPill(
+                        text = it,
+                        icon = Icons.Default.Warning,
+                        isProblem = true,
+                        maxLines = 2
+                    )
+                }
+            }
         }
     }
 }
 
 /**
  * The page a swipe to the left of the controls: what the camera reports, whether the watch has
- * GPS, moving the link between the watch and the phone, and Disconnect and Settings, which are
- * rarely wanted while the camera is on.
+ * GPS, moving the link between the watch and the phone, and Disconnect and Settings.
  */
 @Composable
 private fun CameraPage(
     ble: BleCameraState,
     cameraName: String,
+    isRecording: Boolean,
     throughPhone: Boolean,
     gpsReady: Boolean,
     error: String?,
@@ -366,8 +425,18 @@ private fun CameraPage(
     onOpenSettings: () -> Unit
 ) {
     val listState = rememberTransformingLazyColumnState()
-    // Items narrow and shrink as they reach the round screen's top and bottom edges
     val transformationSpec = rememberTransformationSpec()
+    val displayModel = ble.resolvedModel ?: Insta360CameraModel.GO_3S
+    val dotState = CameraStatusText.statusDotState(
+        isRecording = isRecording,
+        isConnected = ble.connectionStatus == BleConnectionStatus.CONNECTED,
+        isAsleep = ble.connectionStatus == BleConnectionStatus.CONNECTED && !ble.isCameraAwake,
+        isAdvertising = false,
+        bleScanning = ble.connectionStatus == BleConnectionStatus.SCANNING,
+        bleConnecting = ble.connectionStatus == BleConnectionStatus.CONNECTING || ble.isReconnecting || ble.isWaking
+    )
+    val telemetryItems = buildCameraTelemetryRows(ble)
+
     ScreenScaffold(scrollState = listState) { contentPadding ->
         TransformingLazyColumn(
             state = listState,
@@ -379,22 +448,89 @@ private fun CameraPage(
                 ListHeader(
                     modifier = Modifier.transformedHeight(this, transformationSpec),
                     transformation = SurfaceTransformation(transformationSpec)
-                ) { Text(cameraName) }
+                ) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.CenterHorizontally)
+                    ) {
+                        WearCameraModelAvatar(
+                            model = displayModel,
+                            size = 28.dp,
+                            reserveRingSpace = false
+                        )
+                        Text(
+                            text = cameraName,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                            modifier = Modifier.weight(1f, fill = false)
+                        )
+                        WearStatusDot(dotState = dotState, size = 7.dp)
+                    }
+                }
             }
-            // The phone holds the link, and its GPS is the one the camera gets
-            if (throughPhone) item { Note("Controlled through your phone") }
-            cameraWarnings(ble.details).forEach { warning -> item { Note(warning, isProblem = true) } }
-            cameraReport(ble.details, ble.lastVideoFile, ble.lastVideoSeconds).forEach { line ->
-                item { ReportRow(line) }
+            if (throughPhone) {
+                item {
+                    WearMetricPill(
+                        text = "Through your phone",
+                        icon = Icons.Filled.Smartphone
+                    )
+                }
             }
-            item { GpsStatusLine(gpsReady) }
-            error?.let { item { Note(it, isProblem = true) } }
-            // Moves the link here from the phone, or to the phone for leaving the watch behind
+            cameraWarnings(ble.details).forEach { warning ->
+                item {
+                    WearMetricPill(
+                        text = warning,
+                        icon = if (warning.startsWith("Storage")) null else Icons.Default.Warning,
+                        iconRes = if (warning.startsWith("Storage")) Insta360Icons.icSdError else null,
+                        isProblem = true,
+                        maxLines = 2
+                    )
+                }
+            }
+            if (telemetryItems.isNotEmpty()) {
+                item {
+                    WearSurfaceCard(
+                        modifier = Modifier.transformedHeight(this, transformationSpec),
+                        transformation = SurfaceTransformation(transformationSpec)
+                    ) {
+                        telemetryItems.forEachIndexed { index, row ->
+                            if (index > 0) {
+                                Spacer(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .padding(vertical = 6.dp)
+                                        .height(1.dp)
+                                        .background(MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.35f))
+                                )
+                            }
+                            TelemetryRowView(row = row)
+                        }
+                    }
+                }
+            }
+            item {
+                WearMetricPill(
+                    text = RemoteText.gpsStatus(gpsReady),
+                    icon = if (gpsReady) Icons.Filled.LocationOn else Icons.Filled.LocationOff,
+                    iconTint = if (gpsReady) MaterialTheme.wearStatusColors.ready else MaterialTheme.wearStatusColors.waiting
+                )
+            }
+            error?.let {
+                item {
+                    WearMetricPill(
+                        text = it,
+                        icon = Icons.Default.Warning,
+                        isProblem = true,
+                        maxLines = 2
+                    )
+                }
+            }
             if (throughPhone || canMoveLink) {
                 item {
                     FilledTonalButton(
                         onClick = onMoveLink,
                         enabled = canMoveLink,
+                        colors = wearEditorialTonalButtonColors(),
                         modifier = Modifier.fillMaxWidth().transformedHeight(this, transformationSpec),
                         transformation = SurfaceTransformation(transformationSpec),
                         icon = { Icon(if (throughPhone) Icons.Filled.Watch else Icons.Filled.Smartphone, contentDescription = null) },
@@ -405,6 +541,11 @@ private fun CameraPage(
             item {
                 OutlinedButton(
                     onClick = onLinkButton,
+                    colors = wearEditorialOutlinedButtonColors(),
+                    border = ButtonDefaults.outlinedButtonBorder(
+                        enabled = true,
+                        borderColor = MaterialTheme.colorScheme.outline.copy(alpha = 0.65f)
+                    ),
                     modifier = Modifier.fillMaxWidth().transformedHeight(this, transformationSpec),
                     transformation = SurfaceTransformation(transformationSpec),
                     icon = { Icon(linkIcon(button), contentDescription = null) },
@@ -414,7 +555,7 @@ private fun CameraPage(
             item {
                 CompactButton(
                     onClick = onOpenSettings,
-                    colors = ButtonDefaults.filledTonalButtonColors(),
+                    colors = wearEditorialTonalButtonColors(),
                     transformation = SurfaceTransformation(transformationSpec),
                     modifier = Modifier.transformedHeight(this, transformationSpec),
                     icon = { Icon(Icons.Filled.Settings, contentDescription = null, modifier = Modifier.size(16.dp)) },
@@ -425,40 +566,94 @@ private fun CameraPage(
     }
 }
 
-/** Beside the shutter: the camera's mode as its icon, which opens the list of modes. */
+/** Beside the shutter: the camera's mode glyph inside a hairline capsule, opening the mode list. */
 @Composable
-private fun ModeButton(icon: ImageVector, modeName: String, enabled: Boolean, onClick: () -> Unit) {
+private fun ModeButton(
+    @DrawableRes drawableRes: Int,
+    modeName: String,
+    enabled: Boolean,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    val interactionSource = remember { MutableInteractionSource() }
+    val pressScale by rememberWearPressScale(interactionSource, targetScale = 0.94f)
+    val borderColor = if (enabled) {
+        MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.55f)
+    } else {
+        MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.2f)
+    }
+
     FilledTonalIconButton(
         onClick = onClick,
         enabled = enabled,
-        modifier = Modifier.size(SIDE_BUTTON)
+        interactionSource = interactionSource,
+        colors = IconButtonDefaults.filledTonalIconButtonColors(
+            containerColor = MaterialTheme.colorScheme.surfaceContainerHigh,
+            contentColor = MaterialTheme.colorScheme.onSurface
+        ),
+        border = BorderStroke(width = 1.dp, color = borderColor),
+        modifier = modifier
+            .size(SIDE_BUTTON)
+            .graphicsLayer {
+                scaleX = pressScale
+                scaleY = pressScale
+            }
     ) {
-        Icon(imageVector = icon, contentDescription = "Mode: $modeName", modifier = Modifier.size(24.dp))
+        Icon(
+            painter = painterResource(drawableRes),
+            contentDescription = "Mode: $modeName",
+            modifier = Modifier.size(22.dp)
+        )
     }
 }
 
 /**
- * Beside the shutter, across from the mode: one tap between Video and Photo, showing the one it
- * switches to. Outlined, where the mode is filled, as it is not the mode the camera is in. The
- * camera goes back to the mode it was last seen in on that side since the app started, or to
- * plain Video or Photo.
+ * Beside the shutter, across from the mode: one tap between Video and Photo, showing the capture
+ * mode it switches to.
  */
 @Composable
-private fun PhotoVideoSwitch(current: CaptureMode, enabled: Boolean, onSwitch: (CaptureMode) -> Unit) {
+private fun PhotoVideoSwitch(
+    current: CaptureMode,
+    enabled: Boolean,
+    onSwitch: (CaptureMode) -> Unit,
+    modifier: Modifier = Modifier
+) {
     val other = if (current == CaptureMode.PHOTO) CaptureMode.VIDEO else CaptureMode.PHOTO
+    val interactionSource = remember { MutableInteractionSource() }
+    val pressScale by rememberWearPressScale(interactionSource, targetScale = 0.94f)
+    val borderColor = if (enabled) {
+        MaterialTheme.colorScheme.outline.copy(alpha = 0.6f)
+    } else {
+        MaterialTheme.colorScheme.outline.copy(alpha = 0.2f)
+    }
+
     OutlinedIconButton(
         onClick = { onSwitch(other) },
         enabled = enabled,
-        modifier = Modifier.size(SIDE_BUTTON)
+        interactionSource = interactionSource,
+        colors = IconButtonDefaults.filledTonalIconButtonColors(
+            containerColor = MaterialTheme.colorScheme.surfaceContainer,
+            contentColor = MaterialTheme.colorScheme.onSurface
+        ),
+        border = BorderStroke(width = 1.dp, color = borderColor),
+        modifier = modifier
+            .size(SIDE_BUTTON)
+            .graphicsLayer {
+                scaleX = pressScale
+                scaleY = pressScale
+            }
     ) {
-        Icon(imageVector = modeIcon(other), contentDescription = "Switch to ${other.displayName}", modifier = Modifier.size(24.dp))
+        Icon(
+            painter = painterResource(Insta360Icons.captureModeDrawableRes(other)),
+            contentDescription = "Switch to ${other.displayName}",
+            modifier = Modifier.size(22.dp)
+        )
     }
 }
 
 /**
  * The one line under the shutter's label, whichever matters most: a camera warning, then the
- * watch waiting for GPS, as the camera is sent void records until there is a fix, then speed and
- * heart rate while recording, or the time or photos left.
+ * watch waiting for GPS, then speed and heart rate while recording, or remaining capacity.
  */
 @Composable
 private fun UnderShutterLine(
@@ -469,173 +664,273 @@ private fun UnderShutterLine(
     speed: String?,
     heartRateBpm: Int?
 ) {
+    val compactPadding = PaddingValues(horizontal = 8.dp, vertical = 3.dp)
+    val pillTextStyle = MaterialTheme.typography.bodySmall
     when {
-        warning != null -> Note(warning, isProblem = true)
-        !gpsReady -> GpsStatusLine(ready = false)
-        isRecording -> LiveReadings(speed, heartRateBpm)
-        left != null -> Row(verticalAlignment = Alignment.CenterVertically) {
-            Icon(
-                imageVector = Icons.Filled.LocationOn,
-                contentDescription = RemoteText.gpsStatus(true),
-                tint = ReadyGreen,
-                modifier = Modifier.size(14.dp)
+        warning != null -> WearMetricPill(
+            text = warning,
+            icon = if (warning.startsWith("Storage")) null else Icons.Default.Warning,
+            iconRes = if (warning.startsWith("Storage")) Insta360Icons.icSdError else null,
+            isProblem = true,
+            contentPadding = compactPadding,
+            textStyle = pillTextStyle
+        )
+        !gpsReady -> WearMetricPill(
+            text = RemoteText.gpsStatus(false),
+            icon = Icons.Filled.LocationOff,
+            iconTint = MaterialTheme.wearStatusColors.waiting,
+            contentPadding = compactPadding,
+            textStyle = pillTextStyle
+        )
+        isRecording -> LiveReadingsPill(speed = speed, heartRateBpm = heartRateBpm)
+        left != null -> WearMetricPill(
+            text = left,
+            icon = Icons.Filled.LocationOn,
+            iconTint = MaterialTheme.wearStatusColors.ready,
+            contentPadding = compactPadding,
+            textStyle = pillTextStyle
+        )
+        else -> WearMetricPill(
+            text = RemoteText.gpsStatus(true),
+            icon = Icons.Filled.LocationOn,
+            iconTint = MaterialTheme.wearStatusColors.ready,
+            contentPadding = compactPadding,
+            textStyle = pillTextStyle
+        )
+    }
+}
+
+@Composable
+private fun LiveReadingsPill(
+    speed: String?,
+    heartRateBpm: Int?,
+    modifier: Modifier = Modifier
+) {
+    if (speed == null && heartRateBpm == null) {
+        WearMetricPill(
+            text = RemoteText.gpsStatus(true),
+            icon = Icons.Filled.LocationOn,
+            iconTint = MaterialTheme.wearStatusColors.ready,
+            contentPadding = PaddingValues(horizontal = 8.dp, vertical = 3.dp),
+            textStyle = MaterialTheme.typography.bodySmall,
+            modifier = modifier
+        )
+        return
+    }
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(5.dp, Alignment.CenterHorizontally),
+        modifier = modifier
+            .clip(CircleShape)
+            .background(MaterialTheme.colorScheme.surfaceContainerHigh)
+            .border(
+                width = 1.dp,
+                color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.45f),
+                shape = CircleShape
             )
-            Spacer(Modifier.width(4.dp))
-            Text(text = left, style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1)
+            .padding(horizontal = 8.dp, vertical = 3.dp)
+    ) {
+        if (speed != null) {
+            Icon(
+                imageVector = Icons.Filled.Speed,
+                contentDescription = "Speed",
+                tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.size(12.dp)
+            )
+            Text(
+                text = speed,
+                style = MaterialTheme.typography.bodySmall.merge(WearTabularFigures),
+                fontWeight = FontWeight.SemiBold,
+                color = MaterialTheme.colorScheme.onSurface,
+                maxLines = 1,
+                softWrap = false
+            )
         }
-        else -> GpsStatusLine(ready = true)
+        if (speed != null && heartRateBpm != null) {
+            Spacer(Modifier.width(2.dp))
+        }
+        if (heartRateBpm != null) {
+            Icon(
+                imageVector = Icons.Filled.Favorite,
+                contentDescription = "Heart rate",
+                tint = MaterialTheme.wearStatusColors.recording,
+                modifier = Modifier.size(12.dp)
+            )
+            Text(
+                text = "$heartRateBpm bpm",
+                style = MaterialTheme.typography.bodySmall.merge(WearTabularFigures),
+                fontWeight = FontWeight.SemiBold,
+                color = MaterialTheme.colorScheme.onSurface,
+                maxLines = 1,
+                softWrap = false
+            )
+        }
     }
 }
 
 /**
- * While there is no camera to control: the camera as a badge, which spins while it is looked for,
- * linked to or woken, the status as the title, coloured by what it means, and the camera's name.
+ * While there is no camera to control: the resolved camera model avatar (with activity ring while
+ * looking, connecting, or waking), editorial status pill with [WearStatusDot], and camera name.
  */
 @Composable
-private fun OfflineHeader(ble: BleCameraState, cameraName: String, status: String, isMovingLink: Boolean = false) {
+private fun OfflineHeader(
+    ble: BleCameraState,
+    cameraName: String,
+    status: String,
+    isMovingLink: Boolean = false
+) {
     val linked = ble.connectionStatus == BleConnectionStatus.CONNECTED
     val looking = isMovingLink || ble.isWaking || ble.isReconnecting ||
         ble.connectionStatus == BleConnectionStatus.SCANNING || ble.connectionStatus == BleConnectionStatus.CONNECTING
-    // Amber for a camera that is off or being switched on, the theme's colour while looking for it
-    val statusColor = when {
-        isMovingLink -> MaterialTheme.colorScheme.primary
-        ble.isWaking || (linked && !looking) -> StandbyOrange
-        looking -> MaterialTheme.colorScheme.primary
-        else -> MaterialTheme.colorScheme.onSurface
+    val displayModel = ble.resolvedModel ?: Insta360CameraModel.GO_3S
+    val dotState = CameraStatusText.statusDotState(
+        isRecording = false,
+        isConnected = linked,
+        isAsleep = linked && !ble.isCameraAwake,
+        isAdvertising = false,
+        bleScanning = ble.connectionStatus == BleConnectionStatus.SCANNING,
+        bleConnecting = looking
+    )
+    val statusColor = when (dotState) {
+        CameraStatusText.StatusDotState.STANDBY -> MaterialTheme.wearStatusColors.waiting
+        CameraStatusText.StatusDotState.CONNECTING -> MaterialTheme.colorScheme.primary
+        CameraStatusText.StatusDotState.CONNECTED -> MaterialTheme.wearStatusColors.ready
+        CameraStatusText.StatusDotState.RECORDING -> MaterialTheme.wearStatusColors.recording
+        CameraStatusText.StatusDotState.DISCONNECTED -> MaterialTheme.colorScheme.onSurface
     }
-    Column(modifier = Modifier.padding(horizontal = 28.dp), horizontalAlignment = Alignment.CenterHorizontally) {
-        CameraBadge(
-            icon = if (linked && !looking) Icons.Filled.VideocamOff else Icons.Filled.Videocam,
-            iconTint = if (linked && !looking) StandbyOrange else MaterialTheme.colorScheme.onSurfaceVariant,
+    val ringColor = when (dotState) {
+        CameraStatusText.StatusDotState.STANDBY -> MaterialTheme.wearStatusColors.waiting
+        else -> MaterialTheme.colorScheme.primary
+    }
+
+    Column(
+        modifier = Modifier.padding(horizontal = 24.dp),
+        horizontalAlignment = Alignment.CenterHorizontally
+    ) {
+        WearCameraModelAvatar(
+            model = displayModel,
+            size = 48.dp,
             spinning = looking,
-            ringColor = statusColor
+            reserveRingSpace = true,
+            ringColor = ringColor
         )
-        Spacer(Modifier.size(6.dp))
-        Text(text = status, style = MaterialTheme.typography.titleMedium, color = statusColor, textAlign = TextAlign.Center)
-        Text(text = cameraName, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        Spacer(Modifier.height(6.dp))
+        WearMetricPill(
+            text = status,
+            dotState = dotState,
+            textColor = statusColor,
+            textStyle = MaterialTheme.typography.labelMedium
+        )
+        Spacer(Modifier.height(4.dp))
+        Text(
+            text = cameraName,
+            style = MaterialTheme.typography.labelSmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+            textAlign = TextAlign.Center
+        )
     }
 }
 
-/** The camera's icon in a circle, with a spinning ring around it while something is under way. */
-@Composable
-private fun CameraBadge(icon: ImageVector, iconTint: Color, spinning: Boolean, ringColor: Color) {
-    Box(modifier = Modifier.size(48.dp), contentAlignment = Alignment.Center) {
-        if (spinning) {
-            CircularProgressIndicator(
-                modifier = Modifier.fillMaxSize(),
-                colors = ProgressIndicatorDefaults.colors(indicatorColor = ringColor),
-                strokeWidth = 3.dp
-            )
-        }
-        Box(
-            modifier = Modifier.size(38.dp).clip(CircleShape).background(MaterialTheme.colorScheme.surfaceContainer),
-            contentAlignment = Alignment.Center
-        ) {
-            Icon(imageVector = icon, contentDescription = null, tint = iconTint, modifier = Modifier.size(22.dp))
-        }
-    }
-}
-
-/** "Ready" and the camera's battery, above the shutter, with a phone while linked through the phone. */
+/** Ready indicator dot, compact camera battery readout, and phone link icon above the shutter. */
 @Composable
 private fun ReadyHeader(ble: BleCameraState, throughPhone: Boolean) {
-    Row(verticalAlignment = Alignment.CenterVertically) {
-        Text(text = "Ready", style = MaterialTheme.typography.labelMedium, color = ReadyGreen)
-        if (throughPhone) {
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.Center
+    ) {
+        WearStatusDot(
+            dotState = CameraStatusText.StatusDotState.CONNECTED,
+            size = 7.dp
+        )
+        Spacer(Modifier.width(5.dp))
+        Text(
+            text = "Ready",
+            style = MaterialTheme.typography.labelSmall,
+            fontWeight = FontWeight.SemiBold,
+            color = MaterialTheme.wearStatusColors.ready,
+            maxLines = 1,
+            softWrap = false
+        )
+        val battery = ble.batteryPercent
+        if (battery != null) {
+            val batteryLow = battery <= CameraStatusText.LOW_BATTERY_PERCENT && !ble.isCharging
+            val batteryColor = when {
+                batteryLow -> MaterialTheme.colorScheme.error
+                ble.isCharging -> MaterialTheme.wearStatusColors.ready
+                else -> MaterialTheme.colorScheme.onSurfaceVariant
+            }
             Spacer(Modifier.width(6.dp))
+            if (ble.isCharging) {
+                Icon(
+                    imageVector = Icons.Filled.BatteryChargingFull,
+                    contentDescription = "Camera battery, charging",
+                    tint = batteryColor,
+                    modifier = Modifier.size(13.dp)
+                )
+            } else {
+                Icon(
+                    painter = painterResource(Insta360Icons.icBattery),
+                    contentDescription = "Camera battery",
+                    tint = batteryColor,
+                    modifier = Modifier.size(13.dp)
+                )
+            }
+            Spacer(Modifier.width(2.dp))
+            Text(
+                text = "$battery%",
+                style = MaterialTheme.typography.labelSmall.merge(WearTabularFigures),
+                color = if (batteryLow) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant,
+                maxLines = 1,
+                softWrap = false
+            )
+        }
+        if (throughPhone) {
+            Spacer(Modifier.width(5.dp))
             Icon(
                 imageVector = Icons.Filled.Smartphone,
                 contentDescription = "Through your phone",
                 tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                modifier = Modifier.size(14.dp)
+                modifier = Modifier.size(13.dp)
             )
-        }
-        val battery = ble.batteryPercent
-        if (battery != null) {
-            Spacer(Modifier.width(8.dp))
-            Icon(
-                imageVector = batteryIcon(battery, ble.isCharging),
-                contentDescription = if (ble.isCharging) "Camera battery, charging" else "Camera battery",
-                tint = if (battery <= CameraStatusText.LOW_BATTERY_PERCENT && !ble.isCharging) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant,
-                modifier = Modifier.size(14.dp)
-            )
-            Text(text = "$battery%", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
     }
 }
 
-/** Whether the watch has a GPS fix to send the camera: green when it has, amber while it waits. */
-@Composable
-private fun GpsStatusLine(ready: Boolean) {
-    Row(verticalAlignment = Alignment.CenterVertically) {
-        Icon(
-            imageVector = if (ready) Icons.Filled.LocationOn else Icons.Filled.LocationOff,
-            contentDescription = null,
-            tint = if (ready) ReadyGreen else StandbyOrange,
-            modifier = Modifier.size(14.dp)
-        )
-        Spacer(Modifier.width(4.dp))
-        Text(text = RemoteText.gpsStatus(ready), style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
-    }
-}
-
-/** A recording's running time, large and red, in place of the status while it records. */
+/** Pulsing recording dot and bold tabular running timer above the shutter while recording. */
 @Composable
 private fun RecordingTimer(elapsed: String) {
-    Text(text = elapsed, style = MaterialTheme.typography.numeralExtraSmall, color = RecordingRed)
-}
-
-/** The watch's speed and heart rate while recording, each left out when there is none. */
-@Composable
-private fun LiveReadings(speed: String?, heartRateBpm: Int?) {
-    if (speed == null && heartRateBpm == null) return
-    Row(verticalAlignment = Alignment.CenterVertically) {
-        if (speed != null) {
-            Icon(Icons.Filled.Speed, contentDescription = "Speed", modifier = Modifier.size(14.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant)
-            Spacer(Modifier.width(4.dp))
-            Text(text = speed, style = MaterialTheme.typography.labelMedium)
-        }
-        if (speed != null && heartRateBpm != null) Spacer(Modifier.width(12.dp))
-        if (heartRateBpm != null) {
-            Icon(Icons.Filled.Favorite, contentDescription = "Heart rate", modifier = Modifier.size(14.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant)
-            Spacer(Modifier.width(4.dp))
-            Text(text = "$heartRateBpm bpm", style = MaterialTheme.typography.labelMedium)
-        }
-    }
-}
-
-/**
- * The shutter, drawn as a camera's: a red disc for video, a white one for a photo, and a red
- * square to stop.
- */
-@Composable
-private fun Shutter(
-    isVideo: Boolean,
-    isRecording: Boolean,
-    busy: Boolean,
-    label: String,
-    onClick: () -> Unit
-) {
-    val ring = if (isVideo || isRecording) RecordingRed else MaterialTheme.colorScheme.onSurface
-    Box(
-        modifier = Modifier
-            .size(84.dp)
-            .clip(CircleShape)
-            .border(4.dp, ring, CircleShape)
-            .clickable(enabled = !busy, onClickLabel = label, role = Role.Button, onClick = onClick),
-        contentAlignment = Alignment.Center
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.Center
     ) {
-        when {
-            busy -> CircularProgressIndicator(modifier = Modifier.size(44.dp))
-            isRecording -> Box(Modifier.size(28.dp).clip(RoundedCornerShape(6.dp)).background(RecordingRed))
-            else -> Box(Modifier.size(64.dp).clip(CircleShape).background(if (isVideo) RecordingRed else Color.White))
-        }
+        WearStatusDot(
+            dotState = CameraStatusText.StatusDotState.RECORDING,
+            size = 7.dp
+        )
+        Spacer(Modifier.width(6.dp))
+        Text(
+            text = elapsed,
+            style = MaterialTheme.typography.numeralExtraSmall.merge(WearTabularFigures),
+            fontWeight = FontWeight.Bold,
+            color = MaterialTheme.wearStatusColors.recording,
+            maxLines = 1,
+            softWrap = false
+        )
     }
 }
 
 @Composable
 private fun ShutterLabel(label: String) {
-    Text(text = label, style = MaterialTheme.typography.titleSmall, textAlign = TextAlign.Center)
+    Text(
+        text = label,
+        style = MaterialTheme.typography.titleSmall,
+        color = MaterialTheme.colorScheme.onSurface,
+        textAlign = TextAlign.Center,
+        maxLines = 1,
+        overflow = TextOverflow.Ellipsis
+    )
 }
 
 private fun linkIcon(button: CameraButton): ImageVector = when (button) {
@@ -645,27 +940,18 @@ private fun linkIcon(button: CameraButton): ImageVector = when (button) {
     CameraButton.DISCONNECT -> Icons.Filled.BluetoothDisabled
 }
 
-/** The battery icon with as many bars as the camera has charge, or the charging one. */
-private fun batteryIcon(percent: Int, charging: Boolean): ImageVector = when {
-    charging -> Icons.Filled.BatteryChargingFull
-    percent >= 95 -> Icons.Filled.BatteryFull
-    percent >= 80 -> Icons.Filled.Battery6Bar
-    percent >= 65 -> Icons.Filled.Battery5Bar
-    percent >= 50 -> Icons.Filled.Battery4Bar
-    percent >= 35 -> Icons.Filled.Battery3Bar
-    percent >= 20 -> Icons.Filled.Battery2Bar
-    percent >= 5 -> Icons.Filled.Battery1Bar
-    else -> Icons.Filled.Battery0Bar
-}
-
 @Composable
-private fun Note(text: String, isProblem: Boolean = false) {
+private fun Note(
+    text: String,
+    modifier: Modifier = Modifier,
+    isProblem: Boolean = false
+) {
     Text(
         text = text,
         style = MaterialTheme.typography.bodySmall,
         color = if (isProblem) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant,
         textAlign = TextAlign.Center,
-        modifier = Modifier.padding(horizontal = 16.dp)
+        modifier = modifier.padding(horizontal = 16.dp)
     )
 }
 
@@ -680,46 +966,142 @@ private fun cameraWarnings(details: CameraDetails): List<String> = buildList {
 private fun captureLeft(details: CameraDetails): String? {
     if (CameraStatusText.storageProblem(details.cardState) != null) return null
     val left = details.captureSecondsLeft ?: return null
-    return if (details.subModes?.isPhoto == true) "${CameraStatusText.photosLeft(left)} photos left"
-    else "${CameraStatusText.timeLeft(left)} left"
+    return if (details.subModes?.isPhoto == true) {
+        "${CameraStatusText.photosLeft(left)} photos left"
+    } else {
+        "${CameraStatusText.timeLeft(left)} left"
+    }
 }
 
-/** One line of what the camera reports: a label and its value. */
-private data class ReportLine(val label: String, val value: String, val isProblem: Boolean = false)
+private data class TelemetryRow(
+    val label: String,
+    val value: String,
+    val icon: ImageVector? = null,
+    @param:DrawableRes val iconRes: Int? = null,
+    val isProblem: Boolean = false,
+    val isHealthy: Boolean = false
+)
 
-/**
- * What the camera reports, on the page beside the controls: the time or photos left, the pod and
- * the last clip. Its mode is left out, as the controls show it.
- */
-private fun cameraReport(details: CameraDetails, lastVideoFile: String?, lastVideoSeconds: Int?): List<ReportLine> = buildList {
+private fun buildCameraTelemetryRows(ble: BleCameraState): List<TelemetryRow> = buildList {
+    val details = ble.details
+    ble.batteryPercent?.let { percent ->
+        val batteryLow = percent <= CameraStatusText.LOW_BATTERY_PERCENT && !ble.isCharging
+        add(
+            TelemetryRow(
+                label = "Battery",
+                value = if (ble.isCharging) "$percent% • Charging" else "$percent%",
+                icon = if (ble.isCharging) Icons.Filled.BatteryChargingFull else null,
+                iconRes = if (!ble.isCharging) Insta360Icons.icBattery else null,
+                isProblem = batteryLow,
+                isHealthy = !batteryLow
+            )
+        )
+    }
+    details.pod?.let { pod ->
+        val podLow = CameraStatusText.podIsLow(pod)
+        val onExternal = pod.battery?.onExternalPower == true
+        add(
+            TelemetryRow(
+                label = "Action Pod",
+                value = CameraStatusText.pod(pod),
+                icon = if (onExternal) Icons.Filled.BatteryChargingFull else Icons.Filled.Bolt,
+                isProblem = podLow,
+                isHealthy = onExternal
+            )
+        )
+    }
     if (CameraStatusText.storageProblem(details.cardState) == null) {
         details.captureSecondsLeft?.let { left ->
-            if (details.subModes?.isPhoto == true) add(ReportLine("Photos Left", CameraStatusText.photosLeft(left)))
-            else add(ReportLine("Time Left", CameraStatusText.timeLeft(left)))
+            if (details.subModes?.isPhoto == true) {
+                add(
+                    TelemetryRow(
+                        label = "Photos Left",
+                        value = CameraStatusText.photosLeft(left),
+                        iconRes = Insta360Icons.captureModeDrawableRes(CaptureMode.PHOTO)
+                    )
+                )
+            } else {
+                add(
+                    TelemetryRow(
+                        label = "Time Left",
+                        value = CameraStatusText.timeLeft(left),
+                        icon = Icons.Filled.Schedule
+                    )
+                )
+            }
         }
         val freeBytes = details.freeSpaceBytes
         val totalBytes = details.totalSpaceBytes
         if (freeBytes != null && totalBytes != null) {
-            add(ReportLine("Storage", CameraStatusText.storageSpace(freeBytes, totalBytes)))
+            add(
+                TelemetryRow(
+                    label = "Storage",
+                    value = CameraStatusText.storageSpace(freeBytes, totalBytes),
+                    iconRes = Insta360Icons.icSdOk
+                )
+            )
         }
     }
-    details.pod?.let { add(ReportLine("Action Pod", CameraStatusText.pod(it), isProblem = CameraStatusText.podIsLow(it))) }
-    if (lastVideoFile != null) {
-        add(ReportLine("Last Clip", lastVideoSeconds?.let { CameraStatusText.clipLength(it) } ?: "Saved"))
+    ble.lastVideoFile?.let { file ->
+        val len = ble.lastVideoSeconds?.let { CameraStatusText.clipLength(it) } ?: "Saved"
+        add(
+            TelemetryRow(
+                label = "Last Clip • $len",
+                value = wearMiddleEllipsize(file, 22),
+                icon = Icons.Filled.Movie
+            )
+        )
     }
 }
 
 @Composable
-private fun ReportRow(line: ReportLine) {
-    // The label above its value, both centred, as a label and value side by side do not fit
-    // the round screen's narrower rows
-    Column(modifier = Modifier.padding(horizontal = 24.dp), horizontalAlignment = Alignment.CenterHorizontally) {
-        Text(text = line.label, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-        Text(
-            text = line.value,
-            style = MaterialTheme.typography.labelMedium,
-            color = if (line.isProblem) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurface,
-            textAlign = TextAlign.Center
-        )
+private fun TelemetryRowView(row: TelemetryRow) {
+    val iconTint = when {
+        row.isProblem -> MaterialTheme.colorScheme.error
+        row.isHealthy -> MaterialTheme.wearStatusColors.ready
+        else -> MaterialTheme.colorScheme.onSurfaceVariant
+    }
+    val valueColor = if (row.isProblem) {
+        MaterialTheme.colorScheme.error
+    } else {
+        MaterialTheme.colorScheme.onSurface
+    }
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(8.dp)
+    ) {
+        if (row.iconRes != null) {
+            Icon(
+                painter = painterResource(row.iconRes),
+                contentDescription = null,
+                tint = iconTint,
+                modifier = Modifier.size(16.dp)
+            )
+        } else if (row.icon != null) {
+            Icon(
+                imageVector = row.icon,
+                contentDescription = null,
+                tint = iconTint,
+                modifier = Modifier.size(16.dp)
+            )
+        }
+        Column(modifier = Modifier.weight(1f)) {
+            Text(
+                text = row.label,
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis
+            )
+            Text(
+                text = row.value,
+                style = MaterialTheme.typography.labelMedium.merge(WearTabularFigures),
+                fontWeight = FontWeight.Medium,
+                color = valueColor,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis
+            )
+        }
     }
 }

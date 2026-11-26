@@ -7,4 +7,16 @@
     <color name="open360_splash_socket_fill">#FF0C0C0B</color>
     <color name="open360_splash_socket_stroke">#FF46433D</color>
     <color name="open360_splash_ring">#FFF0EBE1</color>
+
+    <!-- Force dark-mode camera hardware vector silhouette tokens on Wear OS regardless of UI_MODE_NIGHT -->
+    <color name="cam_body_light">#FFECE7DD</color>
+    <color name="cam_body_dark">#FF1B1A18</color>
+    <color name="cam_body_mid">#FF4E4B44</color>
+    <color name="cam_body_stroke">#FF989287</color>
+    <color name="cam_lens_outer">#FF5D5952</color>
+    <color name="cam_lens_inner">#FF0D0D0C</color>
+    <color name="cam_lens_glint">#FFE2DDD3</color>
+    <color name="cam_screen_fill">#FF323942</color>
+    <color name="cam_detail_muted">#FF8B857A</color>
+    <color name="cam_accent_red">#FFFF5449</color>
 </resources>
