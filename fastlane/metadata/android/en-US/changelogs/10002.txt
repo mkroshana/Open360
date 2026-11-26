@@ -1,0 +1,5 @@
+Open360 v0.2.1-beta.1 (Beta):
+- Added 1-tap "Install on Watch" in phone Settings to open Google Play straight on paired Wear OS watches
+- Added Wear OS Tile, watchface complication, haptics, and ongoing status indicator
+- Synced km/h and mph speed units automatically from phone to watch
+- Fixed Wear OS layout overlaps, offline layout budget, and ambient remote polish
