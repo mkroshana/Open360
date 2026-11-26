@@ -1186,10 +1186,10 @@ private data class LiveTelemetryItem(
 private fun LiveReadingsPill(
     speed: String?,
     heartRateBpm: Int?,
+    modifier: Modifier = Modifier,
     powerWatts: Int? = null,
     cadenceRpm: Int? = null,
-    maxItems: Int = 3,
-    modifier: Modifier = Modifier
+    maxItems: Int = 3
 ) {
     val onSurfaceVariant = MaterialTheme.colorScheme.onSurfaceVariant
     val recordingTint = MaterialTheme.wearStatusColors.recording

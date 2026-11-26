@@ -1,7 +1,11 @@
 package com.open360.wear
 
+import android.Manifest
 import android.content.Context
+import android.content.pm.PackageManager
+import android.os.Build
 import android.os.SystemClock
+import androidx.core.content.ContextCompat
 import androidx.wear.ongoing.OngoingActivity
 import androidx.wear.ongoing.Status
 import com.open360.core.ble.BleCameraState
@@ -98,8 +102,20 @@ object WearOngoingStatus {
             current = candidate
             candidate
         }
-        runCatching {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
+            ContextCompat.checkSelfPermission(
+                context,
+                Manifest.permission.POST_NOTIFICATIONS
+            ) != PackageManager.PERMISSION_GRANTED
+        ) {
+            return
+        }
+        try {
             OngoingActivity.recoverOngoingActivity(context)?.update(context, buildStatus(next))
+        } catch (_: SecurityException) {
+            // Notification permission was revoked before the ongoing activity could update.
+        } catch (_: Exception) {
+            // Ignore when no ongoing notification is active or outside a real Android runtime.
         }
     }
 }
